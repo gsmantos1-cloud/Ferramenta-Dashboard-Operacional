@@ -28,6 +28,7 @@ app.secret_key = os.getenv("SECRET_KEY", "dev-secret-key-change-me")
 
 LOGIN_USUARIO    = os.getenv("LOGIN_USUARIO", "gs.operacional")
 LOGIN_SENHA_HASH = os.getenv("LOGIN_SENHA_HASH", "")
+LOGIN_SENHA      = os.getenv("LOGIN_SENHA", "")   # senha em texto plano (alternativa ao hash)
 
 
 @app.after_request
@@ -389,7 +390,11 @@ def login_page():
     if request.method == "POST":
         usuario = request.form.get("usuario", "").strip()
         senha   = request.form.get("senha", "")
-        if usuario == LOGIN_USUARIO and check_password_hash(LOGIN_SENHA_HASH, senha):
+        senha_ok = (
+            (LOGIN_SENHA and senha == LOGIN_SENHA) or
+            (LOGIN_SENHA_HASH and check_password_hash(LOGIN_SENHA_HASH, senha))
+        )
+        if usuario == LOGIN_USUARIO and senha_ok:
             session["logado"]  = True
             session["usuario"] = usuario
             return redirect(url_for("dashboard"))
