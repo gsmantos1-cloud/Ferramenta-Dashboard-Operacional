@@ -1,11 +1,9 @@
-import sqlite3
-import webbrowser
+import turso_db as sqlite3
 import threading
 import os
 import csv
 import json
 import re
-import queue
 import urllib.parse
 import urllib.request
 from datetime import date, timedelta, datetime
@@ -16,12 +14,14 @@ import holidays
 import openpyxl
 from flask import Flask, jsonify, render_template, request, send_file, session, redirect, url_for
 from werkzeug.security import check_password_hash
-from dotenv import load_dotenv
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH  = os.path.join(BASE_DIR, "pedidos.db")
-
-load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev-secret-key-change-me")
@@ -52,21 +52,10 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated
 
-# ── SSE — Fila de alertas de estoque em tempo real ───────────────────────────
-_alert_clients: list[queue.Queue] = []
-_alert_lock = threading.Lock()
-
+# ── Alertas de estoque (polling — SSE removido para compatibilidade Vercel) ──
 def push_alert(data: dict):
-    """Envia um alerta para todos os clientes SSE conectados."""
-    with _alert_lock:
-        mortos = []
-        for q in _alert_clients:
-            try:
-                q.put_nowait(data)
-            except queue.Full:
-                mortos.append(q)
-        for q in mortos:
-            _alert_clients.remove(q)
+    """No Vercel, alertas são consultados via polling. Esta função é no-op."""
+    pass
 
 def _verificar_e_alertar_estoque(conn, numero_pedido: str, cliente: str, produtos: list):
     """Checa estoque dos itens de um pedido recém-salvo e dispara alertas SSE."""
@@ -133,7 +122,7 @@ LIMITES = {
 # ── Database ─────────────────────────────────────────────────────────────────
 
 def init_db():
-    with sqlite3.connect(DB_PATH) as conn:
+    with get_conn() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS romaneios (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -332,9 +321,7 @@ def init_db():
 
 
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return sqlite3.connect()
 
 
 # ── Business logic ────────────────────────────────────────────────────────────
@@ -1956,8 +1943,30 @@ def exportar_romaneio(rid):
 
 # ── NuvemShop sync ───────────────────────────────────────────────────────────
 
+def _get_nv_credentials():
+    """Lê store_id e access_token: primeiro das env vars, depois do banco."""
+    store_id = os.getenv("NUVEMSHOP_STORE_ID", "")
+    token    = os.getenv("NUVEMSHOP_ACCESS_TOKEN", "")
+    if not store_id or not token:
+        try:
+            with get_conn() as conn:
+                row_id = conn.execute(
+                    "SELECT valor FROM config WHERE chave='nuvemshop_store_id'"
+                ).fetchone()
+                row_tk = conn.execute(
+                    "SELECT valor FROM config WHERE chave='nuvemshop_access_token'"
+                ).fetchone()
+                if row_id and row_id["valor"]:
+                    store_id = row_id["valor"]
+                if row_tk and row_tk["valor"]:
+                    token = row_tk["valor"]
+        except Exception:
+            pass
+    return store_id, token
+
+
 def _nuvemshop_headers():
-    token = os.getenv("NUVEMSHOP_ACCESS_TOKEN", "")
+    _, token = _get_nv_credentials()
     return {
         "Authentication": f"bearer {token}",
         "User-Agent": "GS Mantos Interno (contato@gsmantos.com.br)",
@@ -1966,10 +1975,9 @@ def _nuvemshop_headers():
 
 def sincronizar_nuvemshop():
     import urllib.request as ureq
-    store_id = os.getenv("NUVEMSHOP_STORE_ID", "")
-    token    = os.getenv("NUVEMSHOP_ACCESS_TOKEN", "")
+    store_id, token = _get_nv_credentials()
     if not store_id or not token:
-        return {"erro": "NuvemShop não configurada no .env"}
+        return {"erro": "NuvemShop não configurada"}
 
     headers = _nuvemshop_headers()
     hoje    = date.today()
@@ -2200,17 +2208,6 @@ def _run_sincronizacao():
         _sync_state["running"] = False
 
 
-def _loop_sincronizacao():
-    import time
-    time.sleep(30)
-    while True:
-        try:
-            _run_sincronizacao()
-        except Exception:
-            pass
-        time.sleep(15 * 60)
-
-
 @app.route("/api/sincronizar", methods=["POST"])
 @login_required
 def sincronizar_manual():
@@ -2224,7 +2221,7 @@ def sincronizar_manual():
 @app.route("/api/sync/status")
 @login_required
 def sync_status():
-    store_id = os.getenv("NUVEMSHOP_STORE_ID", "")
+    store_id, _ = _get_nv_credentials()
     with get_conn() as conn:
         row = conn.execute("SELECT valor FROM config WHERE chave='ultima_sincronizacao'").fetchone()
     return jsonify({
@@ -2276,20 +2273,16 @@ def nuvemshop_callback():
         access_token = token_data.get("access_token", "")
         tid          = str(token_data.get("user_id", store_id))
 
-        env_path = os.path.join(BASE_DIR, ".env")
-        with open(env_path, "r", encoding="utf-8") as f:
-            env_content = f.read()
-
-        for key, val in [("NUVEMSHOP_STORE_ID", tid), ("NUVEMSHOP_ACCESS_TOKEN", access_token)]:
-            if re.search(rf"^{key}=", env_content, re.MULTILINE):
-                env_content = re.sub(rf"^{key}=.*$", f"{key}={val}", env_content, flags=re.MULTILINE)
-            else:
-                env_content += f"\n{key}={val}"
-
-        with open(env_path, "w", encoding="utf-8") as f:
-            f.write(env_content)
-
-        load_dotenv(env_path, override=True)
+        # Salva credenciais no banco de dados (Vercel não tem sistema de arquivos persistente)
+        with get_conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO config (chave, valor) VALUES ('nuvemshop_store_id', ?)",
+                (tid,),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO config (chave, valor) VALUES ('nuvemshop_access_token', ?)",
+                (access_token,),
+            )
 
         return f"""<html><body style="font-family:sans-serif;background:#0d1117;color:#e6edf3;padding:2rem">
             <h2 style="color:#3fb950">&#10003; Conectado com sucesso!</h2>
@@ -2507,8 +2500,7 @@ def api_estoque_sincronizar_catalogo():
     """Busca todos os produtos do NuvemShop, popula produto_nome+variante_label no sku_stock
     e sincroniza quantidades de registros com mesmo nome."""
     import urllib.request as ureq
-    store_id = os.getenv("NUVEMSHOP_STORE_ID", "")
-    token    = os.getenv("NUVEMSHOP_ACCESS_TOKEN", "")
+    store_id, token = _get_nv_credentials()
     if not store_id or not token:
         return jsonify({"erro": "NuvemShop não configurada"}), 400
 
@@ -2751,10 +2743,9 @@ def api_sku_costs_post():
 @login_required
 def api_nuvemshop_produtos():
     import urllib.request as ureq
-    store_id = os.getenv("NUVEMSHOP_STORE_ID", "")
-    token    = os.getenv("NUVEMSHOP_ACCESS_TOKEN", "")
+    store_id, token = _get_nv_credentials()
     if not store_id or not token:
-        return jsonify({"erro": "NuvemShop não configurada no .env"}), 400
+        return jsonify({"erro": "NuvemShop não configurada"}), 400
 
     headers     = _nuvemshop_headers()
     sort_by     = request.args.get("sort_by", "newest")
@@ -2841,8 +2832,7 @@ def api_nuvemshop_produtos():
 @login_required
 def api_nuvemshop_categorias():
     import urllib.request as ureq
-    store_id = os.getenv("NUVEMSHOP_STORE_ID", "")
-    token    = os.getenv("NUVEMSHOP_ACCESS_TOKEN", "")
+    store_id, token = _get_nv_credentials()
     if not store_id or not token:
         return jsonify([])
 
@@ -3102,34 +3092,31 @@ def api_compras_dia():
     })
 
 
-@app.route("/api/stream/alertas")
+@app.route("/api/alertas/poll")
 @login_required
-def stream_alertas():
-    """SSE endpoint — envia alertas de estoque em tempo real para a página de Compras."""
-    q: queue.Queue = queue.Queue(maxsize=50)
-    with _alert_lock:
-        _alert_clients.append(q)
-
-    def generate():
-        try:
-            while True:
-                try:
-                    data = q.get(timeout=25)
-                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-                except queue.Empty:
-                    yield "data: {\"type\":\"ping\"}\n\n"
-        finally:
-            with _alert_lock:
-                try:
-                    _alert_clients.remove(q)
-                except ValueError:
-                    pass
-
-    return app.response_class(
-        generate(),
-        mimetype="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+def poll_alertas():
+    """Polling de alertas de estoque (substitui SSE para compatibilidade com Vercel)."""
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT sku, quantity, min_quantity, produto_nome, variante_label
+            FROM sku_stock
+            WHERE quantity <= min_quantity
+            ORDER BY quantity ASC
+            LIMIT 50
+        """).fetchall()
+    alertas = []
+    for r in rows:
+        alertas.append({
+            "type":     "alerta_estoque",
+            "status":   "sem_estoque" if (r["quantity"] or 0) <= 0 else "estoque_baixo",
+            "produto":  r["produto_nome"] or r["sku"] or "—",
+            "variante": r["variante_label"] or "",
+            "sku":      r["sku"] or "",
+            "qty_atual": r["quantity"] or 0,
+            "min_qty":  r["min_quantity"] or 0,
+            "timestamp": datetime.now().strftime("%H:%M:%S"),
+        })
+    return jsonify(alertas)
 
 
 # ── Routes — Compras Manuais ──────────────────────────────────────────────────
@@ -3407,63 +3394,16 @@ def api_atacado_reabrir(pid):
     return jsonify({"ok": True})
 
 
-# ── Route — Página de Links (sem login) ──────────────────────────────────────
-
-@app.route("/links")
-def links_page():
-    """Página pública com os links atuais dos dois sistemas."""
-    import re as _re
-
-    def _read_cf_url(url_file, err_file):
-        """Lê URL do cloudflare: primeiro do arquivo de URL salvo, depois do log de erro."""
-        # Tenta arquivo de URL direta (salvo pelo script)
-        try:
-            with open(url_file, encoding="utf-8") as fh:
-                u = fh.read().strip()
-            if u and u.startswith("https://"):
-                return u
-        except Exception:
-            pass
-        # Fallback: extrai do log de stderr do cloudflared
-        try:
-            with open(err_file, encoding="utf-8") as fh:
-                m = _re.search(r'https://[a-z0-9\-]+\.trycloudflare\.com', fh.read())
-                if m:
-                    return m.group(0)
-        except Exception:
-            pass
-        return ""
-
-    ped_url = _read_cf_url(
-        r"C:\Users\l3ti\AppData\Local\Temp\cf_pedidos_url.txt",
-        r"C:\Users\l3ti\AppData\Local\Temp\cf_pedidos_err.txt",
-    )
-    fin_url = _read_cf_url(
-        r"C:\Users\l3ti\AppData\Local\Temp\financeiro_url.txt",
-        r"C:\Users\l3ti\AppData\Local\Temp\cf_financeiro_err.txt",
-    )
-
-    return render_template("links.html", ped_url=ped_url, fin_url=fin_url)
-
-
-@app.route("/api/links/financeiro", methods=["POST"])
-def api_set_financeiro_url():
-    """Endpoint para o script de tunnel salvar a URL do financeiro."""
-    data = request.get_json() or {}
-    url  = data.get("url", "").strip()
-    if url:
-        try:
-            with open(r"C:\Users\l3ti\AppData\Local\Temp\financeiro_url.txt", "w", encoding="utf-8") as f:
-                f.write(url)
-        except Exception:
-            pass
-    return jsonify({"ok": True})
+# ── /links removido (dependia de arquivos locais do Windows) ─────────────────
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
+# Inicializa o banco na primeira importação (cold start do Vercel)
+try:
     init_db()
-    threading.Thread(target=_loop_sincronizacao, daemon=True).start()
-    threading.Timer(1.5, lambda: webbrowser.open("http://127.0.0.1:5000")).start()
+except Exception:
+    pass
+
+if __name__ == "__main__":
     app.run(debug=False, host="0.0.0.0", port=5000)

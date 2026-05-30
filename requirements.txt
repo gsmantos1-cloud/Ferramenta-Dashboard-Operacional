@@ -1,3 +1,6 @@
 flask
 holidays
 openpyxl
+python-dotenv
+anthropic
+werkzeug
