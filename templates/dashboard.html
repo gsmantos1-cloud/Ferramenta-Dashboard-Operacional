@@ -1,0 +1,1257 @@
+{% extends 'base.html' %}
+{% block title %}Dashboard — Ferramenta de Pedidos{% endblock %}
+
+{% block content %}
+
+<!-- Header -->
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h5 class="mb-0 fw-bold">Dashboard</h5>
+        <small style="color:var(--muted)">Pedidos ativos e situação em tempo real</small>
+    </div>
+    <div class="d-flex gap-2">
+        <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#modalNovoPedido">
+            <i class="bi bi-plus-circle me-1"></i>Novo Pedido
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#modalImportar">
+            <i class="bi bi-upload me-1"></i>Importar Pedidos
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="atualizarManual(this)">
+            <i class="bi bi-arrow-clockwise me-1"></i>Atualizar
+        </button>
+        <button class="btn btn-sm" id="btnSync" onclick="sincronizarAgora(this)"
+                style="background:rgba(88,166,255,.12);border:1px solid rgba(88,166,255,.3);color:var(--blue)">
+            <i class="bi bi-cloud-download me-1"></i>Sincronizar NuvemShop
+        </button>
+    </div>
+</div>
+<div id="syncStatus" style="font-size:.75rem;color:var(--muted);text-align:right;margin-top:-12px;margin-bottom:8px"></div>
+
+<!-- Modal de Importação -->
+<div class="modal fade" id="modalImportar" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border);color:var(--text)">
+      <div class="modal-header" style="border-bottom:1px solid var(--border)">
+        <h6 class="modal-title fw-bold"><i class="bi bi-upload me-2"></i>Importar Pedidos</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+
+        <!-- Tabs -->
+        <div class="d-flex gap-1 mb-4" style="border-bottom:1px solid var(--border);padding-bottom:0">
+          <button class="tab-btn active" id="tab-img-btn" onclick="switchTab('img')">
+            <i class="bi bi-image me-1"></i>Via Imagem (IA)
+          </button>
+          <button class="tab-btn" id="tab-arq-btn" onclick="switchTab('arq')">
+            <i class="bi bi-file-earmark-spreadsheet me-1"></i>Via Arquivo CSV/Excel
+          </button>
+        </div>
+
+        <!-- Categoria padrão -->
+        <div class="mb-3 d-flex align-items-center gap-3">
+          <label class="form-label mb-0" style="white-space:nowrap">Categoria padrão:</label>
+          <select class="form-select form-select-sm" id="importCategoria" style="max-width:180px">
+            <option value="Normal">Normal</option>
+            <option value="Personalizado">Personalizado</option>
+            <option value="Internacional">Internacional</option>
+          </select>
+        </div>
+
+        <!-- TAB: Imagem -->
+        <div id="tab-img">
+          <div class="mb-3">
+            <label class="form-label">Envie uma captura de tela com os pedidos</label>
+            <input type="file" class="form-control" id="inputImagem" accept="image/*">
+          </div>
+          <div id="imgPreviewBox" class="mb-3" style="display:none">
+            <img id="imgPreview" style="max-height:220px;border-radius:6px;border:1px solid var(--border)">
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="analisarImagem()" id="btnAnalisar">
+            <i class="bi bi-magic me-1"></i>Analisar com IA
+          </button>
+          <div id="avisoApiKey" class="mt-2" style="display:none">
+            <small style="color:var(--yellow)"><i class="bi bi-exclamation-triangle me-1"></i>
+            Configure o <code>ANTHROPIC_API_KEY</code> no arquivo <strong>.env</strong> para usar esta função.</small>
+          </div>
+        </div>
+
+        <!-- TAB: Arquivo -->
+        <div id="tab-arq" style="display:none">
+          <div class="mb-3">
+            <label class="form-label">Selecione o arquivo exportado da NuvemShop (CSV ou Excel)</label>
+            <input type="file" class="form-control" id="inputArquivo" accept=".csv,.xlsx,.xls">
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="importarArquivo()" id="btnArquivo">
+            <i class="bi bi-file-earmark-arrow-up me-1"></i>Extrair Pedidos
+          </button>
+        </div>
+
+        <!-- Preview -->
+        <div id="previewImport" style="display:none" class="mt-4">
+          <hr style="border-color:var(--border)">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <small class="fw-semibold" style="color:var(--muted);letter-spacing:.06em">PEDIDOS ENCONTRADOS</small>
+            <small id="previewCount" style="color:var(--muted)"></small>
+          </div>
+          <div style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:6px">
+            <table class="table mb-0" style="font-size:0.8rem">
+              <thead>
+                <tr>
+                  <th class="ps-3">Número</th>
+                  <th>Data</th>
+                  <th>Cliente</th>
+                  <th>Total</th>
+                  <th>Pagamento</th>
+                  <th>Envio</th>
+                </tr>
+              </thead>
+              <tbody id="previewTabela"></tbody>
+            </table>
+          </div>
+          <small style="color:var(--muted)" class="mt-2 d-block">
+            <span style="color:var(--red)">●</span> Pagamento pendente = será ignorado &nbsp;
+            <span style="color:var(--green)">●</span> Enviada = vai direto ao relatório
+          </small>
+        </div>
+
+      </div>
+      <div class="modal-footer" style="border-top:1px solid var(--border)">
+        <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-primary btn-sm" onclick="confirmarImportacao()" id="btnConfirmar" style="display:none">
+          <i class="bi bi-check2-circle me-1"></i>Confirmar e Salvar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Novo Pedido -->
+<div class="modal fade" id="modalNovoPedido" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border);color:var(--text)">
+      <div class="modal-header" style="border-bottom:1px solid var(--border)">
+        <h6 class="modal-title fw-bold"><i class="bi bi-plus-circle me-2"></i>Novo Pedido</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <form id="formPedido" autocomplete="off">
+          <div class="mb-3">
+            <label class="form-label">Número do Pedido</label>
+            <input type="text" class="form-control" id="numero" placeholder="Ex: 2000" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Data do Pedido</label>
+            <input type="date" class="form-control" id="data_pedido" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Categoria</label>
+            <select class="form-select" id="categoria">
+              <option value="Normal">Normal</option>
+              <option value="Personalizado">Personalizado</option>
+              <option value="Internacional">Internacional</option>
+            </select>
+          </div>
+          <button type="submit" class="btn btn-primary w-100" id="btnCadastrar">
+            <i class="bi bi-plus-circle me-1"></i>Cadastrar Pedido
+          </button>
+        </form>
+        <div id="alertMsg" class="mt-3" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal detalhes do pedido -->
+<div class="modal fade" id="modalDetalhe" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border)">
+            <div class="modal-header" style="border-bottom:1px solid var(--border)">
+                <h6 class="modal-title fw-bold" id="detalheTitle">Pedido</h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="detalheCorpo" style="padding:0">
+                <div class="text-center py-5" style="color:var(--muted)">
+                    <span class="spinner-border spinner-border-sm me-2"></span>Carregando…
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Alerta de mudança de status iminente -->
+<div id="alertaUrgencia" style="display:none" class="mb-4"></div>
+
+<!-- Status cards — row 1: status ativos (clicáveis para filtrar) -->
+<div class="row g-3 mb-3">
+    <div class="col-6 col-lg-3">
+        <div class="card status-card s-prazo p-3 card-filtro" onclick="setFiltro('NO PRAZO')" data-filtro="NO PRAZO" title="Filtrar: No prazo">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <span class="stat-pct b-prazo" id="pct-prazo">—%</span>
+                <i class="bi bi-check-circle-fill" style="color:var(--green);font-size:1.1rem"></i>
+            </div>
+            <div class="stat-num" style="color:var(--green)" id="cnt-prazo">—</div>
+            <div class="stat-label">NO PRAZO</div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card status-card s-leve p-3 card-filtro" onclick="setFiltro('Atraso leve')" data-filtro="Atraso leve" title="Filtrar: Atraso leve">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <span class="stat-pct b-leve" id="pct-leve">—%</span>
+                <i class="bi bi-exclamation-triangle-fill" style="color:var(--yellow);font-size:1.1rem"></i>
+            </div>
+            <div class="stat-num" style="color:var(--yellow)" id="cnt-leve">—</div>
+            <div class="stat-label">ATRASO LEVE</div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card status-card s-moderado p-3 card-filtro" onclick="setFiltro('Atraso moderado')" data-filtro="Atraso moderado" title="Filtrar: Atraso moderado">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <span class="stat-pct b-moderado" id="pct-moderado">—%</span>
+                <i class="bi bi-exclamation-circle-fill" style="color:var(--orange);font-size:1.1rem"></i>
+            </div>
+            <div class="stat-num" style="color:var(--orange)" id="cnt-moderado">—</div>
+            <div class="stat-label">ATRASO MODERADO</div>
+        </div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card status-card s-critico p-3 card-filtro" onclick="setFiltro('Atraso crítico')" data-filtro="Atraso crítico" title="Filtrar: Atraso crítico">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <span class="stat-pct b-critico" id="pct-critico">—%</span>
+                <i class="bi bi-x-octagon-fill" style="color:var(--red);font-size:1.1rem"></i>
+            </div>
+            <div class="stat-num" style="color:var(--red)" id="cnt-critico">—</div>
+            <div class="stat-label">ATRASO CRÍTICO</div>
+        </div>
+    </div>
+</div>
+
+<!-- Status cards — row 2: enviados + suspeitos -->
+<div class="row g-3 mb-4">
+    <div class="col-6">
+        <div class="card p-3" style="border-color:rgba(88,166,255,.25);cursor:pointer" onclick="window.location='/relatorios'" title="Ver relatório de enviados">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <span class="stat-pct" style="background:rgba(88,166,255,.15);color:#58a6ff" id="lbl-enviados">Total</span>
+                <i class="bi bi-send-check-fill" style="color:#58a6ff;font-size:1.1rem"></i>
+            </div>
+            <div class="stat-num" style="color:#58a6ff" id="cnt-enviados">—</div>
+            <div class="stat-label">ENVIADOS</div>
+        </div>
+    </div>
+    <div class="col-6">
+        <div class="card p-3 card-filtro" style="border-color:rgba(210,153,34,.3)" id="card-suspeitos" onclick="setFiltro('suspeitos')" data-filtro="suspeitos" title="Filtrar: Suspeitos">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <span class="stat-pct b-leve" id="lbl-suspeitos">Em análise</span>
+                <i class="bi bi-shield-exclamation" style="color:var(--yellow);font-size:1.1rem"></i>
+            </div>
+            <div class="stat-num" style="color:var(--yellow)" id="cnt-suspeitos">—</div>
+            <div class="stat-label">SUSPEITOS</div>
+        </div>
+    </div>
+</div>
+
+<!-- Chart -->
+<div class="card mb-4">
+    <div class="card-header d-flex align-items-center justify-content-between">
+        <small class="fw-semibold" style="color:var(--muted)">DISTRIBUIÇÃO ATUAL</small>
+        <small style="color:var(--muted)" id="totalLabel">— pedidos ativos</small>
+    </div>
+    <div class="card-body d-flex align-items-center justify-content-center py-3">
+        <div style="width:200px">
+            <canvas id="grafico"></canvas>
+        </div>
+    </div>
+</div>
+
+<!-- Filter bar -->
+<div class="card mb-2">
+    <div class="card-body py-2 px-3">
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+            <small class="fw-semibold me-1" style="color:var(--muted);letter-spacing:.05em">FILTRAR:</small>
+            <button class="filter-btn ativo" data-filtro="todos"            onclick="setFiltro('todos')">Todos</button>
+            <button class="filter-btn"        data-filtro="NO PRAZO"        onclick="setFiltro('NO PRAZO')">No prazo</button>
+            <button class="filter-btn"        data-filtro="Atraso leve"     onclick="setFiltro('Atraso leve')">Atraso leve</button>
+            <button class="filter-btn"        data-filtro="Atraso moderado" onclick="setFiltro('Atraso moderado')">Moderado</button>
+            <button class="filter-btn"        data-filtro="Atraso crítico"  onclick="setFiltro('Atraso crítico')">Crítico</button>
+            <button class="filter-btn"        data-filtro="suspeitos"       onclick="setFiltro('suspeitos')">
+                <i class="bi bi-shield-exclamation me-1"></i>Suspeitos
+            </button>
+            <div class="d-flex gap-2 align-items-center ms-auto flex-wrap">
+                <div class="input-group input-group-sm" style="width:180px">
+                    <span class="input-group-text" style="background:var(--card-bg);border-color:var(--border)">
+                        <i class="bi bi-search" style="color:var(--muted)"></i>
+                    </span>
+                    <input type="text" class="form-control" id="buscaNumero"
+                           placeholder="Nº do pedido..." oninput="paginaAtual=1;renderTabela()">
+                </div>
+                <small style="color:var(--muted)">Data:</small>
+                <input type="date" class="form-control form-control-sm" id="filtroDataDe"  style="width:138px" oninput="paginaAtual=1;renderTabela()">
+                <small style="color:var(--muted)">até</small>
+                <input type="date" class="form-control form-control-sm" id="filtroDataAte" style="width:138px" oninput="paginaAtual=1;renderTabela()">
+                <button class="btn btn-outline-secondary btn-sm px-2" onclick="limparFiltros()" title="Limpar filtros">
+                    <i class="bi bi-x-circle"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Bulk action bar (aparece quando há seleção) -->
+<div id="bulkBar" class="card mb-2 px-3 py-2" style="display:none;border-color:rgba(88,166,255,.4);background:rgba(88,166,255,.06)">
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+        <span id="bulkCount" class="fw-semibold" style="color:var(--blue);font-size:.85rem"></span>
+        <div class="d-flex gap-2 ms-2">
+            <button class="btn btn-sm btn-outline-secondary" onclick="bulkAcao('enviar')" style="color:var(--green);border-color:rgba(63,185,80,.4)">
+                <i class="bi bi-check2-circle me-1"></i>Enviar
+            </button>
+            <button class="btn btn-sm btn-outline-warning" onclick="bulkAcao('suspeito')">
+                <i class="bi bi-shield-exclamation me-1"></i>Suspeito
+            </button>
+            <button class="btn btn-sm btn-outline-secondary" onclick="bulkAcao('cancelar')" style="color:var(--orange);border-color:rgba(240,136,62,.4)">
+                <i class="bi bi-x-circle me-1"></i>Cancelar
+            </button>
+            <button class="btn btn-sm btn-outline-danger" onclick="bulkAcao('excluir')">
+                <i class="bi bi-trash3 me-1"></i>Excluir
+            </button>
+        </div>
+        <button class="btn btn-sm btn-link ms-auto" onclick="limparSelecao()" style="color:var(--muted);font-size:.8rem">
+            Desmarcar todos
+        </button>
+    </div>
+</div>
+
+<!-- Orders table -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <small class="fw-semibold" style="color:var(--muted)">PEDIDOS ATIVOS</small>
+        <small style="color:var(--muted)" id="totalAtivos"></small>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th class="ps-2" style="width:36px">
+                            <input type="checkbox" class="form-check-input" id="checkAll" onchange="toggleTodos(this.checked)" title="Selecionar página">
+                        </th>
+                        <th>Número</th>
+                        <th>Data do Pedido</th>
+                        <th>Dias Úteis</th>
+                        <th>Status</th>
+                        <th class="text-end pe-3">Ações</th>
+                    </tr>
+                </thead>
+                <tbody id="tabela">
+                    <tr><td colspan="6" class="text-center py-4" style="color:var(--muted)">
+                        <span class="spinner-border spinner-border-sm me-2"></span>Carregando...
+                    </td></tr>
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td colspan="6" class="p-0">
+                            <div id="paginacaoBar" class="d-flex justify-content-between align-items-center px-3 py-2" style="border-top:1px solid var(--border)">
+                                <small style="color:var(--muted)" id="paginacaoInfo"></small>
+                                <div class="d-flex gap-1" id="paginacaoBotoes"></div>
+                            </div>
+                        </td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const COLORS = {
+    'NO PRAZO':        '#3fb950',
+    'Atraso leve':     '#d29922',
+    'Atraso moderado': '#f0883e',
+    'Atraso crítico':  '#f85149',
+};
+const BADGE = {
+    'NO PRAZO':        'b-prazo',
+    'Atraso leve':     'b-leve',
+    'Atraso moderado': 'b-moderado',
+    'Atraso crítico':  'b-critico',
+};
+
+document.getElementById('data_pedido').valueAsDate = new Date();
+
+let chart         = null;
+let todosOsPedidos = [];
+let filtroStatus   = 'todos';
+let selecionados   = new Set();
+let paginaAtual    = 1;
+const POR_PAGINA   = 50;
+
+function fmtData(s) {
+    const [y,m,d] = s.split('-');
+    return `${d}/${m}/${y}`;
+}
+
+function setFiltro(status) {
+    filtroStatus  = status;
+    paginaAtual   = 1;
+    document.querySelectorAll('.filter-btn').forEach(b =>
+        b.classList.toggle('ativo', b.dataset.filtro === status));
+    document.querySelectorAll('.card-filtro').forEach(c =>
+        c.classList.toggle('card-filtro-ativo', c.dataset.filtro === status));
+    renderTabela();
+}
+
+function limparFiltros() {
+    document.getElementById('filtroDataDe').value  = '';
+    document.getElementById('filtroDataAte').value = '';
+    document.getElementById('buscaNumero').value   = '';
+    paginaAtual = 1;
+    setFiltro('todos');
+}
+
+function toggleSelecao(id) {
+    if (selecionados.has(id)) selecionados.delete(id);
+    else selecionados.add(id);
+    atualizarBulkBar();
+}
+
+function toggleTodos(checked) {
+    const checks = document.querySelectorAll('.pedido-check');
+    checks.forEach(c => {
+        const id = parseInt(c.dataset.id);
+        if (checked) selecionados.add(id);
+        else selecionados.delete(id);
+    });
+    atualizarBulkBar();
+    renderTabela();
+}
+
+function limparSelecao() {
+    selecionados.clear();
+    atualizarBulkBar();
+    const ca = document.getElementById('checkAll');
+    if (ca) ca.checked = false;
+    renderTabela();
+}
+
+function atualizarBulkBar() {
+    const bar = document.getElementById('bulkBar');
+    const cnt = document.getElementById('bulkCount');
+    if (selecionados.size > 0) {
+        bar.style.display = '';
+        cnt.textContent   = `${selecionados.size} pedido${selecionados.size !== 1 ? 's' : ''} selecionado${selecionados.size !== 1 ? 's' : ''}`;
+    } else {
+        bar.style.display = 'none';
+    }
+}
+
+async function bulkAcao(acao) {
+    if (!selecionados.size) return;
+    const n = selecionados.size;
+    const msgs = {
+        enviar:  `Marcar ${n} pedido(s) como enviado?`,
+        suspeito:`Marcar ${n} pedido(s) como suspeito?`,
+        cancelar:`Cancelar ${n} pedido(s)?`,
+        excluir: `Excluir permanentemente ${n} pedido(s)? Esta ação não pode ser desfeita.`,
+    };
+    if (!confirm(msgs[acao])) return;
+    const endpoints = { enviar:'enviar', suspeito:'suspeito', cancelar:'cancelar', excluir:'' };
+    const method    = acao === 'excluir' ? 'DELETE' : 'POST';
+    await Promise.all([...selecionados].map(id => {
+        const url = acao === 'excluir'
+            ? `/api/pedidos/${id}`
+            : `/api/pedidos/${id}/${endpoints[acao]}`;
+        return fetch(url, { method });
+    }));
+    limparSelecao();
+    atualizar();
+}
+
+function irPagina(n) {
+    paginaAtual = n;
+    renderTabela();
+    document.querySelector('.card:last-of-type').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderPaginacao(total, totalPaginas) {
+    const info   = document.getElementById('paginacaoInfo');
+    const botoes = document.getElementById('paginacaoBotoes');
+    const bar    = document.getElementById('paginacaoBar');
+
+    if (total === 0) { bar.style.display = 'none'; return; }
+    bar.style.display = '';
+
+    const ini = (paginaAtual - 1) * POR_PAGINA + 1;
+    const fim = Math.min(paginaAtual * POR_PAGINA, total);
+    info.textContent = `${ini}–${fim} de ${total} pedido${total !== 1 ? 's' : ''}`;
+
+    if (totalPaginas <= 1) { botoes.innerHTML = ''; return; }
+
+    const pageSet = new Set([1, totalPaginas, paginaAtual, paginaAtual - 1, paginaAtual + 1]
+        .filter(p => p >= 1 && p <= totalPaginas));
+    const sorted = [...pageSet].sort((a, b) => a - b);
+
+    let html = `<button class="btn btn-sm btn-outline-secondary px-2 ${paginaAtual === 1 ? 'disabled' : ''}"
+                        onclick="irPagina(${paginaAtual - 1})"><i class="bi bi-chevron-left"></i></button>`;
+    let prev = 0;
+    for (const pg of sorted) {
+        if (prev && pg - prev > 1) html += `<button class="btn btn-sm btn-outline-secondary disabled px-2">…</button>`;
+        html += `<button class="btn btn-sm px-3 ${pg === paginaAtual ? 'btn-primary' : 'btn-outline-secondary'}"
+                         onclick="irPagina(${pg})">${pg}</button>`;
+        prev = pg;
+    }
+    html += `<button class="btn btn-sm btn-outline-secondary px-2 ${paginaAtual === totalPaginas ? 'disabled' : ''}"
+                     onclick="irPagina(${paginaAtual + 1})"><i class="bi bi-chevron-right"></i></button>`;
+    botoes.innerHTML = html;
+}
+
+function renderTabela() {
+    const de     = document.getElementById('filtroDataDe').value;
+    const ate    = document.getElementById('filtroDataAte').value;
+    const busca  = document.getElementById('buscaNumero').value.trim().toLowerCase();
+
+    const filtrado = todosOsPedidos.filter(p => {
+        if (filtroStatus === 'suspeitos')  { if (!p.suspeito) return false; }
+        else if (filtroStatus !== 'todos') { if (p.status !== filtroStatus || p.suspeito) return false; }
+        if (de    && p.data_pedido < de)                      return false;
+        if (ate   && p.data_pedido > ate)                     return false;
+        if (busca && !p.numero.toLowerCase().includes(busca)) return false;
+        return true;
+    });
+
+    const totalPaginas = Math.max(1, Math.ceil(filtrado.length / POR_PAGINA));
+    if (paginaAtual > totalPaginas) paginaAtual = totalPaginas;
+    const pagina = filtrado.slice((paginaAtual - 1) * POR_PAGINA, paginaAtual * POR_PAGINA);
+
+    const hayFiltro = filtroStatus !== 'todos' || de || ate || busca;
+    document.getElementById('totalAtivos').textContent = hayFiltro
+        ? `${filtrado.length} de ${todosOsPedidos.length} pedido${todosOsPedidos.length !== 1 ? 's' : ''}`
+        : `${todosOsPedidos.length} pedido${todosOsPedidos.length !== 1 ? 's' : ''}`;
+
+    renderPaginacao(filtrado.length, totalPaginas);
+
+    const todosNaPaginaSelecionados = pagina.length > 0 && pagina.every(p => selecionados.has(p.id));
+    const ca = document.getElementById('checkAll');
+    if (ca) ca.checked = todosNaPaginaSelecionados;
+
+    const tbody = document.getElementById('tabela');
+    if (!filtrado.length) {
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center py-5" style="color:var(--muted)">
+            <i class="bi bi-funnel" style="font-size:2rem;display:block;margin-bottom:8px"></i>
+            ${hayFiltro ? 'Nenhum pedido com esses filtros' : 'Nenhum pedido ativo no momento'}
+        </td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = pagina.map(p => {
+        const rowBg = p.suspeito ? 'background:rgba(210,153,34,.07)' : '';
+        const suspBadge = p.suspeito
+            ? `<span class="badge rounded-pill b-leve ms-2" style="font-size:.62rem;vertical-align:middle">
+                 <i class="bi bi-shield-exclamation"></i> Suspeito
+               </span>` : '';
+        const suspBtn = p.suspeito
+            ? `<button class="btn btn-sm btn-warning me-1"
+                       onclick="toggleSuspeito(${p.id},'${escHtml(p.numero)}',true)"
+                       title="Confirmar — remover suspeito">
+                 <i class="bi bi-shield-check"></i>
+               </button>`
+            : `<button class="btn btn-sm btn-outline-warning me-1"
+                       onclick="toggleSuspeito(${p.id},'${escHtml(p.numero)}',false)"
+                       title="Marcar como suspeito">
+                 <i class="bi bi-shield-exclamation"></i>
+               </button>`;
+        const isPersonalizado  = p.categoria === 'Personalizado';
+        const isInternacional  = p.categoria === 'Internacional';
+
+        const catBadge = isPersonalizado
+            ? `<span class="badge rounded-pill ms-2" style="font-size:.62rem;vertical-align:middle;background:rgba(88,166,255,.15);color:var(--blue);border:1px solid rgba(88,166,255,.3)">
+                 <i class="bi bi-star-fill"></i> Personalizado
+               </span>`
+            : isInternacional
+            ? `<span class="badge rounded-pill ms-2" style="font-size:.62rem;vertical-align:middle;background:rgba(63,185,80,.12);color:var(--green);border:1px solid rgba(63,185,80,.3)">
+                 <i class="bi bi-globe2"></i> Internacional
+               </span>`
+            : '';
+
+        const persBadge = p.personalizacao_status
+            ? `<a href="/personalizacoes" class="badge rounded-pill ms-2" title="Personalização: ${p.personalizacao_status}"
+                  style="font-size:.62rem;vertical-align:middle;background:rgba(137,87,229,.18);
+                         color:#8957e5;border:1px solid rgba(137,87,229,.4);text-decoration:none">
+                 <i class="bi bi-stars"></i> ${p.personalizacao_status}
+               </a>`
+            : '';
+
+        const btnPersonalizado = isPersonalizado
+            ? `<button class="btn btn-sm me-1" onclick="toggleCategoria(${p.id},'${p.categoria}','Personalizado')"
+                       title="Remover Personalizado"
+                       style="background:rgba(88,166,255,.2);border:1px solid rgba(88,166,255,.4);color:var(--blue)">
+                 <i class="bi bi-star-fill"></i>
+               </button>`
+            : `<button class="btn btn-sm btn-outline-secondary me-1" onclick="toggleCategoria(${p.id},'${p.categoria}','Personalizado')"
+                       title="Marcar como Personalizado"
+                       style="color:var(--blue);border-color:rgba(88,166,255,.3)">
+                 <i class="bi bi-star"></i>
+               </button>`;
+
+        const btnInternacional = isInternacional
+            ? `<button class="btn btn-sm me-1" onclick="toggleCategoria(${p.id},'${p.categoria}','Internacional')"
+                       title="Remover Internacional"
+                       style="background:rgba(63,185,80,.15);border:1px solid rgba(63,185,80,.4);color:var(--green)">
+                 <i class="bi bi-globe2"></i>
+               </button>`
+            : `<button class="btn btn-sm btn-outline-secondary me-1" onclick="toggleCategoria(${p.id},'${p.categoria}','Internacional')"
+                       title="Marcar como Internacional"
+                       style="color:var(--green);border-color:rgba(63,185,80,.3)">
+                 <i class="bi bi-globe2"></i>
+               </button>`;
+        return `
+        <tr style="${rowBg}">
+            <td class="ps-2" style="width:36px">
+                <input type="checkbox" class="form-check-input pedido-check" data-id="${p.id}"
+                       ${selecionados.has(p.id) ? 'checked' : ''} onchange="toggleSelecao(${p.id})">
+            </td>
+            <td class="fw-semibold">
+                <span onclick="abrirDetalhe('${escHtml(p.numero)}')"
+                      style="cursor:pointer;color:var(--blue);text-decoration:none"
+                      onmouseover="this.style.textDecoration='underline'"
+                      onmouseout="this.style.textDecoration='none'"
+                      title="Ver detalhes do pedido">#${escHtml(p.numero)}</span>
+                ${suspBadge}${catBadge}${persBadge}
+            </td>
+            <td>${fmtData(p.data_pedido)}</td>
+            <td>
+                <span class="fw-semibold">${p.dias_uteis}</span>
+                <small style="color:var(--muted)"> dias</small>
+            </td>
+            <td><span class="badge rounded-pill ${BADGE[p.status] || 'b-critico'}">${p.status}</span></td>
+            <td class="text-end pe-3">
+                ${btnPersonalizado}
+                ${btnInternacional}
+                ${suspBtn}
+                <button class="btn btn-sm btn-outline-secondary me-1"
+                        onclick="enviar(${p.id},'${escHtml(p.numero)}')" title="Marcar como enviado">
+                    <i class="bi bi-check2-circle"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-secondary me-1"
+                        onclick="cancelar(${p.id},'${escHtml(p.numero)}')" title="Cancelar pedido"
+                        style="color:var(--orange);border-color:rgba(240,136,62,.3)">
+                    <i class="bi bi-x-circle"></i>
+                </button>
+                <button class="btn btn-sm btn-outline-danger"
+                        onclick="excluir(${p.id},'${escHtml(p.numero)}')" title="Excluir permanentemente">
+                    <i class="bi bi-trash3"></i>
+                </button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+async function carregarStats() {
+    const d = await fetch('/api/stats').then(r => r.json());
+    const m = {};
+    d.por_status.forEach(s => m[s.status] = s);
+
+    const set = (id, s) => {
+        document.getElementById(`cnt-${id}`).textContent = m[s]?.total ?? 0;
+        document.getElementById(`pct-${id}`).textContent = (m[s]?.percentual ?? 0) + '%';
+    };
+    set('prazo',    'NO PRAZO');
+    set('leve',     'Atraso leve');
+    set('moderado', 'Atraso moderado');
+    set('critico',  'Atraso crítico');
+
+    document.getElementById('cnt-enviados').textContent = d.enviados ?? 0;
+    document.getElementById('lbl-enviados').textContent = `${d.enviados ?? 0} total`;
+
+    const nSusp = d.suspeitos ?? 0;
+    document.getElementById('cnt-suspeitos').textContent = nSusp;
+    document.getElementById('lbl-suspeitos').textContent = nSusp > 0 ? 'Em análise' : 'Nenhum';
+    document.getElementById('card-suspeitos').style.borderColor =
+        nSusp > 0 ? 'rgba(210,153,34,.5)' : 'var(--border)';
+
+    document.getElementById('totalLabel').textContent =
+        `${d.total} pedido${d.total !== 1 ? 's' : ''} ativo${d.total !== 1 ? 's' : ''}`;
+
+    const labels = d.por_status.map(s => s.status);
+    const vals   = d.por_status.map(s => s.total);
+    const cols   = labels.map(l => COLORS[l]);
+
+    if (chart) {
+        chart.data.datasets[0].data = vals;
+        chart.update('none');
+    } else {
+        chart = new Chart(document.getElementById('grafico'), {
+            type: 'doughnut',
+            data: {
+                labels,
+                datasets: [{ data: vals, backgroundColor: cols, borderColor: '#161b22', borderWidth: 3, hoverOffset: 8 }]
+            },
+            options: {
+                plugins: {
+                    legend: { position: 'bottom', labels: { color: '#8b949e', font: { size: 11 }, padding: 14, boxWidth: 11 } }
+                },
+                cutout: '68%',
+            }
+        });
+    }
+}
+
+async function carregarPedidos() {
+    todosOsPedidos = await fetch('/api/pedidos').then(r => r.json());
+    renderTabela();
+}
+
+function escHtml(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+        ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function atualizar() { carregarStats(); carregarPedidos(); }
+
+let _syncPoller = null;
+
+async function sincronizarAgora(btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sincronizando...';
+    document.getElementById('syncStatus').textContent = 'Sincronizando em background...';
+    try {
+        await fetch('/api/sincronizar', { method: 'POST' });
+    } catch(e) {}
+    _iniciarPollingSync();
+}
+
+function _iniciarPollingSync() {
+    if (_syncPoller) return;
+    _syncPoller = setInterval(async () => {
+        try {
+            const r = await fetch('/api/sync/status');
+            const d = await r.json();
+            const btn = document.getElementById('btnSync');
+            const el = document.getElementById('syncStatus');
+            if (!d.running) {
+                clearInterval(_syncPoller);
+                _syncPoller = null;
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-cloud-download me-1"></i>Sincronizar NuvemShop';
+                const res = d.ultimo_resultado;
+                if (res && res.erro) {
+                    el.textContent = '⚠ Erro: ' + res.erro;
+                } else if (res) {
+                    const msg = `✓ ${res.salvos ?? 0} novo(s)${res.reconciliados ? ', ' + res.reconciliados + ' reconciliado(s)' : ''}`;
+                    el.textContent = msg + ' — ' + new Date().toLocaleTimeString('pt-BR');
+                    atualizar();
+                } else if (d.ultima_sincronizacao) {
+                    const dt = new Date(d.ultima_sincronizacao + 'Z');
+                    el.textContent = 'Última sincronização: ' + dt.toLocaleString('pt-BR');
+                }
+            }
+        } catch(e) {}
+    }, 3000);
+}
+
+async function carregarSyncStatus() {
+    try {
+        const r = await fetch('/api/sync/status');
+        const d = await r.json();
+        const el = document.getElementById('syncStatus');
+        const btn = document.getElementById('btnSync');
+        if (d.running) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sincronizando...';
+            el.textContent = 'Sincronizando em background...';
+            _iniciarPollingSync();
+        } else if (d.ultima_sincronizacao) {
+            const dt = new Date(d.ultima_sincronizacao + 'Z');
+            el.textContent = 'Última sincronização: ' + dt.toLocaleString('pt-BR');
+        }
+    } catch(e) {}
+}
+
+async function atualizarManual(btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Atualizando...';
+    await fetch('/api/atualizar', { method: 'POST' });
+    atualizar();
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Atualizar agora';
+}
+
+async function enviar(id, numero) {
+    if (!confirm(`Marcar pedido ${numero} como enviado?\nEle será movido para o histórico de relatórios.`)) return;
+    await fetch(`/api/pedidos/${id}/enviar`, { method: 'POST' });
+    atualizar();
+}
+
+async function excluir(id, numero) {
+    if (!confirm(`Excluir pedido ${numero}? Esta ação não pode ser desfeita.`)) return;
+    await fetch(`/api/pedidos/${id}`, { method: 'DELETE' });
+    atualizar();
+}
+
+async function cancelar(id, numero) {
+    if (!confirm(`Cancelar pedido ${numero}?\nEle será movido para o histórico como "Cancelado".`)) return;
+    await fetch(`/api/pedidos/${id}/cancelar`, { method: 'POST' });
+    atualizar();
+}
+
+async function toggleCategoria(id, categoriaAtual, target) {
+    const nova = categoriaAtual === target ? 'Normal' : target;
+    await fetch(`/api/pedidos/${id}/categoria`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ categoria: nova }),
+    });
+    atualizar();
+}
+
+async function toggleSuspeito(id, numero, isSuspeito) {
+    const msg = isSuspeito
+        ? `Remover marcação de suspeito do pedido ${numero}?\nEle voltará para a lista normal.`
+        : `Marcar pedido ${numero} como suspeito?\nEle ficará retido até confirmação de pagamento.`;
+    if (!confirm(msg)) return;
+    await fetch(`/api/pedidos/${id}/suspeito`, { method: 'POST' });
+    atualizar();
+}
+
+document.getElementById('formPedido').addEventListener('submit', async e => {
+    e.preventDefault();
+    const btn  = document.getElementById('btnCadastrar');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Cadastrando...';
+
+    const resp = await fetch('/api/pedidos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            numero:      document.getElementById('numero').value,
+            data_pedido: document.getElementById('data_pedido').value,
+            categoria:   document.getElementById('categoria').value,
+        })
+    });
+
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-plus-circle me-1"></i>Cadastrar Pedido';
+
+    if (resp.ok) {
+        document.getElementById('numero').value = '';
+        document.getElementById('data_pedido').valueAsDate = new Date();
+        bootstrap.Modal.getInstance(document.getElementById('modalNovoPedido'))?.hide();
+        atualizar();
+    } else {
+        const err = await resp.json();
+        const alrt = document.getElementById('alertMsg');
+        alrt.style.display = 'block';
+        alrt.innerHTML = `<div class="alert alert-danger py-2 mb-0" style="background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.3);color:#f85149;border-radius:6px"><i class="bi bi-x me-1"></i>${err.erro}</div>`;
+    }
+});
+
+atualizar();
+setInterval(atualizar, 60000);
+carregarAlertaUrgencia();
+carregarSyncStatus();
+
+async function carregarAlertaUrgencia() {
+    try {
+        const r = await fetch('/api/notificacoes');
+        const d = await r.json();
+        const el = document.getElementById('alertaUrgencia');
+        if (!d.total || !d.grupos.length) { el.style.display = 'none'; return; }
+
+        const COR = {
+            'Atraso crítico':  { bg:'rgba(248,81,73,.1)',  borda:'#f85149', texto:'#f85149', icone:'bi-x-octagon-fill',           label:'CRÍTICO' },
+            'Atraso moderado': { bg:'rgba(240,136,62,.1)', borda:'#f0883e', texto:'#f0883e', icone:'bi-exclamation-circle-fill',   label:'MODERADO' },
+            'Atraso leve':     { bg:'rgba(210,153,34,.1)', borda:'#d29922', texto:'#d29922', icone:'bi-exclamation-triangle-fill', label:'LEVE' },
+        };
+
+        let html = `
+        <div style="border-radius:8px;overflow:hidden;border:1px solid rgba(248,81,73,.3);background:var(--card-bg)">
+            <div style="padding:.5rem 1rem;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
+                <span style="display:flex;align-items:center;gap:.4rem;font-size:.75rem;font-weight:700;letter-spacing:.06em;color:#f85149;white-space:nowrap">
+                    <i class="bi bi-bell-fill"></i>AMANHÃ
+                </span>
+                <div style="display:flex;gap:.5rem;flex-wrap:wrap;flex:1">`;
+
+        d.grupos.forEach((g, i) => {
+            const c = COR[g.status] || COR['Atraso leve'];
+            const plural = g.total !== 1;
+            html += `
+                <div style="display:flex;align-items:center;gap:.4rem;flex-wrap:wrap">
+                    <span style="background:${c.bg};border:1px solid ${c.texto}44;border-radius:5px;
+                                 padding:.2rem .6rem;font-size:.78rem;font-weight:600;color:${c.texto};white-space:nowrap">
+                        <i class="bi ${c.icone} me-1"></i>${g.total} → ${g.status}
+                    </span>
+                    <button id="alertaBtn-${i}" onclick="toggleAlertaPedidos(${i})"
+                            style="background:none;border:none;font-size:.72rem;color:var(--muted);
+                                   cursor:pointer;padding:0;text-decoration:underline;white-space:nowrap">
+                        ver pedidos
+                    </button>
+                    ${i < d.grupos.length - 1 ? '<span style="color:var(--border)">·</span>' : ''}
+                </div>`;
+        });
+
+        html += `</div></div>`;
+
+        d.grupos.forEach((g, i) => {
+            const c = COR[g.status] || COR['Atraso leve'];
+            html += `
+            <div id="alertaNums-${i}" style="display:none;padding:.4rem 1rem .5rem;border-top:1px solid var(--border);flex-wrap:wrap;gap:5px;background:#0d1117">
+                ${g.numeros.map(n => `<span style="font-size:.72rem;padding:2px 9px;border-radius:4px;
+                    background:rgba(255,255,255,.05);border:1px solid var(--border);
+                    color:var(--muted);font-family:monospace;cursor:pointer"
+                    onclick="document.getElementById('buscaNumero').value='${n}';paginaAtual=1;renderTabela();document.querySelector('.card:last-of-type').scrollIntoView({behavior:'smooth'})"
+                    title="Ver pedido #${n}">#${n}</span>`).join('')}
+            </div>`;
+        });
+
+        html += `</div>`;
+        el.innerHTML = html;
+        el.style.display = '';
+    } catch(e) {
+        console.error('Erro ao carregar alertas:', e);
+    }
+}
+
+function toggleAlertaPedidos(i) {
+    const nums  = document.getElementById('alertaNums-' + i);
+    const btn   = document.getElementById('alertaBtn-' + i);
+    const aberto = nums.style.display === 'none';
+    nums.style.display = aberto ? 'flex' : 'none';
+    btn.textContent = aberto ? 'ocultar' : 'ver pedidos';
+}
+
+// ── Import modal ──────────────────────────────────────────────────────────────
+
+let pedidosExtraidos = [];
+
+function switchTab(t) {
+    document.getElementById('tab-img').style.display = t === 'img' ? '' : 'none';
+    document.getElementById('tab-arq').style.display = t === 'arq' ? '' : 'none';
+    document.getElementById('tab-img-btn').classList.toggle('active', t === 'img');
+    document.getElementById('tab-arq-btn').classList.toggle('active', t === 'arq');
+    ocultarPreview();
+}
+
+function ocultarPreview() {
+    document.getElementById('previewImport').style.display = 'none';
+    document.getElementById('btnConfirmar').style.display  = 'none';
+    pedidosExtraidos = [];
+}
+
+function mostrarPreview(pedidos, duplicados = new Set()) {
+    pedidosExtraidos = pedidos;
+
+    const novos = pedidos.filter(p => !duplicados.has(String(p.numero)));
+    const nDup  = pedidos.length - novos.length;
+
+    let countTxt = `${pedidos.length} pedido${pedidos.length !== 1 ? 's' : ''} encontrado${pedidos.length !== 1 ? 's' : ''}`;
+    if (nDup > 0) countTxt += ` — <span style="color:var(--yellow)">${nDup} já cadastrado${nDup !== 1 ? 's' : ''} (será${nDup !== 1 ? 'ão' : ''} ignorado${nDup !== 1 ? 's' : ''})</span>`;
+    document.getElementById('previewCount').innerHTML = countTxt;
+
+    const tbody = document.getElementById('previewTabela');
+    if (!pedidos.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center py-3" style="color:var(--muted)">Nenhum pedido encontrado</td></tr>';
+    } else {
+        tbody.innerHTML = pedidos.map(p => {
+            const isDup    = duplicados.has(String(p.numero));
+            const pendente = p.pagamento && !p.pagamento.toLowerCase().includes('recebido') && !p.pagamento.toLowerCase().includes('pago');
+            const enviada  = p.envio && p.envio.toLowerCase().includes('enviada');
+            const entregue = p.envio && p.envio.toLowerCase().includes('entregue');
+            const rowStyle = isDup ? 'opacity:.4' : pendente ? 'opacity:.5' : '';
+
+            const numCell = isDup
+                ? `<span class="fw-semibold">${escHtml(String(p.numero))}</span>
+                   <span class="badge ms-1" style="font-size:.65rem;background:rgba(210,153,34,.2);color:var(--yellow);border:1px solid rgba(210,153,34,.35)">Já cadastrado</span>`
+                : `<span class="fw-semibold">${escHtml(String(p.numero))}</span>`;
+
+            const pagBadge = pendente
+                ? `<span style="color:var(--red);font-size:.75rem">● Pendente</span>`
+                : `<span style="color:var(--green);font-size:.75rem">● Recebido</span>`;
+            const envioBadge = entregue
+                ? `<span style="color:var(--blue);font-size:.75rem">● Entregue</span>`
+                : enviada
+                ? `<span style="color:var(--green);font-size:.75rem">● Enviada</span>`
+                : `<span style="color:var(--yellow);font-size:.75rem">● Por enviar</span>`;
+
+            return `<tr style="${rowStyle}">
+                <td class="ps-3">${numCell}</td>
+                <td>${p.data ? fmtData(p.data) : '—'}</td>
+                <td>${escHtml(p.cliente || '—')}</td>
+                <td>${p.total ? 'R$ ' + p.total : '—'}</td>
+                <td>${pagBadge}</td>
+                <td>${isDup ? '<span style="color:var(--muted);font-size:.75rem">—</span>' : envioBadge}</td>
+            </tr>`;
+        }).join('');
+    }
+
+    document.getElementById('previewImport').style.display = '';
+    document.getElementById('btnConfirmar').style.display  = novos.length ? '' : 'none';
+}
+
+document.getElementById('inputImagem').addEventListener('change', e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    document.getElementById('imgPreview').src = URL.createObjectURL(f);
+    document.getElementById('imgPreviewBox').style.display = '';
+    ocultarPreview();
+});
+
+async function verificarDuplicados(pedidos) {
+    const numeros = pedidos.map(p => String(p.numero));
+    try {
+        const r = await fetch('/api/importar/verificar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ numeros }),
+        });
+        const j = await r.json();
+        return new Set((j.duplicados || []).map(String));
+    } catch {
+        return new Set();
+    }
+}
+
+async function analisarImagem() {
+    const input = document.getElementById('inputImagem');
+    if (!input.files[0]) { alert('Selecione uma imagem primeiro.'); return; }
+
+    const btn = document.getElementById('btnAnalisar');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Analisando...';
+
+    const file = input.files[0];
+    const b64  = await toBase64(file);
+
+    const resp = await fetch('/api/importar/imagem', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imagem: b64, tipo: file.type, categoria: document.getElementById('importCategoria').value })
+    });
+
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-magic me-1"></i>Analisar com IA';
+
+    const data = await resp.json();
+    if (!resp.ok) {
+        if (data.erro && data.erro.includes('ANTHROPIC_API_KEY'))
+            document.getElementById('avisoApiKey').style.display = '';
+        alert('Erro: ' + data.erro);
+        return;
+    }
+
+    const duplicados = await verificarDuplicados(data.pedidos);
+    mostrarPreview(data.pedidos, duplicados);
+}
+
+async function importarArquivo() {
+    const input = document.getElementById('inputArquivo');
+    if (!input.files[0]) { alert('Selecione um arquivo primeiro.'); return; }
+
+    const btn = document.getElementById('btnArquivo');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Processando...';
+
+    const form = new FormData();
+    form.append('arquivo', input.files[0]);
+    form.append('categoria', document.getElementById('importCategoria').value);
+
+    const resp = await fetch('/api/importar/arquivo', { method: 'POST', body: form });
+
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-file-earmark-arrow-up me-1"></i>Extrair Pedidos';
+
+    const data = await resp.json();
+    if (!resp.ok) { alert('Erro: ' + data.erro); return; }
+
+    const duplicados = await verificarDuplicados(data.pedidos);
+    mostrarPreview(data.pedidos, duplicados);
+}
+
+async function confirmarImportacao() {
+    const btn = document.getElementById('btnConfirmar');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Salvando...';
+
+    const resp = await fetch('/api/importar/confirmar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pedidos: pedidosExtraidos })
+    });
+
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-check2-circle me-1"></i>Confirmar e Salvar';
+
+    const data = await resp.json();
+    bootstrap.Modal.getInstance(document.getElementById('modalImportar')).hide();
+    atualizar();
+
+    const alrt = document.getElementById('alertMsg');
+    alrt.style.display = 'block';
+    alrt.innerHTML = `<div class="alert alert-success py-2 mb-0"><i class="bi bi-check2 me-1"></i>${data.mensagem}</div>`;
+    setTimeout(() => alrt.style.display = 'none', 4000);
+}
+
+function toBase64(file) {
+    return new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload  = () => res(r.result.split(',')[1]);
+        r.onerror = rej;
+        r.readAsDataURL(file);
+    });
+}
+
+// ── Detalhe do pedido ────────────────────────────────────────────────────────
+
+const PERS_COR = {
+    'A SEPARAR':         '#f85149',
+    'SEPARAÇÃO':         '#f0883e',
+    'NA PERSONALIZAÇÃO': '#8957e5',
+    'PRONTO':            '#3fb950',
+    'ENVIADO':           '#8b949e',
+};
+
+async function abrirDetalhe(numero) {
+    document.getElementById('detalheTitle').textContent = `Pedido #${numero}`;
+    document.getElementById('detalheCorpo').innerHTML =
+        '<div class="text-center py-5" style="color:var(--muted)"><span class="spinner-border spinner-border-sm me-2"></span>Carregando…</div>';
+    new bootstrap.Modal(document.getElementById('modalDetalhe')).show();
+
+    try {
+        const r = await fetch(`/api/pedidos/${numero}/detalhes`);
+        const j = await r.json();
+        if (!r.ok) { document.getElementById('detalheCorpo').innerHTML = `<div class="p-4" style="color:var(--red)">${j.erro}</div>`; return; }
+        renderDetalhe(j);
+    } catch {
+        document.getElementById('detalheCorpo').innerHTML = '<div class="p-4" style="color:var(--red)">Erro ao carregar detalhes.</div>';
+    }
+}
+
+function renderDetalhe(j) {
+    const p = j.pedido;
+    const itens = j.itens || [];
+    const pers  = j.personalizacao;
+
+    const statusBadge = `<span class="badge rounded-pill ${BADGE[p.status] || 'b-critico'}" style="font-size:.8rem">${p.status}</span>`;
+    const dtPedido = p.data_pedido ? fmtData(p.data_pedido) : '—';
+    const dtEnvio  = p.enviado_em  ? p.enviado_em.slice(0,10).split('-').reverse().join('/') : null;
+
+    // Cabeçalho info
+    let html = `<div style="padding:1rem 1.25rem;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;gap:.75rem 2rem">`;
+
+    const info = [
+        ['Cliente',       p.cliente || '—'],
+        ['Data do pedido',dtPedido],
+        ['Status',        statusBadge],
+        ['Transportadora',p.transportadora || '—'],
+        ['Pagamento',     p.forma_pagamento || p.pagamento || '—'],
+        ['Total',         p.total ? `R$ ${parseFloat(p.total).toFixed(2).replace('.',',')}` : '—'],
+    ];
+    if (dtEnvio) info.push(['Enviado em', dtEnvio]);
+
+    info.forEach(([label, val]) => {
+        html += `<div>
+            <div style="font-size:.68rem;color:var(--muted);letter-spacing:.05em;text-transform:uppercase;margin-bottom:2px">${label}</div>
+            <div style="font-size:.88rem;font-weight:500">${val}</div>
+        </div>`;
+    });
+    html += `</div>`;
+
+    // Personalização
+    if (pers) {
+        const cor = PERS_COR[pers.status] || '#8b949e';
+        html += `<div style="padding:.6rem 1.25rem;background:rgba(137,87,229,.08);border-bottom:1px solid var(--border);
+                              display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
+            <i class="bi bi-stars" style="color:#8957e5;font-size:1rem"></i>
+            <span style="font-size:.82rem;font-weight:600;color:#8957e5">Personalização</span>
+            <span style="background:${cor}22;color:${cor};border:1px solid ${cor}55;border-radius:12px;
+                         font-size:.72rem;font-weight:700;padding:2px 10px">${pers.status}</span>
+            ${pers.nome_personalizacao ? `<span style="font-size:.82rem;color:var(--text)">${pers.nome_personalizacao}</span>` : ''}
+            ${pers.numero_personalizacao ? `<span style="font-size:.8rem;color:var(--muted)">Nº ${pers.numero_personalizacao}</span>` : ''}
+            ${pers.observacao ? `<span style="font-size:.78rem;color:var(--muted);font-style:italic">${pers.observacao}</span>` : ''}
+        </div>`;
+    }
+
+    // Itens do pedido
+    if (itens.length) {
+        html += `<div style="padding:.75rem 1.25rem .25rem">
+            <div style="font-size:.68rem;font-weight:700;letter-spacing:.07em;color:var(--muted);margin-bottom:.5rem">PRODUTOS</div>
+        </div>`;
+        itens.forEach(item => {
+            const preco = item.preco_unit ? `R$ ${parseFloat(item.preco_unit).toFixed(2).replace('.',',')}` : '';
+            const total = (item.preco_unit && item.quantidade)
+                ? `R$ ${(parseFloat(item.preco_unit) * item.quantidade).toFixed(2).replace('.',',')}`
+                : '';
+            const imgHtml = item.imagem_url
+                ? `<img src="${item.imagem_url}" alt=""
+                        style="width:56px;height:56px;object-fit:cover;border-radius:6px;
+                               border:1px solid var(--border);flex-shrink:0;background:#0d1117"
+                        onerror="this.style.display='none'">`
+                : `<div style="width:56px;height:56px;border-radius:6px;border:1px solid var(--border);
+                               background:#0d1117;display:flex;align-items:center;justify-content:center;
+                               flex-shrink:0;color:var(--muted)">
+                       <i class="bi bi-image" style="font-size:1.2rem"></i>
+                   </div>`;
+            html += `<div style="display:flex;align-items:center;gap:1rem;padding:.65rem 1.25rem;border-top:1px solid rgba(48,54,61,.5)">
+                ${imgHtml}
+                <div style="flex:1;min-width:0">
+                    <div style="font-size:.88rem;font-weight:500;color:var(--text);line-height:1.3">${item.produto_nome || '—'}</div>
+                    ${item.variante ? `<div style="font-size:.78rem;color:var(--muted);margin-top:3px">${item.variante}</div>` : ''}
+                </div>
+                <div style="display:flex;align-items:center;gap:1.5rem;white-space:nowrap">
+                    <div style="text-align:center">
+                        <div style="font-size:.65rem;color:var(--muted);letter-spacing:.04em">QTD</div>
+                        <div style="font-size:.95rem;font-weight:700">${item.quantidade}</div>
+                    </div>
+                    ${preco ? `<div style="text-align:right">
+                        <div style="font-size:.65rem;color:var(--muted);letter-spacing:.04em">UNIT.</div>
+                        <div style="font-size:.85rem">${preco}</div>
+                    </div>` : ''}
+                    ${total && item.quantidade > 1 ? `<div style="text-align:right">
+                        <div style="font-size:.65rem;color:var(--muted);letter-spacing:.04em">TOTAL</div>
+                        <div style="font-size:.88rem;font-weight:600;color:var(--blue)">${total}</div>
+                    </div>` : ''}
+                </div>
+            </div>`;
+        });
+    } else {
+        html += `<div style="padding:1.5rem 1.25rem;text-align:center;color:var(--muted);font-size:.85rem;border-top:1px solid var(--border)">
+            <i class="bi bi-box" style="font-size:1.5rem;display:block;margin-bottom:6px;opacity:.4"></i>
+            Detalhes dos produtos não disponíveis<br>
+            <small style="font-size:.75rem">(sincronize pelo NuvemShop para carregar os itens)</small>
+        </div>`;
+    }
+
+    document.getElementById('detalheCorpo').innerHTML = html;
+}
+
+document.getElementById('modalImportar').addEventListener('hidden.bs.modal', () => {
+    document.getElementById('inputImagem').value = '';
+    document.getElementById('inputArquivo').value = '';
+    document.getElementById('imgPreviewBox').style.display = 'none';
+    document.getElementById('avisoApiKey').style.display   = 'none';
+    ocultarPreview();
+    switchTab('img');
+});
+</script>
+
+<style>
+.tab-btn {
+    background: none; border: none; border-bottom: 2px solid transparent;
+    color: var(--muted); font-size: 0.88rem; padding: 6px 14px 10px;
+    cursor: pointer; transition: color .15s;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--text); border-bottom-color: var(--blue); font-weight: 600; }
+
+.filter-btn {
+    background: none; border: 1px solid var(--border); border-radius: 20px;
+    color: var(--muted); font-size: 0.78rem; padding: 3px 12px;
+    cursor: pointer; transition: all .15s;
+}
+.filter-btn:hover { border-color: #8b949e; color: var(--text); }
+.filter-btn.ativo { background: rgba(35,134,54,.2); border-color: #238636; color: #3fb950; font-weight: 600; }
+
+.card-filtro { cursor: pointer; transition: transform .1s, box-shadow .1s; }
+.card-filtro:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,.3); }
+.card-filtro-ativo { box-shadow: 0 0 0 2px #238636 !important; }
+</style>
+{% endblock %}

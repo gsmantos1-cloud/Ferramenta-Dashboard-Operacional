@@ -1,0 +1,819 @@
+{% extends "base.html" %}
+{% block title %}Atacado — GS Mantos{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+        <h5 class="mb-0 fw-bold">Pedidos Atacado</h5>
+        <small style="color:var(--muted)">Gerencie pedidos de atacado · separação · envio</small>
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="abrirModal()">
+        <i class="bi bi-plus-lg me-1"></i>Novo Pedido
+    </button>
+</div>
+
+<!-- Filtros -->
+<div class="d-flex flex-wrap gap-2 mb-3" id="filtros">
+    <button class="btn btn-sm filter-atk active" data-s="todos"     onclick="filtrar('todos')">Todos</button>
+    <button class="btn btn-sm filter-atk" data-s="pendente"  onclick="filtrar('pendente')"><span class="dot" style="background:#8b949e"></span>Pendente</button>
+    <button class="btn btn-sm filter-atk" data-s="separando" onclick="filtrar('separando')"><span class="dot" style="background:#f0883e"></span>Separando</button>
+    <button class="btn btn-sm filter-atk" data-s="separado"  onclick="filtrar('separado')"><span class="dot" style="background:#3fb950"></span>Separado</button>
+    <button class="btn btn-sm filter-atk" data-s="enviado"   onclick="filtrar('enviado')"><span class="dot" style="background:#58a6ff"></span>Enviado</button>
+</div>
+
+<div class="d-flex flex-wrap gap-3 mb-4" id="counters"></div>
+<div id="lista"></div>
+<div id="emptyMsg" style="display:none;text-align:center;padding:60px;color:var(--muted)">
+    <i class="bi bi-inbox" style="font-size:2.5rem"></i><div class="mt-2">Nenhum pedido neste status.</div>
+</div>
+<div id="loadingMsg" style="text-align:center;padding:60px;color:var(--muted)">
+    <div class="spinner-border spinner-border-sm me-2"></div> Carregando...
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     MODAL — Novo Pedido
+     ══════════════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modalPedido" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border)">
+      <div class="modal-header" style="border-bottom:1px solid var(--border)">
+        <h5 class="modal-title fw-bold"><i class="bi bi-bag-plus me-2" style="color:var(--blue)"></i>Novo Pedido Atacado</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+
+        <!-- Seção: Dados do Cliente -->
+        <div class="sec-title">DADOS DO CLIENTE</div>
+        <div class="row g-2 mb-3">
+          <div class="col-md-6">
+            <label class="flabel">NOME COMPLETO *</label>
+            <input id="fCliente" type="text" class="form-control form-control-sm" placeholder="Nome do cliente">
+          </div>
+          <div class="col-md-3">
+            <label class="flabel">CPF</label>
+            <input id="fCpf" type="text" class="form-control form-control-sm" placeholder="000.000.000-00" oninput="maskCpf(this)">
+          </div>
+          <div class="col-md-3">
+            <label class="flabel">CONTATO (WhatsApp)</label>
+            <input id="fContato" type="text" class="form-control form-control-sm" placeholder="(00) 00000-0000">
+          </div>
+          <div class="col-md-2">
+            <label class="flabel">CEP</label>
+            <input id="fCep" type="text" class="form-control form-control-sm" placeholder="00000-000"
+                   oninput="maskCep(this)" onblur="buscarCep()">
+          </div>
+          <div class="col-md-5">
+            <label class="flabel">ENDEREÇO</label>
+            <input id="fEndereco" type="text" class="form-control form-control-sm" placeholder="Rua, número...">
+          </div>
+          <div class="col-md-3">
+            <label class="flabel">CIDADE</label>
+            <input id="fCidade" type="text" class="form-control form-control-sm" placeholder="Cidade">
+          </div>
+          <div class="col-md-2">
+            <label class="flabel">PRAZO DE ENTREGA</label>
+            <input id="fPrazo" type="date" class="form-control form-control-sm">
+          </div>
+          <div class="col-md-5">
+            <label class="flabel">OBSERVAÇÃO</label>
+            <input id="fObs" type="text" class="form-control form-control-sm" placeholder="Informações adicionais...">
+          </div>
+          <div class="col-md-3">
+            <label class="flabel">TIPO DE FRETE</label>
+            <select id="fFrete" class="form-select form-select-sm">
+              <option value="pac">PAC</option>
+              <option value="sedex">SEDEX</option>
+              <option value="retirada">Retirada</option>
+              <option value="a_combinar">A combinar</option>
+            </select>
+          </div>
+          <div class="col-md-4 d-flex align-items-end">
+            <div class="form-check form-switch ms-2 mb-1">
+              <input class="form-check-input" type="checkbox" id="fPago" role="switch">
+              <label class="form-check-label" for="fPago" style="font-size:.83rem;cursor:pointer">
+                <i class="bi bi-cash-coin me-1" style="color:var(--green)"></i>Pedido <b>pago</b>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Seção: Itens -->
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <div class="sec-title mb-0">ITENS DO PEDIDO</div>
+          <button type="button" class="btn btn-sm btn-outline-primary" onclick="addItem()" style="font-size:.78rem">
+            <i class="bi bi-plus me-1"></i>Adicionar item
+          </button>
+        </div>
+
+        <!-- Cabeçalho da tabela de itens -->
+        <div class="itens-hdr">
+          <div style="flex:3">Produto</div>
+          <div style="flex:2">Variante / Tamanho</div>
+          <div style="width:90px;text-align:center">Do Estoque</div>
+          <div style="width:90px;text-align:center">Do Fornecedor</div>
+          <div style="width:70px;text-align:center">Total</div>
+          <div style="width:90px;text-align:center">Valor Unit. (R$)</div>
+          <div style="width:30px"></div>
+        </div>
+        <div id="itensContainer"></div>
+        <div id="semItensMsg" class="text-center py-3" style="color:var(--muted);font-size:.83rem;border:1px dashed var(--border);border-radius:8px">
+          <i class="bi bi-box-seam me-1"></i>Nenhum item. Clique em "Adicionar item".
+        </div>
+
+        <!-- Resumo automático -->
+        <div id="resumoItens" style="display:none;margin-top:12px;background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:.8rem">
+          <div class="d-flex gap-4 flex-wrap align-items-center">
+            <span>Total peças: <b id="rTotalPecas" style="color:var(--blue)">0</b></span>
+            <span>Do estoque: <b id="rEstoque" style="color:var(--green)">0</b></span>
+            <span>Do fornecedor: <b id="rFornecedor" style="color:var(--orange)">0</b></span>
+            <span style="margin-left:auto;font-size:.88rem">
+              Valor total: <b id="rValorTotal" style="color:#f0e68c;font-size:.95rem">R$ 0,00</b>
+            </span>
+          </div>
+        </div>
+
+      </div>
+      <div class="modal-footer" style="border-top:1px solid var(--border)">
+        <span id="erroModal" style="color:var(--red);font-size:.82rem;flex:1"></span>
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-primary btn-sm" onclick="salvarPedido()" id="btnSalvar">
+          <i class="bi bi-check2 me-1"></i>Criar Pedido
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     MODAL — Detalhe / Separação
+     ══════════════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modalDetalhe" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border)">
+      <div class="modal-header" style="border-bottom:1px solid var(--border)">
+        <div>
+          <div class="d-flex align-items-center gap-2">
+            <h5 class="modal-title fw-bold mb-0" id="detCliente"></h5>
+            <span id="detPagoBadge"></span>
+          </div>
+          <small id="detMeta" style="color:var(--muted)"></small>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+
+        <!-- Infos cliente -->
+        <div class="row g-2 mb-3" id="detInfos" style="font-size:.82rem"></div>
+
+        <!-- Barra de progresso -->
+        <div class="mb-3">
+          <div class="d-flex justify-content-between mb-1" style="font-size:.78rem;color:var(--muted)">
+            <span>Progresso de separação</span>
+            <span id="detProgressLabel"></span>
+          </div>
+          <div style="height:8px;background:var(--border);border-radius:4px;overflow:hidden">
+            <div id="detProgressBar" style="height:100%;border-radius:4px;transition:width .4s;background:var(--green)"></div>
+          </div>
+        </div>
+
+        <!-- Tabela de itens -->
+        <table class="w-100" style="border-collapse:collapse" id="tblItens">
+          <thead>
+            <tr style="border-bottom:1px solid var(--border)">
+              <th class="th-det">Produto / Variante</th>
+              <th class="th-det" style="width:55px;text-align:center">Qtd</th>
+              <th class="th-det" style="width:75px;text-align:right">Unit. (R$)</th>
+              <th class="th-det" style="width:85px;text-align:right">Subtotal</th>
+              <th class="th-det" style="width:70px;text-align:center">Est.</th>
+              <th class="th-det" style="width:70px;text-align:center">Forn.</th>
+              <th class="th-det" style="width:90px;text-align:center">Separado</th>
+              <th class="th-det" style="width:100px;text-align:center">Desc. Est.</th>
+            </tr>
+          </thead>
+          <tbody id="detItens"></tbody>
+          <tfoot id="detTotais"></tfoot>
+        </table>
+
+      </div>
+      <div class="modal-footer" style="border-top:1px solid var(--border);gap:8px">
+        <button id="btnDeletar" class="btn btn-sm btn-outline-danger me-auto" onclick="deletarPedido()">
+          <i class="bi bi-trash me-1"></i>Excluir
+        </button>
+        <div class="form-check form-switch mb-0" id="wrapPago">
+          <input class="form-check-input" type="checkbox" id="detPago" role="switch" onchange="togglePago()">
+          <label class="form-check-label" for="detPago" style="font-size:.82rem;cursor:pointer">Pago</label>
+        </div>
+        <button id="btnReabrir" class="btn btn-sm btn-outline-secondary" onclick="reabrirPedido()" style="display:none">
+          <i class="bi bi-arrow-counterclockwise me-1"></i>Reabrir
+        </button>
+        <button id="btnEnviar" class="btn btn-sm btn-success" onclick="marcarEnviado()">
+          <i class="bi bi-send me-1"></i>Marcar como Enviado
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Fechar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Dropdown de produto (fora do modal para não ser cortado) ─────── -->
+<div id="prodDropdown" style="display:none;position:fixed;z-index:9999;background:var(--card-bg);
+     border:1px solid var(--border);border-radius:8px;max-height:260px;overflow-y:auto;
+     box-shadow:0 8px 32px rgba(0,0,0,.4);min-width:340px"></div>
+
+<style>
+.filter-atk { background:transparent;border:1px solid var(--border);color:var(--muted);font-size:.8rem;padding:4px 12px;border-radius:20px; }
+.filter-atk:hover { border-color:#8b949e;color:var(--text); }
+.filter-atk.active { background:var(--blue);border-color:var(--blue);color:#fff; }
+.dot { display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px; }
+.flabel { font-size:.72rem;color:var(--muted);font-weight:600;letter-spacing:.04em;margin-bottom:3px;display:block;text-transform:uppercase; }
+.sec-title { font-size:.72rem;font-weight:700;letter-spacing:.07em;color:var(--muted);text-transform:uppercase;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border); }
+.atk-card { background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:14px 18px;margin-bottom:10px;cursor:pointer;transition:border-color .15s,transform .1s; }
+.atk-card:hover { border-color:#484f58;transform:translateY(-1px); }
+.atk-card.status-pendente  { border-left:3px solid #8b949e; }
+.atk-card.status-separando { border-left:3px solid #f0883e; }
+.atk-card.status-separado  { border-left:3px solid #3fb950; }
+.atk-card.status-enviado   { border-left:3px solid #58a6ff;opacity:.8; }
+.status-pill { font-size:.7rem;font-weight:700;border-radius:20px;padding:2px 10px;border:1px solid; }
+.sp-pendente  { background:rgba(139,148,158,.12);color:#8b949e;border-color:#8b949e44; }
+.sp-separando { background:rgba(240,136,62,.12); color:#f0883e;border-color:#f0883e44; }
+.sp-separado  { background:rgba(63,185,80,.12);  color:#3fb950;border-color:#3fb95044; }
+.sp-enviado   { background:rgba(88,166,255,.12); color:#58a6ff;border-color:#58a6ff44; }
+.pago-badge   { background:rgba(63,185,80,.15);  color:#3fb950;border:1px solid #3fb95044;border-radius:20px;font-size:.7rem;font-weight:700;padding:2px 10px; }
+.npago-badge  { background:rgba(248,81,73,.1);   color:#f85149;border:1px solid #f8514944;border-radius:20px;font-size:.7rem;font-weight:700;padding:2px 10px; }
+.cnt-card { background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:10px 18px;min-width:120px;cursor:pointer; }
+.cnt-card .val { font-size:1.5rem;font-weight:700; }
+.cnt-card .lbl { font-size:.72rem;color:var(--muted); }
+
+/* Cabeçalho da tabela de itens no modal novo */
+.itens-hdr { display:flex;align-items:center;gap:8px;padding:0 8px 6px;
+    font-size:.7rem;font-weight:700;color:var(--muted);letter-spacing:.05em;text-transform:uppercase;border-bottom:1px solid var(--border);margin-bottom:4px; }
+.item-form-row { display:flex;align-items:center;gap:8px;padding:6px 8px;
+    background:#0d1117;border:1px solid var(--border);border-radius:8px;margin-bottom:5px; }
+.item-form-row input, .item-form-row select {
+    background:var(--card-bg);border:1px solid var(--border);border-radius:6px;
+    color:var(--text);padding:5px 8px;font-size:.82rem;
+}
+.item-form-row input:focus, .item-form-row select:focus { outline:none;border-color:var(--blue); }
+.inp-prod { flex:3; }
+.inp-var  { flex:2; }
+.inp-num  { width:80px;text-align:center; }
+.inp-num-sm { width:70px;text-align:center; }
+
+/* Detalhe */
+.th-det { padding:6px 8px;font-size:.71rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em; }
+.item-det-row { border-bottom:1px solid #1c2128; }
+.item-det-row:last-child { border-bottom:none; }
+.item-det-row td { padding:9px 8px;font-size:.83rem;vertical-align:middle; }
+.item-separado td { opacity:.5; }
+
+/* Toggle */
+.sep-toggle { width:36px;height:20px;border-radius:10px;border:none;cursor:pointer;position:relative;transition:background .2s;flex-shrink:0; }
+.sep-toggle::after { content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .2s; }
+.sep-toggle.on { background:var(--green); }
+.sep-toggle.on::after { transform:translateX(16px); }
+.sep-toggle.off { background:#30363d; }
+
+/* Produto search dropdown */
+.prod-drop-item { padding:8px 12px;cursor:pointer;border-bottom:1px solid #21262d;font-size:.83rem; }
+.prod-drop-item:hover { background:rgba(88,166,255,.08); }
+.prod-drop-item:last-child { border-bottom:none; }
+.stock-chip { font-size:.68rem;border-radius:10px;padding:1px 7px;border:1px solid; }
+.sc-ok   { background:rgba(63,185,80,.1); color:var(--green); border-color:#3fb95033; }
+.sc-low  { background:rgba(240,136,62,.1);color:var(--orange);border-color:#f0883e33; }
+.sc-zero { background:rgba(248,81,73,.1); color:var(--red);   border-color:#f8514933; }
+
+/* Fonte badge no detalhe */
+.fonte-chip { font-size:.68rem;border-radius:10px;padding:1px 7px;border:1px solid; }
+.fc-est  { background:rgba(63,185,80,.1); color:var(--green); border-color:#3fb95033; }
+.fc-forn { background:rgba(240,136,62,.1);color:var(--orange);border-color:#f0883e33; }
+.fc-mix  { background:rgba(88,166,255,.1);color:var(--blue);  border-color:#58a6ff33; }
+</style>
+
+<script>
+// ── Estado global ─────────────────────────────────────────────────────
+let pedidos = [];
+let filtroAtual = 'todos';
+let pedidoAbertoId = null;
+let itemCount = 0;
+
+// Cache de produtos + estoque (carrega uma vez)
+let catalogoProdutos = [];   // [{id, name, imageUrl, variants:[{id, values, stock}]}]
+let dropdownTarget = null;   // input ativo para dropdown
+
+// ── Carregar lista ────────────────────────────────────────────────────
+async function carregar() {
+    document.getElementById('loadingMsg').style.display = 'block';
+    document.getElementById('lista').innerHTML = '';
+    document.getElementById('emptyMsg').style.display = 'none';
+    try {
+        const r = await fetch('/api/atacado/pedidos');
+        pedidos = await r.json();
+        renderContadores();
+        renderLista();
+    } catch(e) { console.error(e); }
+    document.getElementById('loadingMsg').style.display = 'none';
+}
+
+function filtrar(s) {
+    filtroAtual = s;
+    document.querySelectorAll('.filter-atk').forEach(b => b.classList.toggle('active', b.dataset.s === s));
+    renderLista();
+}
+
+function renderContadores() {
+    const cnt = {pendente:0,separando:0,separado:0,enviado:0};
+    pedidos.forEach(p => { if (cnt[p.status]!==undefined) cnt[p.status]++; });
+    const items = [
+        {s:'pendente', label:'Pendentes', color:'#8b949e'},
+        {s:'separando',label:'Separando', color:'#f0883e'},
+        {s:'separado', label:'Separados', color:'#3fb950'},
+        {s:'enviado',  label:'Enviados',  color:'#58a6ff'},
+    ];
+    document.getElementById('counters').innerHTML = items.map(i => `
+        <div class="cnt-card" style="border-left:3px solid ${i.color}" onclick="filtrar('${i.s}')">
+            <div class="val" style="color:${i.color}">${cnt[i.s]}</div>
+            <div class="lbl">${i.label}</div>
+        </div>`).join('');
+}
+
+function renderLista() {
+    const filtrados = filtroAtual === 'todos' ? pedidos : pedidos.filter(p => p.status === filtroAtual);
+    const lista = document.getElementById('lista');
+    if (!filtrados.length) { lista.innerHTML=''; document.getElementById('emptyMsg').style.display='block'; return; }
+    document.getElementById('emptyMsg').style.display = 'none';
+    lista.innerHTML = filtrados.map(p => {
+        const pct = p.total_qty > 0 ? Math.round(p.qty_separada/p.total_qty*100) : 0;
+        const barColor = p.status==='enviado'?'#58a6ff':p.status==='separado'?'#3fb950':'#f0883e';
+        const pagoBadge = p.pago
+            ? `<span class="pago-badge"><i class="bi bi-check2 me-1"></i>Pago</span>`
+            : `<span class="npago-badge"><i class="bi bi-clock me-1"></i>Pendente pgto</span>`;
+        const freteLabel = labelFrete(p.frete_tipo);
+        const valorTotalHtml = p.valor_total > 0
+            ? `<span style="font-weight:700;color:#f0e68c;font-size:.82rem"><i class="bi bi-currency-dollar me-1"></i>R$ ${fmtMoeda(p.valor_total)}</span>`
+            : '';
+        const infos = [
+            p.contato ? `<i class="bi bi-whatsapp" style="color:#25d366"></i> ${escHtml(p.contato)}` : '',
+            p.cidade  ? `<i class="bi bi-geo-alt"></i> ${escHtml(p.cidade)}` : '',
+            `<i class="bi bi-box"></i> ${p.total_itens} item${p.total_itens!==1?'s':''} · ${p.total_qty} un.`,
+            p.prazo   ? `<i class="bi bi-calendar2"></i> ${fmtDate(p.prazo)}` : '',
+            freteLabel ? `<i class="bi bi-truck"></i> ${freteLabel}` : '',
+        ].filter(Boolean).join(' &nbsp;·&nbsp; ');
+        return `<div class="atk-card status-${p.status}" onclick="abrirDetalhe(${p.id})">
+            <div class="d-flex align-items-start justify-content-between gap-3">
+                <div class="flex-grow-1" style="min-width:0">
+                    <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+                        <span class="fw-bold" style="font-size:.95rem">${escHtml(p.cliente)}</span>
+                        <span class="status-pill sp-${p.status}">${labelStatus(p.status)}</span>
+                        ${pagoBadge}
+                    </div>
+                    <div style="font-size:.77rem;color:var(--muted)">${infos}</div>
+                    ${p.observacao?`<div style="font-size:.76rem;color:var(--muted);margin-top:3px"><i class="bi bi-chat-left-text me-1"></i>${escHtml(p.observacao)}</div>`:''}
+                </div>
+                <div style="min-width:130px;text-align:right">
+                    ${valorTotalHtml ? `<div class="mb-1">${valorTotalHtml}</div>` : ''}
+                    <div style="font-size:.72rem;color:var(--muted);margin-bottom:4px">${p.qty_separada}/${p.total_qty} sep.</div>
+                    <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden">
+                        <div style="height:100%;width:${pct}%;background:${barColor};border-radius:3px"></div>
+                    </div>
+                    <div style="font-size:.72rem;color:${barColor};margin-top:2px">${pct}%</div>
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+// ── Catálogo de produtos (com estoque) ───────────────────────────────
+async function carregarCatalogo() {
+    if (catalogoProdutos.length) return;
+    try {
+        const [rProd, rStk] = await Promise.all([
+            fetch('/api/nuvemshop/produtos').then(r=>r.json()),
+            fetch('/api/estoque/listar').then(r=>r.json()),
+        ]);
+        const stockMap = new Map((rStk||[]).map(s=>[s.nv_variant_id,s]));
+        catalogoProdutos = (rProd||[]).map(p=>({
+            id: p.id,
+            name: p.name,
+            imageUrl: p.imageUrl,
+            variants: (p.variants||[]).map(v=>({
+                id: v.id,
+                values: v.values||[],
+                label: (v.values||[]).join(', '),
+                stock: stockMap.get(v.id) || null,
+            }))
+        }));
+    } catch(e) { console.error('Catálogo:', e); }
+}
+
+// ── Dropdown de produto ───────────────────────────────────────────────
+function mostrarDropdown(inputEl, rowId) {
+    dropdownTarget = {inputEl, rowId};
+    const q = inputEl.value.toLowerCase().trim();
+    const dd = document.getElementById('prodDropdown');
+
+    const matches = q.length < 1 ? [] :
+        catalogoProdutos.filter(p => p.name.toLowerCase().includes(q)).slice(0, 20);
+
+    if (!matches.length) { dd.style.display='none'; return; }
+
+    const rect = inputEl.getBoundingClientRect();
+    dd.style.left   = rect.left + 'px';
+    dd.style.top    = (rect.bottom + 4) + 'px';
+    dd.style.width  = Math.max(rect.width, 360) + 'px';
+    dd.style.display = 'block';
+
+    dd.innerHTML = matches.map(p => {
+        const totalStock = p.variants.reduce((s,v) => s+(v.stock?.quantity||0), 0);
+        const sc = totalStock > 5 ? 'sc-ok' : totalStock > 0 ? 'sc-low' : 'sc-zero';
+        return `<div class="prod-drop-item" onclick="selecionarProduto(${p.id})">
+            <div class="fw-semibold" style="font-size:.83rem">${escHtml(p.name)}</div>
+            <span class="stock-chip ${sc}">${totalStock} em estoque</span>
+        </div>`;
+    }).join('');
+}
+
+function selecionarProduto(prodId) {
+    const dd = document.getElementById('prodDropdown');
+    dd.style.display = 'none';
+    if (!dropdownTarget) return;
+    const {inputEl, rowId} = dropdownTarget;
+    const prod = catalogoProdutos.find(p=>p.id===prodId);
+    if (!prod) return;
+
+    inputEl.value = prod.name;
+    inputEl.dataset.prodId = prodId;
+
+    // Preenche o select de variantes
+    const varSel = document.getElementById(`ivar-${rowId}`);
+    varSel.innerHTML = '<option value="">Variante...</option>';
+    prod.variants.forEach(v => {
+        const stock = v.stock?.quantity || 0;
+        const sc = stock > 5 ? '🟢' : stock > 0 ? '🟡' : '🔴';
+        const opt = document.createElement('option');
+        opt.value = v.id;
+        opt.textContent = `${v.label || 'Padrão'} — ${sc} ${stock} un`;
+        opt.dataset.stock = stock;
+        opt.dataset.label = v.label;
+        varSel.appendChild(opt);
+    });
+    varSel.disabled = false;
+    varSel.onchange = () => atualizarLimiteEstoque(rowId);
+}
+
+function atualizarLimiteEstoque(rowId) {
+    const varSel  = document.getElementById(`ivar-${rowId}`);
+    const inpEst  = document.getElementById(`iest-${rowId}`);
+    const infoEst = document.getElementById(`iestinfo-${rowId}`);
+    const opt = varSel.options[varSel.selectedIndex];
+    const stock = parseInt(opt?.dataset?.stock || 0);
+    inpEst.max = stock;
+    if (infoEst) infoEst.textContent = `(${stock} disp.)`;
+    atualizarTotal(rowId);
+}
+
+function atualizarTotal(rowId) {
+    const est  = parseInt(document.getElementById(`iest-${rowId}`)?.value  || 0);
+    const forn = parseInt(document.getElementById(`iforn-${rowId}`)?.value || 0);
+    const tot  = document.getElementById(`itot-${rowId}`);
+    const qty  = est + forn;
+    if (tot) tot.textContent = qty;
+    // Atualiza subtotal da linha
+    const vu   = parseFloat(document.getElementById(`ivu-${rowId}`)?.value || 0);
+    const sub  = document.getElementById(`isub-${rowId}`);
+    if (sub) sub.textContent = 'R$ ' + fmtMoeda(vu * qty);
+    atualizarResumo();
+}
+
+function atualizarSubtotal(rowId) {
+    const est  = parseInt(document.getElementById(`iest-${rowId}`)?.value  || 0);
+    const forn = parseInt(document.getElementById(`iforn-${rowId}`)?.value || 0);
+    const qty  = est + forn;
+    const vu   = parseFloat(document.getElementById(`ivu-${rowId}`)?.value || 0);
+    const sub  = document.getElementById(`isub-${rowId}`);
+    if (sub) sub.textContent = 'R$ ' + fmtMoeda(vu * qty);
+    atualizarResumo();
+}
+
+function atualizarResumo() {
+    let totalPecas=0, totalEst=0, totalForn=0, totalValor=0;
+    for (let i=1; i<=itemCount; i++) {
+        const e  = parseInt(document.getElementById(`iest-${i}`)?.value||0);
+        const f  = parseInt(document.getElementById(`iforn-${i}`)?.value||0);
+        const vu = parseFloat(document.getElementById(`ivu-${i}`)?.value||0);
+        const qty = e+f;
+        totalEst += e; totalForn += f; totalPecas += qty;
+        totalValor += vu * qty;
+    }
+    const r = document.getElementById('resumoItens');
+    r.style.display = totalPecas > 0 ? 'block' : 'none';
+    document.getElementById('rTotalPecas').textContent = totalPecas;
+    document.getElementById('rEstoque').textContent = totalEst;
+    document.getElementById('rFornecedor').textContent = totalForn;
+    document.getElementById('rValorTotal').textContent = 'R$ ' + fmtMoeda(totalValor);
+}
+
+// Fechar dropdown ao clicar fora
+document.addEventListener('click', e => {
+    const dd = document.getElementById('prodDropdown');
+    if (!dd.contains(e.target) && e.target !== dropdownTarget?.inputEl) {
+        dd.style.display = 'none';
+    }
+});
+
+// ── Modal novo pedido ─────────────────────────────────────────────────
+function abrirModal() {
+    itemCount = 0;
+    ['fCliente','fCpf','fContato','fCep','fEndereco','fCidade','fPrazo','fObs'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value='';
+    });
+    document.getElementById('fPago').checked = false;
+    document.getElementById('fFrete').value = 'a_combinar';
+    document.getElementById('itensContainer').innerHTML = '';
+    document.getElementById('semItensMsg').style.display = 'block';
+    document.getElementById('resumoItens').style.display = 'none';
+    document.getElementById('erroModal').textContent = '';
+
+    // Abre o modal imediatamente, carrega catálogo em paralelo
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPedido')).show();
+    addItem();
+    carregarCatalogo(); // sem await — carrega em background
+}
+
+function addItem() {
+    itemCount++;
+    const n = itemCount;
+    document.getElementById('semItensMsg').style.display = 'none';
+    const div = document.createElement('div');
+    div.className = 'item-form-row';
+    div.id = `item-${n}`;
+    div.innerHTML = `
+        <input type="text" class="inp-prod" id="iprod-${n}" placeholder="Buscar produto..." autocomplete="off"
+               oninput="mostrarDropdown(this,'${n}')" onkeydown="if(event.key==='Escape')document.getElementById('prodDropdown').style.display='none'">
+        <select class="inp-var" id="ivar-${n}" disabled style="flex:2">
+            <option value="">Variante...</option>
+        </select>
+        <div style="display:flex;flex-direction:column;align-items:center;width:90px">
+            <input type="number" class="inp-num-sm" id="iest-${n}" value="0" min="0" placeholder="Est."
+                   oninput="atualizarTotal('${n}')" title="Quantidade do estoque">
+            <span id="iestinfo-${n}" style="font-size:.65rem;color:var(--green)"></span>
+        </div>
+        <input type="number" class="inp-num-sm" style="width:80px" id="iforn-${n}" value="0" min="0" placeholder="Forn."
+               oninput="atualizarTotal('${n}')" title="Quantidade do fornecedor">
+        <span class="inp-num" id="itot-${n}" style="font-weight:700;color:var(--blue);text-align:center;width:50px">0</span>
+        <div style="display:flex;flex-direction:column;align-items:center;width:90px">
+            <input type="number" class="inp-num-sm" id="ivu-${n}" value="" min="0" step="0.01" placeholder="0,00"
+                   oninput="atualizarSubtotal('${n}')" title="Valor unitário em R$" style="width:85px">
+            <span id="isub-${n}" style="font-size:.63rem;color:#f0e68c;margin-top:1px"></span>
+        </div>
+        <button onclick="removerItem(${n})" style="background:none;border:none;color:var(--muted);cursor:pointer;flex-shrink:0" title="Remover">
+            <i class="bi bi-x-lg"></i>
+        </button>
+    `;
+    document.getElementById('itensContainer').appendChild(div);
+    document.getElementById(`iprod-${n}`).focus();
+}
+
+function removerItem(n) {
+    document.getElementById(`item-${n}`)?.remove();
+    if (!document.getElementById('itensContainer').children.length)
+        document.getElementById('semItensMsg').style.display = 'block';
+    atualizarResumo();
+}
+
+async function salvarPedido() {
+    const cliente = document.getElementById('fCliente').value.trim();
+    if (!cliente) { document.getElementById('erroModal').textContent='Informe o nome do cliente.'; return; }
+
+    const itens = [];
+    for (let i=1; i<=itemCount; i++) {
+        const iprod = document.getElementById(`iprod-${i}`);
+        const ivar  = document.getElementById(`ivar-${i}`);
+        if (!iprod) continue;
+        const prod = iprod.value.trim(); if (!prod) continue;
+        const est  = parseInt(document.getElementById(`iest-${i}`)?.value||0);
+        const forn = parseInt(document.getElementById(`iforn-${i}`)?.value||0);
+        if (est+forn <= 0) continue;
+        const opt   = ivar?.options[ivar.selectedIndex];
+        const nvVid = opt?.value && !isNaN(opt.value) ? parseInt(opt.value) : null;
+        const vLabel = opt?.dataset?.label || ivar?.value || '';
+        const valorUnit = parseFloat(document.getElementById(`ivu-${i}`)?.value||0);
+        itens.push({produto:prod, variante:vLabel, qty_estoque:est, qty_fornecedor:forn, nv_variant_id:nvVid, valor_unit:valorUnit});
+    }
+    if (!itens.length) { document.getElementById('erroModal').textContent='Adicione ao menos um item com quantidade.'; return; }
+
+    const btn = document.getElementById('btnSalvar');
+    btn.disabled=true; btn.innerHTML='<span class="spinner-border spinner-border-sm me-1"></span>Salvando...';
+
+    const body = {
+        cliente, nome:document.getElementById('fCliente').value.trim(),
+        contato:document.getElementById('fContato').value.trim(),
+        cpf:document.getElementById('fCpf').value.trim(),
+        cep:document.getElementById('fCep').value.trim(),
+        endereco:document.getElementById('fEndereco').value.trim(),
+        cidade:document.getElementById('fCidade').value.trim(),
+        prazo:document.getElementById('fPrazo').value,
+        observacao:document.getElementById('fObs').value.trim(),
+        pago:document.getElementById('fPago').checked,
+        frete_tipo:document.getElementById('fFrete').value,
+        itens,
+    };
+    const r = await fetch('/api/atacado/pedidos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    btn.disabled=false; btn.innerHTML='<i class="bi bi-check2 me-1"></i>Criar Pedido';
+    if (r.ok) {
+        bootstrap.Modal.getInstance(document.getElementById('modalPedido')).hide();
+        carregar();
+    } else {
+        const j = await r.json();
+        document.getElementById('erroModal').textContent = j.erro||'Erro ao salvar.';
+    }
+}
+
+// ── Detalhe ───────────────────────────────────────────────────────────
+async function abrirDetalhe(id) {
+    pedidoAbertoId = id;
+    const r = await fetch(`/api/atacado/pedidos/${id}`);
+    const {pedido, itens} = await r.json();
+    renderDetalhe(pedido, itens);
+    new bootstrap.Modal(document.getElementById('modalDetalhe')).show();
+}
+
+function renderDetalhe(pedido, itens) {
+    document.getElementById('detCliente').textContent = pedido.cliente;
+    document.getElementById('detMeta').textContent =
+        `Pedido #${pedido.id} · ${fmtDatetime(pedido.created_at)}${pedido.criado_por?' · '+pedido.criado_por:''}`;
+
+    const pagoBadge = pedido.pago
+        ? `<span class="pago-badge"><i class="bi bi-check2 me-1"></i>Pago</span>`
+        : `<span class="npago-badge">Pgto pendente</span>`;
+    document.getElementById('detPagoBadge').innerHTML = pagoBadge;
+    document.getElementById('detPago').checked = !!pedido.pago;
+
+    // Infos
+    const freteIcon = {pac:'📦',sedex:'⚡',retirada:'🏪',a_combinar:'🤝'}[pedido.frete_tipo||'a_combinar']||'🚚';
+    const campos = [
+        pedido.cpf      && `<div class="col-auto"><i class="bi bi-person-badge me-1" style="color:var(--muted)"></i>${escHtml(pedido.cpf)}</div>`,
+        pedido.contato  && `<div class="col-auto"><i class="bi bi-whatsapp me-1" style="color:#25d366"></i>${escHtml(pedido.contato)}</div>`,
+        pedido.cep      && `<div class="col-auto"><i class="bi bi-mailbox me-1" style="color:var(--muted)"></i>CEP ${escHtml(pedido.cep)}</div>`,
+        pedido.cidade   && `<div class="col-auto"><i class="bi bi-geo-alt me-1" style="color:var(--blue)"></i>${escHtml(pedido.cidade)}</div>`,
+        pedido.frete_tipo && `<div class="col-auto"><span style="font-size:.82rem">${freteIcon} <b>${labelFrete(pedido.frete_tipo)}</b></span></div>`,
+        pedido.endereco && `<div class="col-12"><i class="bi bi-house me-1" style="color:var(--muted)"></i>${escHtml(pedido.endereco)}</div>`,
+        pedido.prazo    && `<div class="col-auto"><i class="bi bi-calendar2-check me-1" style="color:var(--orange)"></i>Prazo: ${fmtDate(pedido.prazo)}</div>`,
+        pedido.observacao && `<div class="col-12"><i class="bi bi-chat-left-text me-1" style="color:var(--muted)"></i>${escHtml(pedido.observacao)}</div>`,
+    ].filter(Boolean);
+    document.getElementById('detInfos').innerHTML = campos.join('');
+
+    // Progresso
+    const totalQty = itens.reduce((s,i)=>s+i.quantidade,0);
+    const sepQty   = itens.reduce((s,i)=>s+(i.separado?i.quantidade:0),0);
+    const pct = totalQty>0?Math.round(sepQty/totalQty*100):0;
+    document.getElementById('detProgressLabel').textContent=`${sepQty}/${totalQty} unidades`;
+    document.getElementById('detProgressBar').style.width=pct+'%';
+    document.getElementById('detProgressBar').style.background=pct===100?'var(--green)':pct>0?'var(--orange)':'var(--border)';
+
+    // Itens
+    let somaTotal = 0;
+    document.getElementById('detItens').innerHTML = itens.map(item => {
+        const est  = item.qty_estoque   || 0;
+        const forn = item.qty_fornecedor|| 0;
+        const vu   = item.valor_unit    || 0;
+        const sub  = vu * item.quantidade;
+        somaTotal += sub;
+
+        const descBtn = est > 0 && !item.estoque_descontado
+            ? `<button class="btn btn-sm" style="font-size:.68rem;padding:2px 8px;background:rgba(63,185,80,.12);border:1px solid #3fb95044;color:var(--green)"
+                onclick="descontarEstoque(${item.id})"><i class="bi bi-arrow-down-circle me-1"></i>Descontar</button>`
+            : item.estoque_descontado
+            ? `<span style="font-size:.72rem;color:var(--green)"><i class="bi bi-check2-circle me-1"></i>Descontado</span>`
+            : `<span style="font-size:.72rem;color:var(--muted)">—</span>`;
+
+        return `<tr class="item-det-row ${item.separado?'item-separado':''}" id="itemrow-${item.id}">
+            <td>
+                <div class="fw-semibold">${escHtml(item.produto)}</div>
+                <div style="font-size:.75rem;color:var(--muted)">${escHtml(item.variante||'')}</div>
+            </td>
+            <td style="text-align:center;font-weight:700;color:var(--blue)">${item.quantidade}</td>
+            <td style="text-align:right;color:var(--muted);font-size:.8rem">${vu>0?'R$ '+fmtMoeda(vu):'—'}</td>
+            <td style="text-align:right;font-weight:600;color:#f0e68c;font-size:.82rem">${sub>0?'R$ '+fmtMoeda(sub):'—'}</td>
+            <td style="text-align:center">${est>0?est:'—'}</td>
+            <td style="text-align:center">${forn>0?forn:'—'}</td>
+            <td style="text-align:center">
+                <div class="d-flex align-items-center justify-content-center gap-1">
+                    <button class="sep-toggle ${item.separado?'on':'off'}" id="tog-${item.id}"
+                            onclick="toggleSeparado(${item.id},${item.separado?0:1})"></button>
+                    <span id="sep-label-${item.id}" style="font-size:.72rem;color:${item.separado?'var(--green)':'var(--muted)'}">
+                        ${item.separado?'Sim':'Não'}
+                    </span>
+                </div>
+            </td>
+            <td style="text-align:center" id="desc-${item.id}">${descBtn}</td>
+        </tr>`;
+    }).join('');
+
+    // Tfoot — total geral
+    document.getElementById('detTotais').innerHTML = somaTotal > 0 ? `
+        <tr style="border-top:2px solid var(--border)">
+            <td colspan="3" style="padding:8px;font-size:.8rem;color:var(--muted);text-align:right;font-weight:600">TOTAL DO PEDIDO</td>
+            <td style="padding:8px;text-align:right;font-weight:700;color:#f0e68c;font-size:.95rem">R$ ${fmtMoeda(somaTotal)}</td>
+            <td colspan="4"></td>
+        </tr>` : '';
+
+    const enviado = pedido.status==='enviado';
+    document.getElementById('btnEnviar').style.display  = enviado?'none':'';
+    document.getElementById('btnReabrir').style.display = enviado?'':'none';
+}
+
+async function descontarEstoque(itemId) {
+    if (!confirm('Descontar quantidade do estoque agora?')) return;
+    const r = await fetch(`/api/atacado/itens/${itemId}/descontar-estoque`,{method:'PUT'});
+    const j = await r.json();
+    if (r.ok) {
+        // Atualiza a célula
+        document.getElementById(`desc-${itemId}`).innerHTML =
+            `<span style="font-size:.72rem;color:var(--green)"><i class="bi bi-check2-circle me-1"></i>Descontado</span>`;
+    } else { alert(j.erro||'Erro'); }
+}
+
+async function toggleSeparado(itemId, novoVal) {
+    const tog   = document.getElementById(`tog-${itemId}`);
+    const label = document.getElementById(`sep-label-${itemId}`);
+    const row   = document.getElementById(`itemrow-${itemId}`);
+    tog.classList.toggle('on', !!novoVal); tog.classList.toggle('off', !novoVal);
+    label.textContent = novoVal?'Sim':'Não';
+    label.style.color = novoVal?'var(--green)':'var(--muted)';
+    row.classList.toggle('item-separado', !!novoVal);
+    tog.onclick = () => toggleSeparado(itemId, novoVal?0:1);
+    await fetch(`/api/atacado/itens/${itemId}/separado`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({separado:!!novoVal})});
+    await atualizarProgresso();
+    carregar();
+}
+
+async function atualizarProgresso() {
+    if (!pedidoAbertoId) return;
+    const r = await fetch(`/api/atacado/pedidos/${pedidoAbertoId}`);
+    const {pedido,itens} = await r.json();
+    const totalQty = itens.reduce((s,i)=>s+i.quantidade,0);
+    const sepQty   = itens.reduce((s,i)=>s+(i.separado?i.quantidade:0),0);
+    const pct = totalQty>0?Math.round(sepQty/totalQty*100):0;
+    document.getElementById('detProgressLabel').textContent=`${sepQty}/${totalQty} unidades`;
+    document.getElementById('detProgressBar').style.width=pct+'%';
+    document.getElementById('detProgressBar').style.background=pct===100?'var(--green)':pct>0?'var(--orange)':'var(--border)';
+    const enviado = pedido.status==='enviado';
+    document.getElementById('btnEnviar').style.display  = enviado?'none':'';
+    document.getElementById('btnReabrir').style.display = enviado?'':'none';
+}
+
+async function togglePago() {
+    if (!pedidoAbertoId) return;
+    const pago = document.getElementById('detPago').checked;
+    await fetch(`/api/atacado/pedidos/${pedidoAbertoId}/pago`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({pago})});
+    document.getElementById('detPagoBadge').innerHTML = pago
+        ? `<span class="pago-badge"><i class="bi bi-check2 me-1"></i>Pago</span>`
+        : `<span class="npago-badge">Pgto pendente</span>`;
+    carregar();
+}
+
+async function marcarEnviado() {
+    if (!confirm('Marcar este pedido como ENVIADO?')) return;
+    await fetch(`/api/atacado/pedidos/${pedidoAbertoId}/enviado`,{method:'PUT'});
+    bootstrap.Modal.getInstance(document.getElementById('modalDetalhe')).hide();
+    carregar();
+}
+async function reabrirPedido() {
+    await fetch(`/api/atacado/pedidos/${pedidoAbertoId}/reabrir`,{method:'PUT'});
+    document.getElementById('btnEnviar').style.display=''; document.getElementById('btnReabrir').style.display='none';
+    carregar();
+}
+async function deletarPedido() {
+    if (!confirm('Excluir este pedido permanentemente?')) return;
+    await fetch(`/api/atacado/pedidos/${pedidoAbertoId}`,{method:'DELETE'});
+    bootstrap.Modal.getInstance(document.getElementById('modalDetalhe')).hide();
+    carregar();
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────
+function labelStatus(s){return{pendente:'Pendente',separando:'Separando',separado:'Separado',enviado:'Enviado'}[s]||s;}
+function labelFrete(s){return{pac:'PAC',sedex:'SEDEX',retirada:'Retirada',a_combinar:'A combinar'}[s]||'';}
+function fmtMoeda(v){return (v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
+function fmtDate(s){if(!s)return'';try{return new Date(s+'T12:00:00').toLocaleDateString('pt-BR');}catch{return s;}}
+function fmtDatetime(s){if(!s)return'';try{const d=new Date(s.replace(' ','T'));return d.toLocaleDateString('pt-BR')+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}catch{return s;}}
+function escHtml(s){if(!s)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+function maskCpf(el){let v=el.value.replace(/\D/g,'');v=v.slice(0,11);if(v.length>9)v=v.replace(/^(\d{3})(\d{3})(\d{3})(\d{0,2}).*/,'$1.$2.$3-$4');else if(v.length>6)v=v.replace(/^(\d{3})(\d{3})(\d{0,3}).*/,'$1.$2.$3');else if(v.length>3)v=v.replace(/^(\d{3})(\d{0,3}).*/,'$1.$2');el.value=v;}
+function maskCep(el){let v=el.value.replace(/\D/g,'').slice(0,8);if(v.length>5)v=v.replace(/^(\d{5})(\d{0,3}).*/,'$1-$2');el.value=v;}
+async function buscarCep(){
+    const cep=document.getElementById('fCep').value.replace(/\D/g,'');
+    if(cep.length!==8)return;
+    try{
+        const r=await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+        const j=await r.json();
+        if(!j.erro){
+            document.getElementById('fEndereco').value=j.logradouro||'';
+            document.getElementById('fCidade').value=j.localidade||'';
+        }
+    }catch(e){}
+}
+
+carregar();
+</script>
+{% endblock %}

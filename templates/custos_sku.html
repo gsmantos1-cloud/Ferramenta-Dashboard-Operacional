@@ -1,0 +1,1658 @@
+{% extends "base.html" %}
+{% block title %}Estoque & Custos SKU — Ferramenta de Pedidos{% endblock %}
+
+{% block content %}
+<!-- Cabeçalho -->
+<div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+        <h5 class="mb-0 fw-bold">Estoque & Custos SKU</h5>
+        <small class="text-muted">Gerencie estoque e custo · detecção automática de time · edição em massa</small>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+        <button class="btn btn-outline-secondary btn-sm" onclick="refresh()">
+            <i class="bi bi-arrow-clockwise me-1"></i>Atualizar
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" onclick="openManualModal()">
+            <i class="bi bi-plus-lg me-1"></i>SKU Manual
+        </button>
+        <button class="btn btn-sm" id="btnSyncNomes"
+                style="background:rgba(88,166,255,.12);border:1px solid #58a6ff44;color:#58a6ff"
+                onclick="sincronizarPorNome()" title="Sincroniza o estoque de todos os produtos com o mesmo nome">
+            <i class="bi bi-arrow-repeat me-1"></i>Sync por Nome
+        </button>
+    </div>
+</div>
+
+<!-- Cards de resumo de estoque -->
+<div id="stockSummary" class="d-flex flex-wrap gap-3 mb-4"></div>
+
+<!-- ─── Card: Custo de Personalização ────────────────────────────────────── -->
+<div class="card mb-3" id="persCard">
+    <div class="card-header d-flex align-items-center justify-content-between"
+         style="cursor:pointer;user-select:none" onclick="togglePersCard()">
+        <div class="d-flex align-items-center gap-2">
+            <i class="bi bi-stars" style="color:#8957e5"></i>
+            <small class="fw-bold" style="letter-spacing:.04em">CUSTO DE PERSONALIZAÇÃO</small>
+            <span id="persBadgeCard" class="badge rounded-pill ms-1"
+                  style="background:#8957e5;font-size:.68rem;display:none"></span>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <span id="persResumoLabel" style="font-size:.78rem;color:var(--muted)"></span>
+            <i class="bi bi-chevron-down" id="persChevron"
+               style="transition:transform .2s;font-size:.8rem;color:var(--muted)"></i>
+        </div>
+    </div>
+
+    <div id="persBody" style="display:none">
+        <div class="card-body">
+            <div class="row g-3">
+
+                <!-- Coluna 1: Configuração de custos -->
+                <div class="col-md-5">
+                    <p class="mb-3" style="font-size:.82rem;color:var(--muted)">
+                        Defina o custo adicional para cada elemento de personalização impresso na camisa.
+                        O total é somado ao custo base do produto.
+                    </p>
+
+                    <!-- Toggle ativo -->
+                    <div class="d-flex align-items-center gap-2 mb-3">
+                        <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" id="persAtivo"
+                                   onchange="persAtualiza()" style="cursor:pointer">
+                            <label class="form-check-label" for="persAtivo"
+                                   style="font-size:.83rem;cursor:pointer">
+                                Usar variação de custo por personalização
+                            </label>
+                        </div>
+                    </div>
+
+                    <div id="persCampos">
+                        <!-- Nome -->
+                        <div class="mb-2">
+                            <label class="form-label d-flex align-items-center gap-1">
+                                <i class="bi bi-person-badge" style="color:#58a6ff"></i>
+                                Custo por <b>Nome</b> impresso (R$)
+                            </label>
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text">R$</span>
+                                <input id="persCustoNome" type="number" step="0.50" min="0"
+                                       class="form-control" placeholder="0,00"
+                                       oninput="persAtualiza()">
+                                <span class="input-group-text" style="color:var(--muted);font-size:.75rem">/nome</span>
+                            </div>
+                        </div>
+                        <!-- Número -->
+                        <div class="mb-2">
+                            <label class="form-label d-flex align-items-center gap-1">
+                                <i class="bi bi-hash" style="color:#f0883e"></i>
+                                Custo por <b>Número</b> impresso (R$)
+                            </label>
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text">R$</span>
+                                <input id="persCustoNumero" type="number" step="0.50" min="0"
+                                       class="form-control" placeholder="0,00"
+                                       oninput="persAtualiza()">
+                                <span class="input-group-text" style="color:var(--muted);font-size:.75rem">/número</span>
+                            </div>
+                        </div>
+                        <!-- Escudo -->
+                        <div class="mb-3">
+                            <label class="form-label d-flex align-items-center gap-1">
+                                <i class="bi bi-shield-fill" style="color:#3fb950"></i>
+                                Custo por <b>Escudo/Logo</b> impresso (R$)
+                                <span style="font-size:.72rem;color:var(--muted)">(opcional)</span>
+                            </label>
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text">R$</span>
+                                <input id="persCustoEscudo" type="number" step="0.50" min="0"
+                                       class="form-control" placeholder="0,00"
+                                       oninput="persAtualiza()">
+                                <span class="input-group-text" style="color:var(--muted);font-size:.75rem">/escudo</span>
+                            </div>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2 align-items-center">
+                            <button class="btn btn-primary btn-sm px-4" onclick="salvarPersConfig()">
+                                <i class="bi bi-floppy-fill me-1"></i>Salvar configuração
+                            </button>
+                            <button class="btn btn-sm px-3" onclick="aplicarPersParaTodos()"
+                                    style="background:#8b5cf6;color:#fff;border:none"
+                                    title="Copia o custo de nome e número para TODAS as variantes Com Personalização">
+                                <i class="bi bi-copy me-1"></i>Copiar para todos os produtos
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Divider vertical -->
+                <div class="col-auto d-none d-md-flex">
+                    <div style="width:1px;background:var(--border);height:100%"></div>
+                </div>
+
+                <!-- Coluna 2: Calculadora interativa -->
+                <div class="col">
+                    <p class="mb-3" style="font-size:.82rem;color:var(--muted)">
+                        <i class="bi bi-calculator me-1"></i><b>Simulador de custo</b> — ajuste as quantidades e veja o custo de personalização em tempo real.
+                    </p>
+
+                    <!-- Sliders -->
+                    <div class="row g-2 mb-3">
+                        <div class="col-4">
+                            <label class="form-label text-center w-100" style="font-size:.75rem">
+                                <i class="bi bi-person-badge" style="color:#58a6ff"></i> Nomes
+                            </label>
+                            <div class="d-flex align-items-center gap-1">
+                                <button class="btn btn-outline-secondary btn-sm px-2 py-0"
+                                        onclick="persAjustarQtd('nomes',-1)">−</button>
+                                <input id="qNomes" type="number" min="0" max="10" value="1"
+                                       class="form-control form-control-sm text-center"
+                                       style="width:52px" oninput="persCalcular()">
+                                <button class="btn btn-outline-secondary btn-sm px-2 py-0"
+                                        onclick="persAjustarQtd('nomes',1)">+</button>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label text-center w-100" style="font-size:.75rem">
+                                <i class="bi bi-hash" style="color:#f0883e"></i> Números
+                            </label>
+                            <div class="d-flex align-items-center gap-1">
+                                <button class="btn btn-outline-secondary btn-sm px-2 py-0"
+                                        onclick="persAjustarQtd('numeros',-1)">−</button>
+                                <input id="qNumeros" type="number" min="0" max="10" value="1"
+                                       class="form-control form-control-sm text-center"
+                                       style="width:52px" oninput="persCalcular()">
+                                <button class="btn btn-outline-secondary btn-sm px-2 py-0"
+                                        onclick="persAjustarQtd('numeros',1)">+</button>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label text-center w-100" style="font-size:.75rem">
+                                <i class="bi bi-shield-fill" style="color:#3fb950"></i> Escudos
+                            </label>
+                            <div class="d-flex align-items-center gap-1">
+                                <button class="btn btn-outline-secondary btn-sm px-2 py-0"
+                                        onclick="persAjustarQtd('escudos',-1)">−</button>
+                                <input id="qEscudos" type="number" min="0" max="10" value="0"
+                                       class="form-control form-control-sm text-center"
+                                       style="width:52px" oninput="persCalcular()">
+                                <button class="btn btn-outline-secondary btn-sm px-2 py-0"
+                                        onclick="persAjustarQtd('escudos',1)">+</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Breakdown de custo -->
+                    <div id="persBreakdown" class="p-3 rounded"
+                         style="background:var(--hover-row);border:1px solid var(--border)">
+                        <div class="row g-1 mb-2" id="persBreakdownLinhas"></div>
+                        <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px;
+                                    display:flex;justify-content:space-between;align-items:center">
+                            <span style="font-size:.8rem;font-weight:600">Custo adicional de personalização:</span>
+                            <span id="persTotalVal"
+                                  style="font-size:1.3rem;font-weight:700;color:#8957e5">R$ 0,00</span>
+                        </div>
+                        <div style="font-size:.72rem;color:var(--muted);margin-top:6px" id="persExplicacao"></div>
+                    </div>
+
+                    <!-- Dica -->
+                    <div class="mt-3 p-2 rounded" style="background:rgba(137,87,229,.08);border:1px solid rgba(137,87,229,.25);font-size:.78rem;color:var(--muted)">
+                        <i class="bi bi-lightbulb-fill me-1" style="color:#8957e5"></i>
+                        <b>Dica:</b> Este custo é mostrado na projeção de estoque e deve ser somado ao custo base da camisa
+                        para calcular a margem real de cada pedido personalizado.
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filtros -->
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+            <input id="searchInput" type="text" class="form-control form-control-sm"
+                   placeholder="Buscar produto…" style="max-width:210px"
+                   oninput="onSearch(this.value)">
+            <select id="statusSelect" class="form-select form-select-sm" style="max-width:175px"
+                    onchange="onStatusFilter(this.value)">
+                <option value="all">Todos os produtos</option>
+                <option value="sem_custo">Sem custo</option>
+                <option value="com_custo">Com custo</option>
+                <option value="sem_estoque">Sem estoque cadastrado</option>
+                <option value="baixo">Estoque baixo</option>
+                <option value="zerado">Estoque zerado</option>
+            </select>
+            <select id="sortSelect" class="form-select form-select-sm" style="max-width:165px"
+                    onchange="onSort(this.value)">
+                <option value="newest">Mais recentes</option>
+                <option value="oldest">Mais antigos</option>
+                <option value="most_sold">Mais vendidos</option>
+                <option value="least_sold">Menos vendidos</option>
+            </select>
+            <select id="catSelect" class="form-select form-select-sm" style="max-width:190px"
+                    onchange="onCategory(this.value)">
+                <option value="">Todas as categorias</option>
+            </select>
+            <span id="statsLabel" class="text-muted ms-auto" style="font-size:.8rem;white-space:nowrap"></span>
+        </div>
+    </div>
+</div>
+
+<!-- Grade de produtos -->
+<div id="productGrid">
+    <div class="text-center text-muted py-5">
+        <div class="spinner-border spinner-border-sm me-2"></div>Carregando produtos…
+    </div>
+</div>
+
+<!-- Paginação -->
+<div id="pagination" class="d-flex justify-content-center gap-2 mt-4 mb-5 flex-wrap"></div>
+
+<!-- ═══ BARRA DE EDIÇÃO EM MASSA (flutuante no bottom) ════════════════════════ -->
+<div id="bulkBar" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:1050;
+                          background:var(--card-bg);border-top:2px solid var(--blue);
+                          padding:10px 20px;box-shadow:0 -4px 24px var(--shadow)">
+    <div class="d-flex flex-wrap align-items-center gap-2">
+        <!-- Counter + ações de seleção -->
+        <div class="d-flex align-items-center gap-2" style="min-width:160px">
+            <i class="bi bi-check2-square" style="color:var(--blue);font-size:1rem"></i>
+            <span id="bulkCount" style="font-size:.85rem;color:var(--blue);font-weight:700"></span>
+        </div>
+        <button class="btn btn-outline-secondary btn-sm py-0" onclick="selectAllVisible()" title="Selecionar todos da página">
+            <i class="bi bi-check-all me-1"></i>Todos da página
+        </button>
+        <button class="btn btn-outline-secondary btn-sm py-0" onclick="clearSelection()">
+            <i class="bi bi-x me-1"></i>Limpar
+        </button>
+
+        <div class="vr mx-1" style="height:28px"></div>
+
+        <!-- SKU Central -->
+        <div style="display:flex;align-items:center;gap:5px">
+            <label style="font-size:.75rem;color:var(--muted);white-space:nowrap;margin:0">SKU Central</label>
+            <input id="bulkSku" type="text" class="form-control form-control-sm"
+                   placeholder="Auto (detecta o time)" style="width:205px">
+        </div>
+
+        <!-- Custo -->
+        <div style="display:flex;align-items:center;gap:5px">
+            <label style="font-size:.75rem;color:var(--muted);white-space:nowrap;margin:0">Custo R$</label>
+            <input id="bulkCost" type="number" step="0.01" min="0" placeholder="0.00"
+                   class="form-control form-control-sm" style="width:88px">
+        </div>
+
+        <!-- Tipo -->
+        <select id="bulkType" class="form-select form-select-sm" style="width:95px">
+            <option value="product">Produto</option>
+            <option value="brinde">Brinde</option>
+        </select>
+
+        <!-- Vigência -->
+        <input id="bulkFrom" type="date" class="form-control form-control-sm" style="width:140px">
+
+        <button id="bulkSaveBtn" class="btn btn-primary btn-sm px-3 ms-1" onclick="applyBulk()">
+            <i class="bi bi-lightning-fill me-1"></i>Gerar e Salvar
+        </button>
+        <span id="bulkProgress" style="font-size:.78rem;color:var(--muted)"></span>
+    </div>
+</div>
+
+<!-- ─── Modal: SKU Manual ─────────────────────────────────────────────────── -->
+<div class="modal fade" id="modalManual" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border)">
+            <div class="modal-header" style="border-bottom:1px solid var(--border)">
+                <h6 class="modal-title fw-bold">Adicionar SKU Manual</h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">SKU <span style="color:var(--red)">*</span></label>
+                    <input id="mSku" type="text" class="form-control form-control-sm" placeholder="Ex: br-r10-azul-P">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Nome / Descrição</label>
+                    <input id="mName" type="text" class="form-control form-control-sm" placeholder="Ex: Camiseta P Azul">
+                </div>
+                <div class="row g-2 mb-3">
+                    <div class="col">
+                        <label class="form-label">Custo (R$) <span style="color:var(--red)">*</span></label>
+                        <input id="mCost" type="number" step="0.01" min="0" class="form-control form-control-sm" placeholder="0.00">
+                    </div>
+                    <div class="col">
+                        <label class="form-label">Tipo</label>
+                        <select id="mType" class="form-select form-select-sm">
+                            <option value="product">Produto</option>
+                            <option value="brinde">Brinde</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="row g-2 mb-1">
+                    <div class="col">
+                        <label class="form-label">Vigência a partir de</label>
+                        <input id="mFrom" type="date" class="form-control form-control-sm">
+                    </div>
+                    <div class="col">
+                        <label class="form-label">Estoque inicial</label>
+                        <input id="mStock" type="number" min="0" class="form-control form-control-sm" placeholder="0">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer" style="border-top:1px solid var(--border)">
+                <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+                <button class="btn btn-primary btn-sm px-4" onclick="saveManualSku()">Salvar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ─── Modal: Histórico de Custos ───────────────────────────────────────── -->
+<div class="modal fade" id="modalHistory" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+        <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border)">
+            <div class="modal-header" style="border-bottom:1px solid var(--border)">
+                <h6 class="modal-title fw-bold" id="historyTitle">Histórico de Custos</h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-0">
+                <div class="table-responsive">
+                    <table class="table mb-0">
+                        <thead><tr><th>SKU</th><th>Custo</th><th>Tipo</th><th>Início</th><th>Fim</th><th>Criado em</th></tr></thead>
+                        <tbody id="historyBody"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer" style="border-top:1px solid var(--border)">
+                <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Fechar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ─── Modal: Movimentos de Estoque ─────────────────────────────────────── -->
+<div class="modal fade" id="modalMov" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+        <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border)">
+            <div class="modal-header" style="border-bottom:1px solid var(--border)">
+                <h6 class="modal-title fw-bold" id="movTitle">Movimentos de Estoque</h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-0">
+                <div class="table-responsive">
+                    <table class="table mb-0">
+                        <thead><tr><th>Data</th><th>Tipo</th><th>Qtd</th><th>Pedido</th><th>Obs</th></tr></thead>
+                        <tbody id="movBody"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer" style="border-top:1px solid var(--border)">
+                <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Fechar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast -->
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999">
+    <div id="toast" class="toast align-items-center border-0" role="alert">
+        <div class="d-flex">
+            <div class="toast-body fw-semibold" id="toastMsg"></div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ══════════════════════════════════════════════════════════════════════════════
+//  MAPEAMENTO DE TIMES → PREFIXO SKU
+// ══════════════════════════════════════════════════════════════════════════════
+const TEAM_MAP = [
+    { keywords: ['flamengo'],                                    prefix: 'fla',  label: 'Flamengo'     },
+    { keywords: ['corinthians', 'timão', 'timao'],               prefix: 'sccp', label: 'Corinthians'  },
+    { keywords: ['brasil', 'brazil', 'selecao', 'seleção'],      prefix: 'br',   label: 'Brasil'       },
+    { keywords: ['palmeiras', 'verdão', 'verdao'],               prefix: 'pm',   label: 'Palmeiras'    },
+    { keywords: ['sao paulo', 'são paulo', 'spfc'],              prefix: 'sp',   label: 'São Paulo'    },
+    { keywords: ['vasco'],                                       prefix: 'vsc',  label: 'Vasco'        },
+    { keywords: ['botafogo'],                                    prefix: 'bot',  label: 'Botafogo'     },
+    { keywords: ['atletico mineiro', 'atletico-mg', 'galo'],     prefix: 'cam',  label: 'Atlético-MG'  },
+    { keywords: ['internacional', 'colorado'],                   prefix: 'int',  label: 'Internacional'},
+    { keywords: ['gremio', 'grêmio', 'gremio'],                  prefix: 'grm',  label: 'Grêmio'       },
+    { keywords: ['santos'],                                      prefix: 'san',  label: 'Santos'       },
+    { keywords: ['cruzeiro'],                                    prefix: 'cru',  label: 'Cruzeiro'     },
+    { keywords: ['fluminense'],                                  prefix: 'flu',  label: 'Fluminense'   },
+    { keywords: ['boca juniors', 'boca'],                        prefix: 'boca', label: 'Boca Juniors' },
+    { keywords: ['river plate', 'river'],                        prefix: 'riv',  label: 'River Plate'  },
+    { keywords: ['real madrid'],                                 prefix: 'rm',   label: 'Real Madrid'  },
+    { keywords: ['barcelona'],                                   prefix: 'fcb',  label: 'Barcelona'    },
+    { keywords: ['argentina'],                                   prefix: 'arg',  label: 'Argentina'    },
+    { keywords: ['atletico madrid'],                             prefix: 'atm',  label: 'Atl. Madrid'  },
+    { keywords: ['juventus'],                                    prefix: 'juve', label: 'Juventus'     },
+    { keywords: ['milan', 'ac milan'],                           prefix: 'acm',  label: 'AC Milan'     },
+    { keywords: ['inter milan', 'inter de milao'],               prefix: 'intm', label: 'Inter Milan'  },
+    { keywords: ['manchester'],                                  prefix: 'mnu',  label: 'Manchester'   },
+    { keywords: ['psg', 'paris saint'],                          prefix: 'psg',  label: 'PSG'          },
+    { keywords: ['chelsea'],                                     prefix: 'che',  label: 'Chelsea'      },
+    { keywords: ['porto'],                                       prefix: 'por',  label: 'Porto'        },
+    { keywords: ['benfica'],                                     prefix: 'ben',  label: 'Benfica'      },
+];
+
+function normalizeStr(s) {
+    return (s || '').toLowerCase()
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-z0-9 ]/g, ' ');
+}
+
+function detectTeam(productName) {
+    const lower = normalizeStr(productName);
+    for (const team of TEAM_MAP) {
+        if (team.keywords.some(k => lower.includes(normalizeStr(k)))) return team;
+    }
+    return null;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CONSTANTES & ESTADO
+// ══════════════════════════════════════════════════════════════════════════════
+const PER_PAGE  = 30;
+const CACHE_KEY = 'nv_products_cache_v2';
+const CACHE_TTL = 5 * 60 * 1000;
+
+let products        = [];
+let categories      = [];
+let costMap         = new Map();
+let stockMap        = new Map();
+let selectedProducts = new Set();
+let loading         = true;
+let search          = '';
+let statusFilter    = 'all';
+let sortBy          = 'newest';
+let categoryId      = '';
+let page            = 1;
+let expandedId      = null;
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  UTILITÁRIOS
+// ══════════════════════════════════════════════════════════════════════════════
+function toast(msg, ok = true) {
+    const el = document.getElementById('toast');
+    el.className = `toast align-items-center border-0 text-bg-${ok ? 'success' : 'danger'}`;
+    document.getElementById('toastMsg').textContent = msg;
+    bootstrap.Toast.getOrCreateInstance(el, { delay: 3500 }).show();
+}
+
+function escHtml(str) {
+    if (str == null) return '';
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function fmtQty(n) { return Number.isInteger(n) ? n : 0; }
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CACHE
+// ══════════════════════════════════════════════════════════════════════════════
+function cacheKey() { return `${CACHE_KEY}_${sortBy}_${categoryId}`; }
+
+function getCached() {
+    try {
+        const { ts, data } = JSON.parse(sessionStorage.getItem(cacheKey()) || 'null') || {};
+        if (!ts || Date.now() - ts > CACHE_TTL) return null;
+        return data;
+    } catch { return null; }
+}
+
+function setCache(data) {
+    try { sessionStorage.setItem(cacheKey(), JSON.stringify({ ts: Date.now(), data })); } catch {}
+}
+
+function clearAllCaches() {
+    try { Object.keys(sessionStorage).filter(k => k.startsWith(CACHE_KEY)).forEach(k => sessionStorage.removeItem(k)); } catch {}
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CARREGAMENTO DE DADOS
+// ══════════════════════════════════════════════════════════════════════════════
+async function loadCosts() {
+    try {
+        const all = await fetch('/api/sku-costs').then(r => r.json());
+        const map = new Map();
+        if (Array.isArray(all)) for (const c of all) { if (c.nv_variant_id) map.set(c.nv_variant_id, c); }
+        costMap = map;
+    } catch { costMap = new Map(); }
+}
+
+async function loadStock() {
+    try {
+        const all = await fetch('/api/estoque').then(r => r.json());
+        const map = new Map();
+        if (Array.isArray(all)) for (const s of all) { if (s.nv_variant_id) map.set(s.nv_variant_id, s); }
+        stockMap = map;
+    } catch { stockMap = new Map(); }
+}
+
+async function loadProducts(forceRefresh = false) {
+    if (!forceRefresh) { const c = getCached(); if (c) { products = c; return; } }
+    const params = new URLSearchParams({ sort_by: sortBy });
+    if (categoryId) params.set('category_id', categoryId);
+    try {
+        const data = await fetch(`/api/nuvemshop/produtos?${params}`).then(r => r.json());
+        if (data && data.erro) throw new Error(data.erro);
+        products = Array.isArray(data) ? data : [];
+        setCache(products);
+    } catch (e) { toast('Erro ao carregar produtos: ' + e.message, false); products = []; }
+}
+
+async function loadCategories() {
+    try {
+        const data = await fetch('/api/nuvemshop/categorias').then(r => r.json());
+        categories = Array.isArray(data) ? data : [];
+        renderCategorySelect();
+    } catch { categories = []; }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  SELEÇÃO EM MASSA
+// ══════════════════════════════════════════════════════════════════════════════
+function toggleProductSelect(productId, checked) {
+    if (checked) selectedProducts.add(productId);
+    else selectedProducts.delete(productId);
+    renderBulkBar();
+}
+
+function selectAllVisible() {
+    const paginated = getFiltered().slice((page-1)*PER_PAGE, page*PER_PAGE);
+    paginated.forEach(p => {
+        selectedProducts.add(p.id);
+        const cb = document.getElementById(`bulk-sel-${p.id}`);
+        if (cb) cb.checked = true;
+    });
+    renderBulkBar();
+}
+
+function clearSelection() {
+    selectedProducts.clear();
+    document.querySelectorAll('.bulk-checkbox').forEach(cb => cb.checked = false);
+    renderBulkBar();
+}
+
+function renderBulkBar() {
+    const bar = document.getElementById('bulkBar');
+    const n   = selectedProducts.size;
+    if (n === 0) {
+        bar.style.display = 'none';
+        document.body.style.paddingBottom = '';
+        return;
+    }
+    bar.style.display = 'block';
+    document.body.style.paddingBottom = '72px';
+    document.getElementById('bulkCount').textContent =
+        `${n} produto${n !== 1 ? 's' : ''} selecionado${n !== 1 ? 's' : ''}`;
+}
+
+// ── Aplicar edição em massa ────────────────────────────────────────────────
+async function applyBulk() {
+    if (!selectedProducts.size) return;
+
+    const skuCentral = document.getElementById('bulkSku').value.trim();
+    const costRaw    = document.getElementById('bulkCost').value;
+    const costVal    = costRaw !== '' ? parseFloat(costRaw) : null;
+    const typeVal    = document.getElementById('bulkType').value;
+    const fromVal    = document.getElementById('bulkFrom').value || new Date().toISOString().slice(0, 10);
+
+    if (!skuCentral && costVal === null) {
+        toast('Preencha SKU Central ou Custo para edição em massa.', false);
+        return;
+    }
+
+    const btn = document.getElementById('bulkSaveBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Salvando…';
+
+    const selectedList = [...selectedProducts];
+    let savedVariants = 0, errorCount = 0;
+
+    for (let i = 0; i < selectedList.length; i++) {
+        const productId = selectedList[i];
+        const product   = products.find(p => p.id === productId);
+        if (!product || !product.variants.length) continue;
+
+        document.getElementById('bulkProgress').textContent = `${i + 1}/${selectedList.length}…`;
+
+        // Determina prefixo: customizado ou auto-detectado por time
+        let prefix = skuCentral;
+        if (!prefix) {
+            const team = detectTeam(product.name);
+            prefix = team ? team.prefix : '';
+        }
+
+        for (const v of product.variants) {
+            const suffix = v.values[0] || '';
+            let sku = '';
+            if (prefix && suffix) sku = `${prefix} - ${suffix}`;
+            else if (prefix)      sku = prefix;
+            else if (suffix)      sku = suffix;
+
+            if (!sku) continue;   // sem SKU não dá pra salvar
+
+            const cost = costVal !== null ? costVal
+                       : costMap.has(v.id) ? costMap.get(v.id).cost : 0;
+
+            try {
+                const r = await fetch('/api/sku-costs', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({
+                        sku, name: v.values.join(', ') || null,
+                        type: typeVal, cost,
+                        effective_from: fromVal, effective_to: null, notes: null,
+                        nv_variant_id: v.id, nv_product_id: productId,
+                    }),
+                });
+                if (r.ok) savedVariants++; else errorCount++;
+            } catch { errorCount++; }
+        }
+    }
+
+    document.getElementById('bulkProgress').textContent = '';
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-lightning-fill me-1"></i>Gerar e Salvar';
+
+    if (errorCount)
+        toast(`${savedVariants} variantes salvas, ${errorCount} com erro.`, false);
+    else
+        toast(`✓ ${savedVariants} variantes em ${selectedList.length} produto${selectedList.length!==1?'s':''} atualizadas!`);
+
+    await loadCosts();
+    clearSelection();
+    renderAll();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  FILTROS
+// ══════════════════════════════════════════════════════════════════════════════
+function getFiltered() {
+    return products.filter(p => {
+        if (search && !p.name.toLowerCase().includes(search.toLowerCase())) return false;
+        if (statusFilter === 'sem_custo')   return p.variants.some(v => !costMap.has(v.id));
+        if (statusFilter === 'com_custo')   return p.variants.every(v => costMap.has(v.id));
+        if (statusFilter === 'sem_estoque') return p.variants.some(v => !stockMap.has(v.id));
+        if (statusFilter === 'baixo')       return p.variants.some(v => { const s = stockMap.get(v.id); return s && s.quantity > 0 && s.quantity <= s.min_quantity; });
+        if (statusFilter === 'zerado')      return p.variants.some(v => { const s = stockMap.get(v.id); return s && s.quantity <= 0; });
+        return true;
+    });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  RESUMO DE ESTOQUE
+// ══════════════════════════════════════════════════════════════════════════════
+function renderStockSummary() {
+    let comEstoque = 0, baixo = 0, zerado = 0, semCadastro = 0, totalPecas = 0;
+    for (const p of products) {
+        for (const v of p.variants) {
+            const s = stockMap.get(v.id);
+            if (!s)                                          semCadastro++;
+            else if (s.quantity <= 0)                        zerado++;
+            else if (s.quantity <= s.min_quantity)           baixo++;
+            else                                             comEstoque++;
+            if (s && s.quantity > 0)                         totalPecas += s.quantity;
+        }
+    }
+    const cards = [
+        { label: 'Total em estoque', val: totalPecas.toLocaleString('pt-BR'), color: '#58a6ff', bg: 'rgba(88,166,255,.1)',   icon: 'bi-layers-fill',                filter: 'all',         subtitle: 'peças' },
+        { label: 'Com estoque',      val: comEstoque,                          color: '#3fb950', bg: 'rgba(63,185,80,.1)',    icon: 'bi-box-seam-fill',              filter: 'all',         subtitle: 'variantes' },
+        { label: 'Estoque baixo',    val: baixo,                               color: '#f0883e', bg: 'rgba(240,136,62,.1)',   icon: 'bi-exclamation-triangle-fill',  filter: 'baixo',       subtitle: 'variantes' },
+        { label: 'Zerado',           val: zerado,                              color: '#f85149', bg: 'rgba(248,81,73,.1)',    icon: 'bi-x-circle-fill',              filter: 'zerado',      subtitle: 'variantes' },
+        { label: 'Sem cadastro',     val: semCadastro,                         color: '#8b949e', bg: 'rgba(139,148,158,.1)', icon: 'bi-dash-circle',                filter: 'sem_estoque', subtitle: 'variantes' },
+    ];
+    document.getElementById('stockSummary').innerHTML = cards.map(c => `
+        <div style="background:${c.bg};border:1px solid ${c.color}33;border-radius:8px;padding:10px 18px;
+                    min-width:130px;cursor:pointer" onclick="onStatusFilter('${c.filter}')">
+            <div style="font-size:1.35rem;font-weight:700;color:${c.color}">${c.val}</div>
+            <div style="font-size:.76rem;color:var(--muted)">
+                <i class="bi ${c.icon} me-1" style="color:${c.color}"></i>${c.label}
+            </div>
+            <div style="font-size:.7rem;color:${c.color};opacity:.7">${c.subtitle}</div>
+        </div>`).join('');
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  RENDER PRINCIPAL
+// ══════════════════════════════════════════════════════════════════════════════
+function renderCategorySelect() {
+    const sel = document.getElementById('catSelect');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">Todas as categorias</option>';
+    for (const c of categories) { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; sel.appendChild(o); }
+    if (cur) sel.value = cur;
+}
+
+function renderAll() {
+    const filtered = getFiltered();
+    document.getElementById('statsLabel').textContent =
+        products.length ? `${products.length} produtos · ${filtered.length} filtrados` : '';
+    renderStockSummary();
+
+    const paginated = filtered.slice((page-1)*PER_PAGE, page*PER_PAGE);
+    const grid = document.getElementById('productGrid');
+
+    if (loading) {
+        grid.innerHTML = '<div class="text-center text-muted py-5"><div class="spinner-border spinner-border-sm me-2"></div>Carregando produtos…</div>';
+        document.getElementById('pagination').innerHTML = '';
+        return;
+    }
+    if (!products.length) {
+        grid.innerHTML = '<div class="text-center text-muted py-5"><i class="bi bi-cloud-slash" style="font-size:2rem;display:block;margin-bottom:8px"></i>Nenhum produto carregado.<br><small>Verifique a conexão com a NuvemShop.</small></div>';
+        document.getElementById('pagination').innerHTML = '';
+        return;
+    }
+    if (!paginated.length) {
+        grid.innerHTML = '<div class="text-center text-muted py-5"><i class="bi bi-inbox" style="font-size:2rem;display:block;margin-bottom:8px"></i>Nenhum produto com esses filtros.</div>';
+        renderPagination(filtered.length);
+        return;
+    }
+    grid.innerHTML = paginated.map(renderCard).join('');
+    renderPagination(filtered.length);
+}
+
+// ── Badges ─────────────────────────────────────────────────────────────────
+function stockBadgeHtml(product) {
+    const vv = product.variants;
+    if (!vv.length) return '';
+    const com   = vv.filter(v => { const s = stockMap.get(v.id); return s && s.quantity > 0 && s.quantity > s.min_quantity; }).length;
+    const baixo = vv.filter(v => { const s = stockMap.get(v.id); return s && s.quantity > 0 && s.quantity <= s.min_quantity; }).length;
+    const zero  = vv.filter(v => { const s = stockMap.get(v.id); return s && s.quantity <= 0; }).length;
+
+    if (zero > 0) return `<span style="background:rgba(248,81,73,.1);border:1px solid #f8514944;color:#f85149;border-radius:12px;padding:2px 9px;font-size:.73rem;font-weight:600"><i class="bi bi-x-circle-fill me-1"></i>${zero} zerado${zero!==1?'s':''}</span>`;
+    if (baixo > 0) return `<span style="background:rgba(240,136,62,.1);border:1px solid #f0883e44;color:#f0883e;border-radius:12px;padding:2px 9px;font-size:.73rem;font-weight:600"><i class="bi bi-exclamation-triangle-fill me-1"></i>${baixo} baixo</span>`;
+    if (com > 0)  return `<span style="background:rgba(63,185,80,.1);border:1px solid #3fb95044;color:#3fb950;border-radius:12px;padding:2px 9px;font-size:.73rem;font-weight:600"><i class="bi bi-box-seam-fill me-1"></i>${com}/${vv.length} OK</span>`;
+    return `<span style="background:rgba(139,148,158,.1);border:1px solid #8b949e44;color:#8b949e;border-radius:12px;padding:2px 9px;font-size:.73rem;font-weight:600"><i class="bi bi-dash-circle me-1"></i>Sem estoque</span>`;
+}
+
+function totalStockBadgeHtml(product) {
+    const total = product.variants.reduce((sum, v) => {
+        const s = stockMap.get(v.id);
+        return sum + (s && s.quantity > 0 ? s.quantity : 0);
+    }, 0);
+    const temCadastro = product.variants.some(v => stockMap.has(v.id));
+    if (!temCadastro) return '';
+    const color = total > 0 ? '#58a6ff' : '#8b949e';
+    const bg    = total > 0 ? 'rgba(88,166,255,.1)' : 'rgba(139,148,158,.1)';
+    const bord  = total > 0 ? '#58a6ff44' : '#8b949e44';
+    return `<span style="background:${bg};border:1px solid ${bord};color:${color};border-radius:12px;padding:2px 9px;font-size:.73rem;font-weight:600">
+        <i class="bi bi-layers-fill me-1"></i>${total.toLocaleString('pt-BR')} peça${total !== 1 ? 's' : ''}
+    </span>`;
+}
+
+function costBadgeHtml(product) {
+    const vv = product.variants;
+    if (!vv.length) return '';
+    const com = vv.filter(v => costMap.has(v.id)).length;
+    const color = com === vv.length ? '#3fb950' : com > 0 ? '#f0883e' : '#8b949e';
+    const bg    = com === vv.length ? 'rgba(63,185,80,.1)' : com > 0 ? 'rgba(240,136,62,.1)' : 'rgba(139,148,158,.1)';
+    return `<span style="background:${bg};border:1px solid ${color}44;color:${color};border-radius:12px;padding:2px 9px;font-size:.73rem;font-weight:600">${com}/${vv.length} custo${vv.length!==1?'s':''}</span>`;
+}
+
+// ── Card colapsado ─────────────────────────────────────────────────────────
+function renderCard(p) {
+    const team    = detectTeam(p.name);
+    const teamBadge = team
+        ? `<span style="background:rgba(88,166,255,.12);border:1px solid rgba(88,166,255,.3);
+                         color:var(--blue);border-radius:8px;padding:1px 7px;font-size:.69rem;font-weight:700">
+               ${team.prefix.toUpperCase()}</span>`
+        : '';
+    const imgHtml = p.imageUrl
+        ? `<img src="${escHtml(p.imageUrl)}" alt="" style="width:54px;height:54px;object-fit:cover;border-radius:6px;flex-shrink:0">`
+        : `<div style="width:54px;height:54px;background:var(--border);border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center"><i class="bi bi-image" style="color:var(--muted)"></i></div>`;
+    const nv = p.variants.length;
+    const isSelected = selectedProducts.has(p.id);
+
+    return `<div class="card mb-2" id="card-${p.id}" ${isSelected ? 'style="border-color:var(--blue)"' : ''}>
+        <div class="card-body py-2 px-3">
+            <div class="d-flex align-items-center gap-2">
+                <!-- Checkbox seleção em massa -->
+                <input type="checkbox" class="bulk-checkbox" id="bulk-sel-${p.id}"
+                       ${isSelected ? 'checked' : ''}
+                       style="width:16px;height:16px;accent-color:var(--blue);flex-shrink:0;cursor:pointer"
+                       onclick="event.stopPropagation()"
+                       onchange="toggleProductSelect(${p.id}, this.checked)">
+                <!-- Área clicável de expand -->
+                <div class="d-flex align-items-center gap-3 flex-grow-1" style="cursor:pointer;min-width:0" onclick="toggleCard(${p.id})">
+                    ${imgHtml}
+                    <div class="flex-grow-1" style="min-width:0">
+                        <div class="fw-semibold text-truncate" style="font-size:.88rem">${escHtml(p.name)}</div>
+                        <div class="d-flex align-items-center gap-2 mt-1 flex-wrap">
+                            <div id="sbadge-${p.id}">${stockBadgeHtml(p)}</div>
+                            <div id="tbadge-${p.id}">${totalStockBadgeHtml(p)}</div>
+                            <div id="cbadge-${p.id}">${costBadgeHtml(p)}</div>
+                            ${teamBadge}
+                            <span style="color:var(--muted);font-size:.73rem">${nv} var.</span>
+                        </div>
+                    </div>
+                    <i class="bi bi-chevron-down" id="chevron-${p.id}" style="color:var(--muted);transition:transform .2s;flex-shrink:0"></i>
+                </div>
+            </div>
+        </div>
+        <div id="card-exp-${p.id}" style="display:none;border-top:1px solid var(--border)"></div>
+    </div>`;
+}
+
+function renderPagination(total) {
+    const pages = Math.ceil(total / PER_PAGE);
+    const el = document.getElementById('pagination');
+    if (pages <= 1) { el.innerHTML = ''; return; }
+    let html = `<button class="btn btn-outline-secondary btn-sm" ${page===1?'disabled':''} onclick="goPage(${page-1})">‹</button>`;
+    let last = 0;
+    for (let i = 1; i <= pages; i++) {
+        if (i===1 || i===pages || Math.abs(i-page)<=2) {
+            if (last && i-last>1) html += `<span class="text-muted align-self-center px-1">…</span>`;
+            html += `<button class="btn btn-sm ${i===page?'btn-primary':'btn-outline-secondary'}" onclick="goPage(${i})">${i}</button>`;
+            last = i;
+        }
+    }
+    html += `<button class="btn btn-outline-secondary btn-sm" ${page===pages?'disabled':''} onclick="goPage(${page+1})">›</button>`;
+    el.innerHTML = html;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CARD EXPANDIDO
+// ══════════════════════════════════════════════════════════════════════════════
+function toggleCard(productId) {
+    const exp = document.getElementById(`card-exp-${productId}`);
+    const chv = document.getElementById(`chevron-${productId}`);
+    if (!exp) return;
+    if (exp.style.display === 'none') {
+        if (expandedId && expandedId !== productId) {
+            const pe = document.getElementById(`card-exp-${expandedId}`);
+            const pc = document.getElementById(`chevron-${expandedId}`);
+            if (pe) pe.style.display = 'none';
+            if (pc) pc.style.transform = 'rotate(0deg)';
+        }
+        expandedId = productId;
+        const product = products.find(p => p.id === productId);
+        if (product) exp.innerHTML = buildExpandedHtml(product);
+        exp.style.display = 'block';
+        chv.style.transform = 'rotate(180deg)';
+    } else {
+        exp.style.display = 'none';
+        chv.style.transform = 'rotate(0deg)';
+        expandedId = null;
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PERSONALIZAÇÃO POR VARIANTE
+// ══════════════════════════════════════════════════════════════════════════════
+
+function togglePersPanel(variantId) {
+    const panel = document.getElementById(`pers-panel-${variantId}`);
+    const btn   = document.getElementById(`pers-btn-${variantId}`);
+    if (!panel) return;
+    const open = panel.style.display === 'none' || panel.style.display === '';
+    panel.style.display = open ? 'table-row' : 'none';
+    if (btn) {
+        btn.style.background = open ? 'rgba(139,92,246,.3)' : 'rgba(139,92,246,.15)';
+        btn.style.color      = open ? '#a78bfa' : '#8b5cf6';
+    }
+}
+
+function persPanelCalc(variantId) {
+    const custoNome = parseFloat(document.getElementById(`pp-nome-${variantId}`)?.value || 0) || 0;
+    const custoNum  = parseFloat(document.getElementById(`pp-num-${variantId}`)?.value  || 0) || 0;
+
+    function buildSimTable(custo, tableId, singular, plural) {
+        const tbl = document.getElementById(tableId);
+        if (!tbl) return;
+        if (!custo) {
+            tbl.innerHTML = `<tr style="color:var(--muted)"><td style="padding:2px 0">—</td><td>Configure acima</td></tr>`;
+            return;
+        }
+        const rows = [];
+        for (let i = 1; i <= 5; i++) {
+            const total = (custo * i).toFixed(2);
+            rows.push(`<tr>
+                <td style="padding:2px 4px 2px 0;color:var(--muted)">${i} ${i===1?singular:plural}</td>
+                <td style="padding:2px 0;font-weight:600;color:#8b5cf6">R$ ${total}</td>
+            </tr>`);
+        }
+        tbl.innerHTML = rows.join('');
+    }
+
+    buildSimTable(custoNome, `pp-sim-nomes-${variantId}`, 'nome', 'nomes');
+    buildSimTable(custoNum,  `pp-sim-nums-${variantId}`,  'número', 'números');
+}
+
+async function savePersVariant(variantId, sku) {
+    const custoNome = parseFloat(document.getElementById(`pp-nome-${variantId}`)?.value || 0) || 0;
+    const custoNum  = parseFloat(document.getElementById(`pp-num-${variantId}`)?.value  || 0) || 0;
+    try {
+        const res = await fetch('/api/sku-pers-pricing', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                nv_variant_id: variantId,
+                sku:           sku,
+                custo_nome:    custoNome,
+                custo_numero:  custoNum,
+                custo_escudo:  0,
+            })
+        });
+        const data = await res.json();
+        if (data.ok) {
+            toast('Custo de personalização salvo!');
+        } else {
+            toast('Erro ao salvar', false);
+        }
+    } catch (e) {
+        toast('Erro de conexão', false);
+    }
+}
+
+async function loadPersPricing(variantIds) {
+    if (!variantIds || !variantIds.length) return;
+    try {
+        const res  = await fetch(`/api/sku-pers-pricing?nv_variant_ids=${variantIds.join(',')}`);
+        const rows = await res.json();
+        for (const row of rows) {
+            const vid = row.nv_variant_id;
+            const nomeInp = document.getElementById(`pp-nome-${vid}`);
+            const numInp  = document.getElementById(`pp-num-${vid}`);
+            if (nomeInp) nomeInp.value = row.custo_nome  || '';
+            if (numInp)  numInp.value  = row.custo_numero || '';
+            if (row.custo_nome || row.custo_numero) persPanelCalc(vid);
+        }
+    } catch (e) { /* silencioso */ }
+}
+
+// Retorna todas as variantes "Com Personalização" de todos os produtos carregados
+function _getPersVariants() {
+    const result = [];
+    for (const p of (products || [])) {
+        for (const v of (p.variants || [])) {
+            const label = (v.values || []).join(', ');
+            if (label.toLowerCase().includes('personaliz')) {
+                result.push({ variantId: v.id, sku: v.sku || '' });
+            }
+        }
+    }
+    return result;
+}
+
+// Copia custo_nome e custo_numero para TODAS as variantes "Com Personalização"
+async function _bulkSavePers(custoNome, custoNumero) {
+    const variants = _getPersVariants();
+    if (!variants.length) {
+        toast('Nenhuma variante "Com Personalização" encontrada nos produtos carregados.', false);
+        return;
+    }
+    let ok = 0, err = 0;
+    for (const { variantId, sku } of variants) {
+        try {
+            const res = await fetch('/api/sku-pers-pricing', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    nv_variant_id: variantId,
+                    sku:           sku,
+                    custo_nome:    custoNome,
+                    custo_numero:  custoNumero,
+                    custo_escudo:  0,
+                })
+            });
+            const d = await res.json();
+            if (d.ok) ok++; else err++;
+        } catch { err++; }
+    }
+    if (err === 0) {
+        toast(`Custo aplicado em ${ok} variante(s) Com Personalização!`);
+    } else {
+        toast(`${ok} salvo(s), ${err} erro(s).`, false);
+    }
+}
+
+// Botão "Copiar para todos" no card GLOBAL (usa os valores dos inputs globais)
+async function aplicarPersParaTodos() {
+    const custoNome   = parseFloat(document.getElementById('persCustoNome')?.value   || 0) || 0;
+    const custoNumero = parseFloat(document.getElementById('persCustoNumero')?.value || 0) || 0;
+    if (!custoNome && !custoNumero) {
+        toast('Configure ao menos um custo (nome ou número) antes de aplicar.', false);
+        return;
+    }
+    await _bulkSavePers(custoNome, custoNumero);
+}
+
+// Botão "Copiar para todos" no painel POR VARIANTE (usa os valores daquele painel)
+async function copiarPersParaTodos(variantId) {
+    const custoNome   = parseFloat(document.getElementById(`pp-nome-${variantId}`)?.value || 0) || 0;
+    const custoNumero = parseFloat(document.getElementById(`pp-num-${variantId}`)?.value  || 0) || 0;
+    if (!custoNome && !custoNumero) {
+        toast('Configure ao menos um custo antes de copiar.', false);
+        return;
+    }
+    await _bulkSavePers(custoNome, custoNumero);
+}
+
+function buildExpandedHtml(product) {
+    const today  = new Date().toISOString().slice(0, 10);
+    const team   = detectTeam(product.name);
+    const autoPrefix = team ? team.prefix : '';
+
+    // Dica de time detectado
+    const teamHint = team
+        ? `<span style="font-size:.72rem;color:var(--blue);margin-left:6px">
+               <i class="bi bi-stars me-1"></i><strong>${team.prefix.toUpperCase()}</strong> detectado (${team.label})</span>`
+        : '';
+
+    // Collect "Com Personalização" variant IDs for fetching saved pricing after render
+    const persVariantIds = [];
+
+    const rows = product.variants.map(v => {
+        const cost   = costMap.get(v.id);
+        const stock  = stockMap.get(v.id);
+        const label  = v.values.join(', ') || `Variante #${v.id}`;
+        const skuVal = cost ? escHtml(cost.sku) : (v.sku ? escHtml(v.sku) : '');
+        const costVal= cost ? cost.cost : '';
+        const typeVal= cost ? cost.type : 'product';
+        const nvSkuLbl = v.sku ? `<span style="font-size:.65rem;color:var(--muted);margin-left:3px">(${escHtml(v.sku)})</span>` : '';
+
+        const imgHtml = v.imageUrl
+            ? `<img src="${escHtml(v.imageUrl)}" style="width:36px;height:36px;object-fit:cover;border-radius:4px">`
+            : `<div style="width:36px;height:36px;background:var(--border);border-radius:4px;display:flex;align-items:center;justify-content:center"><i class="bi bi-image" style="font-size:.7rem;color:var(--muted)"></i></div>`;
+
+        // Célula de estoque
+        let stockCell;
+        if (stock) {
+            const qty   = fmtQty(stock.quantity);
+            const min   = fmtQty(stock.min_quantity);
+            const qColor = qty <= 0 ? '#f85149' : qty <= min ? '#f0883e' : '#3fb950';
+            stockCell = `<div style="display:flex;align-items:center;gap:4px">
+                <button onclick="quickStock(${v.id},${product.id},'${escHtml(v.sku||'')}','saida_manual');event.stopPropagation()"
+                        style="background:rgba(248,81,73,.15);border:1px solid #f8514944;color:#f85149;border-radius:4px;width:26px;height:26px;font-size:.9rem;cursor:pointer;display:flex;align-items:center;justify-content:center">−</button>
+                <span id="qty-${v.id}" style="font-size:.88rem;font-weight:700;color:${qColor};min-width:32px;text-align:center">${qty}</span>
+                <button onclick="quickStock(${v.id},${product.id},'${escHtml(v.sku||'')}','entrada');event.stopPropagation()"
+                        style="background:rgba(63,185,80,.15);border:1px solid #3fb95044;color:#3fb950;border-radius:4px;width:26px;height:26px;font-size:.9rem;cursor:pointer;display:flex;align-items:center;justify-content:center">+</button>
+                <button onclick="openMov(${v.id},'${escHtml(label)}');event.stopPropagation()"
+                        title="Movimentos" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:2px 5px;font-size:.68rem;cursor:pointer;margin-left:2px">
+                    <i class="bi bi-clock-history"></i></button>
+            </div>`;
+        } else {
+            stockCell = `<div style="display:flex;align-items:center;gap:4px">
+                <input id="init-stock-${v.id}" type="number" min="0" placeholder="Qtd"
+                       class="form-control form-control-sm" style="width:66px;font-size:.78rem" onclick="event.stopPropagation()">
+                <button onclick="setInitStock(${v.id},${product.id},'${escHtml(v.sku||'')}');event.stopPropagation()"
+                        class="btn btn-outline-secondary btn-sm py-0 px-2" style="font-size:.71rem;white-space:nowrap">Definir</button>
+            </div>`;
+        }
+
+        const histBtn = cost
+            ? `<button onclick="openHistory('${escHtml(cost.sku).replace(/'/g,"\\'")}');event.stopPropagation()"
+                       title="Histórico de custo" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:2px 5px;font-size:.68rem;cursor:pointer">
+                   <i class="bi bi-tag-fill"></i></button>` : '';
+
+        // Detectar variante "Com Personalização"
+        const isPers = label.toLowerCase().includes('personaliz');
+        if (isPers) persVariantIds.push(v.id);
+        const persBtn = isPers
+            ? `<button onclick="togglePersPanel(${v.id});event.stopPropagation()"
+                       id="pers-btn-${v.id}" title="Custo de Personalização"
+                       style="background:rgba(139,92,246,.15);border:1px solid rgba(139,92,246,.4);color:#8b5cf6;border-radius:4px;padding:2px 6px;font-size:.68rem;cursor:pointer;margin-left:2px">
+                   <i class="bi bi-stars"></i></button>` : '';
+
+        // Painel de personalização inline (oculto por padrão)
+        const persPanel = isPers ? `
+        <tr id="pers-panel-${v.id}" style="display:none">
+            <td colspan="8" style="padding:0">
+                <div style="margin:4px 8px 8px 48px;padding:12px 14px;background:rgba(139,92,246,.07);border:1px solid rgba(139,92,246,.25);border-radius:8px">
+                    <div style="font-size:.74rem;font-weight:600;color:#8b5cf6;margin-bottom:10px">
+                        <i class="bi bi-stars me-1"></i>Custo de Personalização — <span style="font-weight:400;color:var(--muted)">${escHtml(label)}</span>
+                    </div>
+                    <div class="d-flex flex-wrap gap-3 align-items-end mb-3">
+                        <div>
+                            <label style="font-size:.71rem;color:var(--muted);display:block;margin-bottom:3px">Custo por Nome (R$)</label>
+                            <input id="pp-nome-${v.id}" type="number" step="0.01" min="0" placeholder="0.00"
+                                   class="form-control form-control-sm" style="width:100px;font-size:.82rem"
+                                   oninput="persPanelCalc(${v.id})" onclick="event.stopPropagation()">
+                        </div>
+                        <div>
+                            <label style="font-size:.71rem;color:var(--muted);display:block;margin-bottom:3px">Custo por Número (R$)</label>
+                            <input id="pp-num-${v.id}" type="number" step="0.01" min="0" placeholder="0.00"
+                                   class="form-control form-control-sm" style="width:100px;font-size:.82rem"
+                                   oninput="persPanelCalc(${v.id})" onclick="event.stopPropagation()">
+                        </div>
+                        <div class="ms-auto d-flex gap-2">
+                            <button onclick="savePersVariant(${v.id},'${escHtml(v.sku||'')}');event.stopPropagation()"
+                                    class="btn btn-sm px-3" style="background:#8b5cf6;color:#fff;border:none;font-size:.78rem">
+                                <i class="bi bi-check2 me-1"></i>Salvar
+                            </button>
+                            <button onclick="copiarPersParaTodos(${v.id});event.stopPropagation()"
+                                    class="btn btn-sm px-3" style="background:rgba(139,92,246,.2);color:#8b5cf6;border:1px solid rgba(139,92,246,.4);font-size:.78rem"
+                                    title="Copiar estes valores para todos os produtos Com Personalização">
+                                <i class="bi bi-copy me-1"></i>Copiar para todos
+                            </button>
+                        </div>
+                    </div>
+                    <!-- Simulador cumulativo -->
+                    <div style="display:flex;gap:16px;flex-wrap:wrap">
+                        <div style="flex:1;min-width:160px">
+                            <div style="font-size:.68rem;font-weight:600;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em">Nomes</div>
+                            <table style="width:100%;font-size:.75rem;border-collapse:collapse" id="pp-sim-nomes-${v.id}">
+                                <tr style="color:var(--muted)"><td style="padding:2px 0">—</td><td>Configure acima</td></tr>
+                            </table>
+                        </div>
+                        <div style="flex:1;min-width:160px">
+                            <div style="font-size:.68rem;font-weight:600;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em">Números</div>
+                            <table style="width:100%;font-size:.75rem;border-collapse:collapse" id="pp-sim-nums-${v.id}">
+                                <tr style="color:var(--muted)"><td style="padding:2px 0">—</td><td>Configure acima</td></tr>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </td>
+        </tr>` : '';
+
+        return `<tr>
+            <td style="width:32px;padding:6px 8px;vertical-align:middle">
+                <input type="checkbox" id="sel-${v.id}" style="accent-color:var(--blue)">
+            </td>
+            <td style="padding:6px 8px;vertical-align:middle">${imgHtml}</td>
+            <td style="padding:6px 8px;vertical-align:middle;font-size:.82rem">${escHtml(label)}${nvSkuLbl}</td>
+            <td style="padding:6px 4px;vertical-align:middle">
+                <input id="sku-${v.id}" type="text" value="${skuVal}" placeholder="SKU…"
+                       class="form-control form-control-sm" style="font-size:.78rem;min-width:140px">
+            </td>
+            <td style="padding:6px 4px;vertical-align:middle">
+                <input id="cost-${v.id}" type="number" step="0.01" min="0" value="${costVal}"
+                       placeholder="0.00" class="form-control form-control-sm" style="font-size:.78rem;width:84px">
+            </td>
+            <td style="padding:6px 4px;vertical-align:middle">
+                <select id="type-${v.id}" class="form-select form-select-sm" style="font-size:.78rem;width:94px">
+                    <option value="product" ${typeVal==='product'?'selected':''}>Produto</option>
+                    <option value="brinde"  ${typeVal==='brinde' ?'selected':''}>Brinde</option>
+                </select>
+            </td>
+            <td style="padding:6px 8px;vertical-align:middle">${stockCell}</td>
+            <td style="padding:6px 4px;vertical-align:middle;white-space:nowrap">${histBtn}${persBtn}</td>
+        </tr>${persPanel}`;
+    }).join('');
+
+    // Agendar fetch dos preços salvos após o render (sem bloquear HTML)
+    if (persVariantIds.length) {
+        setTimeout(() => loadPersPricing(persVariantIds), 80);
+    }
+
+    return `<div style="padding:14px 16px">
+        <!-- Controles SKU/Custo -->
+        <div class="d-flex flex-wrap gap-3 mb-3 align-items-end">
+            <div>
+                <label class="form-label mb-1" style="font-size:.73rem;color:var(--muted)">Vigência a partir de</label>
+                <input id="from-${product.id}" type="date" value="${today}"
+                       class="form-control form-control-sm" style="width:148px">
+            </div>
+            <div>
+                <label class="form-label mb-1" style="font-size:.73rem;color:var(--muted)">
+                    SKU Central${teamHint}
+                </label>
+                <div class="d-flex gap-1">
+                    <input id="csku-${product.id}" type="text" value="${escHtml(autoPrefix)}"
+                           placeholder="Ex: fla r10 branco"
+                           class="form-control form-control-sm" style="width:185px">
+                    <button class="btn btn-outline-secondary btn-sm px-2" onclick="applyCentralSku(${product.id})">
+                        <i class="bi bi-magic me-1"></i>Gerar
+                    </button>
+                </div>
+            </div>
+            <div>
+                <label class="form-label mb-1" style="font-size:.73rem;color:var(--muted)">Custo único (R$)</label>
+                <div class="d-flex gap-1">
+                    <input id="gcost-${product.id}" type="number" step="0.01" min="0" placeholder="0.00"
+                           class="form-control form-control-sm" style="width:95px">
+                    <button class="btn btn-outline-secondary btn-sm px-2" onclick="applyGlobalCost(${product.id})">Aplicar</button>
+                </div>
+            </div>
+            <div class="ms-auto">
+                <button id="save-btn-${product.id}" class="btn btn-primary btn-sm px-3" onclick="saveCard(${product.id})">
+                    <i class="bi bi-check2 me-1"></i>Salvar SKU/Custo
+                </button>
+            </div>
+        </div>
+
+        <!-- Tabela de variantes -->
+        <div class="table-responsive" style="max-height:440px;overflow-y:auto">
+            <table class="table mb-0" style="font-size:.85rem">
+                <thead style="position:sticky;top:0;background:var(--card-bg);z-index:1">
+                    <tr style="font-size:.71rem;color:var(--muted)">
+                        <th style="padding:4px 8px">
+                            <input type="checkbox" id="selall-${product.id}"
+                                   onchange="toggleSelectAll(${product.id},this.checked)"
+                                   style="accent-color:var(--blue)" title="Selecionar todas">
+                        </th>
+                        <th style="padding:4px 8px">Img</th>
+                        <th style="padding:4px 8px">Variante</th>
+                        <th style="padding:4px 8px">SKU</th>
+                        <th style="padding:4px 8px">Custo R$</th>
+                        <th style="padding:4px 8px">Tipo</th>
+                        <th style="padding:4px 8px">Estoque</th>
+                        <th style="padding:4px 8px"></th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+    </div>`;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  AÇÕES DE SKU/CUSTO (card individual)
+// ══════════════════════════════════════════════════════════════════════════════
+function getTargeted(productId) {
+    const p = products.find(x => x.id === productId);
+    if (!p) return [];
+    const sel = p.variants.filter(v => { const cb = document.getElementById(`sel-${v.id}`); return cb && cb.checked; }).map(v => v.id);
+    return sel.length ? sel : p.variants.map(v => v.id);
+}
+
+function applyCentralSku(productId) {
+    const p = products.find(x => x.id === productId);
+    if (!p) return;
+    const base = (document.getElementById(`csku-${productId}`) || {}).value || '';
+    const tgt  = getTargeted(productId);
+    for (const v of p.variants) {
+        if (!tgt.includes(v.id)) continue;
+        const inp = document.getElementById(`sku-${v.id}`);
+        if (inp) inp.value = v.values[0] ? `${base.trim()} - ${v.values[0]}` : base.trim();
+    }
+}
+
+function applyGlobalCost(productId) {
+    const p = products.find(x => x.id === productId);
+    if (!p) return;
+    const cost = (document.getElementById(`gcost-${productId}`) || {}).value || '';
+    const tgt  = getTargeted(productId);
+    for (const v of p.variants) {
+        if (!tgt.includes(v.id)) continue;
+        const inp = document.getElementById(`cost-${v.id}`);
+        if (inp) inp.value = cost;
+    }
+}
+
+function toggleSelectAll(productId, checked) {
+    const p = products.find(x => x.id === productId);
+    if (!p) return;
+    for (const v of p.variants) { const cb = document.getElementById(`sel-${v.id}`); if (cb) cb.checked = checked; }
+}
+
+async function saveCard(productId) {
+    const p = products.find(x => x.id === productId);
+    if (!p) return;
+    const effectiveFrom = (document.getElementById(`from-${productId}`) || {}).value || new Date().toISOString().slice(0,10);
+    const toSave = [];
+    for (const v of p.variants) {
+        const skuEl  = document.getElementById(`sku-${v.id}`);
+        const costEl = document.getElementById(`cost-${v.id}`);
+        const typeEl = document.getElementById(`type-${v.id}`);
+        if (!skuEl || !costEl) continue;
+        const sku  = skuEl.value.trim();
+        const cost = parseFloat((costEl.value || '').replace(',', '.'));
+        if (!sku || isNaN(cost) || cost < 0) continue;
+        toSave.push({ sku, name: v.values.join(', ') || null, type: typeEl ? typeEl.value : 'product',
+                      cost, effective_from: effectiveFrom, effective_to: null, notes: null,
+                      nv_variant_id: v.id, nv_product_id: productId });
+    }
+    if (!toSave.length) { toast('Preencha SKU e custo em ao menos uma variante.', false); return; }
+
+    const btn = document.getElementById(`save-btn-${productId}`);
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Salvando…'; }
+
+    try {
+        let ok = 0, erros = 0;
+        for (const row of toSave) {
+            const r = await fetch('/api/sku-costs', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(row) });
+            if (r.ok) ok++; else erros++;
+        }
+        if (erros) toast(`${ok} salvos, ${erros} com erro.`, false);
+        else toast(`${ok} custo${ok!==1?'s':''} salvo${ok!==1?'s':''} com sucesso.`);
+        await loadCosts();
+        document.getElementById(`cbadge-${productId}`).innerHTML = costBadgeHtml(p);
+    } catch { toast('Erro de conexão.', false); }
+    finally { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check2 me-1"></i>Salvar SKU/Custo'; } }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  AÇÕES DE ESTOQUE
+// ══════════════════════════════════════════════════════════════════════════════
+async function setInitStock(variantId, productId, sku) {
+    const inp = document.getElementById(`init-stock-${variantId}`);
+    const qty = parseInt(inp ? inp.value : '0', 10);
+    if (isNaN(qty) || qty < 0) { toast('Quantidade inválida.', false); return; }
+    await _ajustarEstoque(variantId, productId, sku, 'entrada', qty, 'Estoque inicial');
+}
+
+async function quickStock(variantId, productId, sku, tipo) {
+    await _ajustarEstoque(variantId, productId, sku, tipo, 1, null);
+}
+
+async function _ajustarEstoque(variantId, productId, sku, tipo, quantidade, observacao) {
+    // Resolve nome do produto e variante para sync por nome
+    let prodNome = null, varLabel = null;
+    const prod = products.find(p => p.id === productId);
+    if (prod) {
+        prodNome = prod.name || null;
+        const vari = (prod.variants || []).find(v => v.id === variantId);
+        if (vari) varLabel = (vari.values || []).join(', ') || null;
+    }
+    try {
+        const r = await fetch('/api/estoque/ajustar', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ nv_variant_id: variantId, nv_product_id: productId,
+                                   sku: sku || null, tipo, quantidade, observacao,
+                                   produto_nome: prodNome, variante_label: varLabel }),
+        });
+        const j = await r.json();
+        if (!r.ok) { toast(j.erro || 'Erro ao ajustar.', false); return; }
+
+        await loadStock();
+
+        const qtyEl = document.getElementById(`qty-${variantId}`);
+        if (qtyEl) {
+            const nova = j.nova_quantidade;
+            const s    = stockMap.get(variantId);
+            const min  = s ? s.min_quantity : 3;
+            qtyEl.style.color = nova <= 0 ? '#f85149' : nova <= min ? '#f0883e' : '#3fb950';
+            qtyEl.textContent  = nova;
+        }
+
+        const initInp = document.getElementById(`init-stock-${variantId}`);
+        if (initInp) {
+            const product = products.find(x => x.id === productId);
+            if (product) {
+                const exp = document.getElementById(`card-exp-${productId}`);
+                if (exp && exp.style.display !== 'none') exp.innerHTML = buildExpandedHtml(product);
+            }
+        }
+
+        const product = products.find(x => x.id === productId);
+        if (product) {
+            const sb = document.getElementById(`sbadge-${productId}`); if (sb) sb.innerHTML = stockBadgeHtml(product);
+            const tb = document.getElementById(`tbadge-${productId}`); if (tb) tb.innerHTML = totalStockBadgeHtml(product);
+        }
+        renderStockSummary();
+        toast(tipo === 'entrada' ? `+${quantidade} adicionado${quantidade!==1?'s':''}` : `-${quantidade} removido${quantidade!==1?'s':''}`, true);
+    } catch { toast('Erro de conexão.', false); }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MODAL MOVIMENTOS
+// ══════════════════════════════════════════════════════════════════════════════
+async function openMov(variantId, label) {
+    document.getElementById('movTitle').textContent = `Movimentos — ${label}`;
+    document.getElementById('movBody').innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm"></div></td></tr>';
+    new bootstrap.Modal(document.getElementById('modalMov')).show();
+    try {
+        const data = await fetch(`/api/estoque/movimentos?nv_variant_id=${variantId}&limit=50`).then(r => r.json());
+        if (!data.length) { document.getElementById('movBody').innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">Nenhum movimento registrado.</td></tr>'; return; }
+        const ICON  = { entrada:'bi-plus-circle-fill', saida_venda:'bi-cart-fill', saida_manual:'bi-dash-circle-fill', ajuste:'bi-pencil-fill' };
+        const COLOR = { entrada:'#3fb950', saida_venda:'#f85149', saida_manual:'#f0883e', ajuste:'#58a6ff' };
+        const LABEL = { entrada:'Entrada', saida_venda:'Venda', saida_manual:'Saída Manual', ajuste:'Ajuste' };
+        document.getElementById('movBody').innerHTML = data.map(m => {
+            const c = COLOR[m.tipo]||'#8b949e', i = ICON[m.tipo]||'bi-circle', l = LABEL[m.tipo]||m.tipo;
+            const s = m.tipo==='entrada'?'+':m.tipo==='ajuste'?'=':'-';
+            return `<tr>
+                <td style="font-size:.82rem;color:var(--muted)">${(m.created_at||'').slice(0,16).replace('T',' ')}</td>
+                <td><span style="color:${c};font-size:.8rem;font-weight:600"><i class="bi ${i} me-1"></i>${l}</span></td>
+                <td style="font-size:.9rem;font-weight:700;color:${c}">${s}${m.quantidade}</td>
+                <td style="font-size:.82rem">${m.pedido_numero?`#${m.pedido_numero}`:'—'}</td>
+                <td style="font-size:.8rem;color:var(--muted)">${m.observacao||'—'}</td>
+            </tr>`;
+        }).join('');
+    } catch { document.getElementById('movBody').innerHTML = '<tr><td colspan="5" class="text-center text-danger py-3">Erro ao carregar.</td></tr>'; }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MODAL HISTÓRICO CUSTO
+// ══════════════════════════════════════════════════════════════════════════════
+async function openHistory(sku) {
+    document.getElementById('historyTitle').textContent = `Histórico — ${sku}`;
+    document.getElementById('historyBody').innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm"></div></td></tr>';
+    new bootstrap.Modal(document.getElementById('modalHistory')).show();
+    try {
+        const data = await fetch(`/api/sku-costs?sku=${encodeURIComponent(sku)}`).then(r => r.json());
+        if (!data.length) { document.getElementById('historyBody').innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">Nenhum registro.</td></tr>'; return; }
+        const today = new Date().toISOString().slice(0,10);
+        document.getElementById('historyBody').innerHTML = data.map(h => {
+            const active = !h.effective_to || h.effective_to >= today;
+            return `<tr style="${active?'background:rgba(63,185,80,.06)':''}">
+                <td style="font-size:.85rem">${escHtml(h.sku)}</td>
+                <td style="font-size:.85rem;font-weight:600">R$ ${Number(h.cost).toFixed(2)}</td>
+                <td><span class="badge ${h.type==='brinde'?'b-leve':'b-prazo'}" style="font-size:.72rem">${h.type}</span></td>
+                <td style="font-size:.82rem">${h.effective_from||'—'}</td>
+                <td style="font-size:.82rem;color:var(--muted)">${h.effective_to||'—'}</td>
+                <td style="font-size:.78rem;color:var(--muted)">${(h.created_at||'').slice(0,16).replace('T',' ')}</td>
+            </tr>`;
+        }).join('');
+    } catch { document.getElementById('historyBody').innerHTML = '<tr><td colspan="6" class="text-center text-danger py-3">Erro.</td></tr>'; }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MODAL SKU MANUAL
+// ══════════════════════════════════════════════════════════════════════════════
+function openManualModal() {
+    ['mSku','mName','mCost','mStock'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('mType').value = 'product';
+    document.getElementById('mFrom').value = new Date().toISOString().slice(0,10);
+    new bootstrap.Modal(document.getElementById('modalManual')).show();
+}
+
+async function saveManualSku() {
+    const sku   = document.getElementById('mSku').value.trim();
+    const name  = document.getElementById('mName').value.trim() || null;
+    const cost  = parseFloat(document.getElementById('mCost').value || '');
+    const type  = document.getElementById('mType').value;
+    const from  = document.getElementById('mFrom').value;
+    const stock = parseInt(document.getElementById('mStock').value || '0', 10);
+    if (!sku) { toast('SKU é obrigatório.', false); return; }
+    if (isNaN(cost) || cost < 0) { toast('Custo inválido.', false); return; }
+    try {
+        const r = await fetch('/api/sku-costs', { method:'POST', headers:{'Content-Type':'application/json'},
+                                                   body: JSON.stringify({ sku, name, type, cost, effective_from: from, effective_to: null, notes: null }) });
+        if (!r.ok) { const j = await r.json(); toast(j.erro || 'Erro ao salvar.', false); return; }
+        if (stock > 0) {
+            await fetch('/api/estoque/ajustar', { method:'POST', headers:{'Content-Type':'application/json'},
+                                                  body: JSON.stringify({ sku, tipo:'entrada', quantidade: stock, observacao:'Cadastro inicial' }) });
+        }
+        bootstrap.Modal.getInstance(document.getElementById('modalManual')).hide();
+        toast('SKU manual salvo com sucesso.');
+        await Promise.all([loadCosts(), loadStock()]);
+        renderAll();
+    } catch { toast('Erro de conexão.', false); }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  NAVEGAÇÃO
+// ══════════════════════════════════════════════════════════════════════════════
+function goPage(p) { page = p; expandedId = null; renderAll(); window.scrollTo({top:0,behavior:'smooth'}); }
+function onSearch(val) { search = val; page = 1; renderAll(); }
+function onStatusFilter(val) { statusFilter = val; page = 1; document.getElementById('statusSelect').value = val; renderAll(); }
+function onSort(val) {
+    if (val === sortBy) return;
+    sortBy = val; page = 1; expandedId = null; loading = true; renderAll();
+    loadProducts().then(() => { loading = false; renderAll(); });
+}
+function onCategory(val) {
+    if (val === categoryId) return;
+    categoryId = val; page = 1; expandedId = null; loading = true; renderAll();
+    loadProducts().then(() => { loading = false; renderAll(); });
+}
+async function refresh() {
+    clearAllCaches(); expandedId = null; clearSelection(); loading = true; renderAll();
+    await Promise.all([loadProducts(true), loadCosts(), loadStock()]);
+    loading = false; renderAll();
+}
+
+async function sincronizarPorNome() {
+    const btn = document.getElementById('btnSyncNomes');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sincronizando...';
+    try {
+        const r = await fetch('/api/estoque/sincronizar-catalogo', { method: 'POST' });
+        const j = await r.json();
+        if (r.ok) {
+            const msg = `Sync concluído!\n• ${j.produtos_catalogados} variantes catalogadas\n• ${j.grupos_sincronizados} grupos com mesmo nome\n• ${j.registros_sincronizados} registros sincronizados`;
+            toast(msg, true);
+            await loadStock();
+            renderAll();
+        } else {
+            toast(j.erro || 'Erro ao sincronizar', false);
+        }
+    } catch(e) {
+        toast('Erro de conexão', false);
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Sync por Nome';
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CUSTO DE PERSONALIZAÇÃO
+// ══════════════════════════════════════════════════════════════════════════════
+
+let _persCfg = { ativo: true, custo_nome: 0, custo_numero: 0, custo_escudo: 0 };
+
+async function loadPersConfig() {
+    try {
+        const r = await fetch('/api/personalizacao/config');
+        _persCfg = await r.json();
+    } catch(e) { return; }
+
+    document.getElementById('persAtivo').checked    = _persCfg.ativo;
+    document.getElementById('persCustoNome').value   = _persCfg.custo_nome   || '';
+    document.getElementById('persCustoNumero').value = _persCfg.custo_numero || '';
+    document.getElementById('persCustoEscudo').value = _persCfg.custo_escudo || '';
+
+    persAtualiza();
+    atualizarResumoPers();
+}
+
+function togglePersCard() {
+    const body    = document.getElementById('persBody');
+    const chevron = document.getElementById('persChevron');
+    const aberto  = body.style.display !== 'none';
+    body.style.display    = aberto ? 'none' : '';
+    chevron.style.transform = aberto ? '' : 'rotate(180deg)';
+}
+
+function persAtualiza() {
+    const ativo = document.getElementById('persAtivo').checked;
+    document.getElementById('persCampos').style.opacity  = ativo ? '1' : '.45';
+    document.getElementById('persCampos').style.pointerEvents = ativo ? '' : 'none';
+    persCalcular();
+    atualizarResumoPers();
+}
+
+function persAjustarQtd(campo, delta) {
+    const id  = campo === 'nomes' ? 'qNomes' : campo === 'numeros' ? 'qNumeros' : 'qEscudos';
+    const el  = document.getElementById(id);
+    el.value  = Math.max(0, (parseInt(el.value)||0) + delta);
+    persCalcular();
+}
+
+function persCalcular() {
+    const ativo  = document.getElementById('persAtivo').checked;
+    const cNome  = parseFloat(document.getElementById('persCustoNome').value)   || 0;
+    const cNum   = parseFloat(document.getElementById('persCustoNumero').value) || 0;
+    const cEsc   = parseFloat(document.getElementById('persCustoEscudo').value) || 0;
+    const qNomes = Math.max(0, parseInt(document.getElementById('qNomes').value)   || 0);
+    const qNums  = Math.max(0, parseInt(document.getElementById('qNumeros').value) || 0);
+    const qEscs  = Math.max(0, parseInt(document.getElementById('qEscudos').value) || 0);
+
+    const linhas = [
+        { label: 'Nome(s)',   icon:'bi-person-badge', cor:'#58a6ff', qtd: qNomes, unit: cNome  },
+        { label: 'Número(s)', icon:'bi-hash',         cor:'#f0883e', qtd: qNums,  unit: cNum   },
+        { label: 'Escudo(s)', icon:'bi-shield-fill',  cor:'#3fb950', qtd: qEscs,  unit: cEsc   },
+    ];
+
+    let total = 0;
+    const partes = [];
+    let htmlLinhas = '';
+
+    for (const l of linhas) {
+        const sub = l.qtd * l.unit;
+        total += sub;
+        htmlLinhas += `
+            <div class="col-12">
+                <div style="display:flex;justify-content:space-between;align-items:center;
+                            font-size:.8rem;padding:3px 0;${sub===0?'opacity:.4':''}">
+                    <span><i class="bi ${l.icon} me-1" style="color:${l.cor}"></i>
+                          ${l.qtd}× ${l.label}
+                          <span style="color:var(--muted);font-size:.72rem">(R$ ${l.unit.toFixed(2)}/un)</span>
+                    </span>
+                    <span style="font-weight:600">${sub===0?'—':'R$ '+sub.toFixed(2).replace('.',',')}</span>
+                </div>
+            </div>`;
+        if (sub > 0) partes.push(`${l.qtd} ${l.label.toLowerCase()} × R$${l.unit.toFixed(2)}`);
+    }
+
+    document.getElementById('persBreakdownLinhas').innerHTML = htmlLinhas;
+    const totalFmt = 'R$ ' + (ativo ? total : 0).toFixed(2).replace('.',',');
+    document.getElementById('persTotalVal').textContent = totalFmt;
+    document.getElementById('persExplicacao').textContent =
+        ativo && total > 0 ? partes.join(' + ') + ' = ' + totalFmt : '';
+    document.getElementById('persTotalVal').style.color = ativo ? '#8957e5' : 'var(--muted)';
+}
+
+function atualizarResumoPers() {
+    const ativo  = document.getElementById('persAtivo').checked;
+    const cNome  = parseFloat(document.getElementById('persCustoNome').value)   || 0;
+    const cNum   = parseFloat(document.getElementById('persCustoNumero').value) || 0;
+    const cEsc   = parseFloat(document.getElementById('persCustoEscudo').value) || 0;
+    const label  = document.getElementById('persResumoLabel');
+    const badge  = document.getElementById('persBadgeCard');
+
+    if (!ativo) {
+        label.textContent = 'desativado';
+        badge.style.display = 'none';
+        return;
+    }
+    const partes = [];
+    if (cNome)   partes.push(`nome R$${cNome.toFixed(2).replace('.',',')}`);
+    if (cNum)    partes.push(`nº R$${cNum.toFixed(2).replace('.',',')}`);
+    if (cEsc)    partes.push(`escudo R$${cEsc.toFixed(2).replace('.',',')}`);
+    label.textContent = partes.length ? partes.join(' · ') : 'sem custo definido';
+    badge.textContent = 'Ativo';
+    badge.style.display = partes.length ? '' : 'none';
+}
+
+async function salvarPersConfig() {
+    const btn = document.querySelector('[onclick="salvarPersConfig()"]');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Salvando…';
+    try {
+        const r = await fetch('/api/personalizacao/config', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+                ativo:         document.getElementById('persAtivo').checked,
+                custo_nome:    parseFloat(document.getElementById('persCustoNome').value)   || 0,
+                custo_numero:  parseFloat(document.getElementById('persCustoNumero').value) || 0,
+                custo_escudo:  parseFloat(document.getElementById('persCustoEscudo').value) || 0,
+            })
+        });
+        if (!r.ok) throw new Error();
+        showToast('Configuração de personalização salva!', 'success');
+        atualizarResumoPers();
+    } catch(e) {
+        showToast('Erro ao salvar configuração', 'error');
+    }
+    btn.disabled = false; btn.innerHTML = '<i class="bi bi-floppy-fill me-1"></i>Salvar configuração';
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════════════════════════════════════
+async function init() {
+    document.getElementById('bulkFrom').value = new Date().toISOString().slice(0, 10);
+    loading = true; renderAll();
+    await Promise.all([loadProducts(), loadCosts(), loadStock(), loadCategories(), loadPersConfig()]);
+    loading = false; renderAll();
+}
+
+init();
+</script>
+{% endblock %}

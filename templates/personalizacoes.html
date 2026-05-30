@@ -1,0 +1,306 @@
+{% extends "base.html" %}
+{% block title %}Personalizações — Ferramenta de Pedidos{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+        <h5 class="mb-0 fw-bold">Personalizações</h5>
+        <small class="text-muted">Acompanhe o processo de personalização por pedido</small>
+    </div>
+    <div class="d-flex gap-2">
+        <button class="btn btn-outline-secondary btn-sm" onclick="carregar()">
+            <i class="bi bi-arrow-clockwise me-1"></i>Atualizar
+        </button>
+        <button class="btn btn-primary btn-sm px-3" onclick="abrirModal()">
+            <i class="bi bi-plus-lg me-1"></i>Nova Personalização
+        </button>
+    </div>
+</div>
+
+<!-- Resumo por status -->
+<div id="resumoStatus" class="d-flex flex-wrap gap-2 mb-4"></div>
+
+<!-- Kanban -->
+<div style="overflow-x:auto;padding-bottom:1rem">
+    <div id="kanban" class="d-flex gap-3" style="min-width:900px;align-items:flex-start"></div>
+</div>
+
+<!-- Modal nova / editar -->
+<div class="modal fade" id="modalForm" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border)">
+            <div class="modal-header" style="border-bottom:1px solid var(--border)">
+                <h6 class="modal-title fw-bold" id="modalFormTitulo">Nova Personalização</h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editId">
+                <div class="mb-3">
+                    <label class="form-label">Número do Pedido <span style="color:var(--red)">*</span></label>
+                    <input id="fNumeroPedido" type="text" class="form-control form-control-sm"
+                           placeholder="Ex: 6500">
+                </div>
+                <div class="row g-2 mb-3">
+                    <div class="col">
+                        <label class="form-label">Nome (camiseta)</label>
+                        <input id="fNome" type="text" class="form-control form-control-sm"
+                               placeholder="Ex: João Silva">
+                    </div>
+                    <div class="col-4">
+                        <label class="form-label">Número (camiseta)</label>
+                        <input id="fNumero" type="text" class="form-control form-control-sm"
+                               placeholder="Ex: 10">
+                    </div>
+                </div>
+                <div class="mb-1">
+                    <label class="form-label">Observação</label>
+                    <input id="fObs" type="text" class="form-control form-control-sm"
+                           placeholder="Cor, tamanho, detalhes…">
+                </div>
+            </div>
+            <div class="modal-footer" style="border-top:1px solid var(--border)">
+                <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+                <button class="btn btn-primary btn-sm px-4" onclick="salvarForm()">Salvar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast -->
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999">
+    <div id="toast" class="toast align-items-center border-0" role="alert">
+        <div class="d-flex">
+            <div class="toast-body fw-semibold" id="toastMsg"></div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const COLS = [
+    { status: 'A SEPARAR',         cor: '#f85149', bg: 'rgba(248,81,73,.1)',   icone: 'bi-inbox-fill' },
+    { status: 'SEPARAÇÃO',         cor: '#f0883e', bg: 'rgba(240,136,62,.1)',  icone: 'bi-scissors' },
+    { status: 'NA PERSONALIZAÇÃO', cor: '#8957e5', bg: 'rgba(137,87,229,.1)',  icone: 'bi-brush-fill' },
+    { status: 'PRONTO',            cor: '#3fb950', bg: 'rgba(63,185,80,.1)',   icone: 'bi-check-circle-fill' },
+    { status: 'ENVIADO',           cor: '#8b949e', bg: 'rgba(139,148,158,.1)', icone: 'bi-send-check-fill' },
+];
+
+const PROX = {
+    'A SEPARAR':         'SEPARAÇÃO',
+    'SEPARAÇÃO':         'NA PERSONALIZAÇÃO',
+    'NA PERSONALIZAÇÃO': 'PRONTO',
+    'PRONTO':            'ENVIADO',
+    'ENVIADO':           null,
+};
+
+const PROX_LABEL = {
+    'A SEPARAR':         'Iniciar Separação',
+    'SEPARAÇÃO':         'Enviar p/ Personalização',
+    'NA PERSONALIZAÇÃO': 'Marcar como Pronto',
+    'PRONTO':            'Marcar como Enviado',
+};
+
+let todos = [];
+
+function toast(msg, ok = true) {
+    const el = document.getElementById('toast');
+    el.className = `toast align-items-center border-0 text-bg-${ok ? 'success' : 'danger'}`;
+    document.getElementById('toastMsg').textContent = msg;
+    bootstrap.Toast.getOrCreateInstance(el, { delay: 3000 }).show();
+}
+
+async function carregar() {
+    try {
+        const r = await fetch('/api/personalizacoes');
+        todos = await r.json();
+        renderKanban();
+        renderResumo();
+    } catch {
+        toast('Erro ao carregar personalizações.', false);
+    }
+}
+
+function renderResumo() {
+    const counts = {};
+    COLS.forEach(c => counts[c.status] = 0);
+    todos.forEach(p => { if (counts[p.status] !== undefined) counts[p.status]++; });
+
+    document.getElementById('resumoStatus').innerHTML = COLS.map(c => {
+        const n = counts[c.status] || 0;
+        return `<span style="background:${c.bg};border:1px solid ${c.cor}33;border-radius:20px;
+                             padding:3px 14px;font-size:.8rem;cursor:default">
+            <i class="bi ${c.icone} me-1" style="color:${c.cor}"></i>
+            <strong style="color:${c.cor}">${n}</strong>
+            <span style="color:var(--muted);margin-left:4px">${c.status}</span>
+        </span>`;
+    }).join('');
+}
+
+function renderKanban() {
+    const grupos = {};
+    COLS.forEach(c => grupos[c.status] = []);
+    todos.forEach(p => { if (grupos[p.status] !== undefined) grupos[p.status].push(p); });
+
+    document.getElementById('kanban').innerHTML = COLS.map(col => {
+        const itens = grupos[col.status];
+        const cards = itens.length === 0
+            ? `<div style="text-align:center;padding:2rem 0;color:var(--muted);font-size:.8rem">
+                   <i class="bi bi-inbox" style="font-size:1.5rem;display:block;margin-bottom:6px"></i>
+                   Nenhuma aqui
+               </div>`
+            : itens.map(p => renderCard(p, col)).join('');
+
+        return `<div style="flex:0 0 220px;min-width:220px">
+            <div style="padding:8px 10px 6px;border-radius:8px 8px 0 0;
+                        background:${col.bg};border:1px solid ${col.cor}44;border-bottom:none;
+                        display:flex;align-items:center;justify-content:space-between">
+                <span style="font-size:.72rem;font-weight:700;letter-spacing:.07em;color:${col.cor}">
+                    <i class="bi ${col.icone} me-1"></i>${col.status}
+                </span>
+                <span style="background:${col.cor}22;color:${col.cor};border-radius:10px;
+                             font-size:.7rem;font-weight:700;padding:1px 7px">${itens.length}</span>
+            </div>
+            <div style="border:1px solid ${col.cor}33;border-top:none;border-radius:0 0 8px 8px;
+                        background:rgba(255,255,255,.015);padding:8px;min-height:80px">
+                ${cards}
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function renderCard(p, col) {
+    const prox = PROX[p.status];
+    const proxLabel = PROX_LABEL[p.status];
+    const dataFmt = p.criado_em ? p.criado_em.slice(0, 10).split('-').reverse().join('/') : '—';
+
+    const pendente = !p.nome_personalizacao && !p.numero_personalizacao;
+
+    return `<div style="background:var(--card-bg);border:1px solid ${pendente ? 'rgba(137,87,229,.35)' : 'var(--border)'};
+                        border-radius:6px;padding:10px;margin-bottom:8px;position:relative">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:4px">
+            <div>
+                <span style="font-size:.72rem;font-weight:700;color:${col.cor}">Pedido #${p.numero_pedido}</span>
+                ${p.nome_personalizacao
+                    ? `<div style="font-size:.85rem;font-weight:600;color:var(--text);margin-top:2px">${p.nome_personalizacao}</div>`
+                    : `<div style="font-size:.75rem;color:#8957e5;margin-top:3px;font-style:italic">
+                           <i class="bi bi-pencil-square me-1"></i>Preencher nome e número
+                       </div>`}
+                ${p.numero_personalizacao
+                    ? `<div style="font-size:.78rem;color:var(--muted)">Nº ${p.numero_personalizacao}</div>`
+                    : ''}
+                ${p.observacao
+                    ? `<div style="font-size:.75rem;color:var(--muted);margin-top:3px;font-style:italic">${p.observacao}</div>`
+                    : ''}
+                <div style="font-size:.68rem;color:var(--muted);margin-top:5px">${dataFmt}</div>
+            </div>
+            <div class="d-flex flex-column gap-1">
+                <button onclick="editarCard(${p.id})" title="Editar"
+                        style="background:none;border:1px solid var(--border);color:var(--muted);
+                               border-radius:4px;padding:2px 6px;font-size:.72rem;cursor:pointer;line-height:1.4">
+                    <i class="bi bi-pencil"></i>
+                </button>
+                <button onclick="confirmarExcluir(${p.id}, '${p.numero_pedido}')" title="Excluir"
+                        style="background:none;border:1px solid rgba(248,81,73,.3);color:var(--red);
+                               border-radius:4px;padding:2px 6px;font-size:.72rem;cursor:pointer;line-height:1.4">
+                    <i class="bi bi-trash3"></i>
+                </button>
+            </div>
+        </div>
+        ${prox ? `
+        <button onclick="avancarStatus(${p.id}, '${prox}')"
+                style="width:100%;margin-top:8px;background:${col.bg};border:1px solid ${col.cor}55;
+                       color:${col.cor};border-radius:4px;padding:4px 0;font-size:.72rem;
+                       font-weight:600;cursor:pointer;transition:background .15s"
+                onmouseover="this.style.background='${col.bg.replace('.1)', '.2)')}';"
+                onmouseout="this.style.background='${col.bg}';">
+            ${proxLabel} <i class="bi bi-arrow-right-short"></i>
+        </button>` : ''}
+    </div>`;
+}
+
+async function avancarStatus(id, novoStatus) {
+    try {
+        const r = await fetch(`/api/personalizacoes/${id}/status`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ status: novoStatus }),
+        });
+        if (!r.ok) { toast('Erro ao atualizar status.', false); return; }
+        await carregar();
+        carregarPersBadge();
+    } catch {
+        toast('Erro de conexão.', false);
+    }
+}
+
+function abrirModal(p = null) {
+    document.getElementById('editId').value = p ? p.id : '';
+    document.getElementById('modalFormTitulo').textContent = p ? 'Editar Personalização' : 'Nova Personalização';
+    document.getElementById('fNumeroPedido').value = p ? p.numero_pedido : '';
+    document.getElementById('fNome').value = p ? (p.nome_personalizacao || '') : '';
+    document.getElementById('fNumero').value = p ? (p.numero_personalizacao || '') : '';
+    document.getElementById('fObs').value = p ? (p.observacao || '') : '';
+    document.getElementById('fNumeroPedido').disabled = !!p;
+    new bootstrap.Modal(document.getElementById('modalForm')).show();
+}
+
+function editarCard(id) {
+    const p = todos.find(x => x.id === id);
+    if (p) abrirModal(p);
+}
+
+async function salvarForm() {
+    const id     = document.getElementById('editId').value;
+    const numero = document.getElementById('fNumeroPedido').value.trim();
+    if (!numero) { toast('Número do pedido é obrigatório.', false); return; }
+
+    const body = {
+        numero_pedido:         numero,
+        nome_personalizacao:   document.getElementById('fNome').value.trim(),
+        numero_personalizacao: document.getElementById('fNumero').value.trim(),
+        observacao:            document.getElementById('fObs').value.trim(),
+    };
+
+    try {
+        let r;
+        if (id) {
+            r = await fetch(`/api/personalizacoes/${id}`, {
+                method: 'PATCH',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body),
+            });
+        } else {
+            r = await fetch('/api/personalizacoes', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body),
+            });
+        }
+        const j = await r.json();
+        if (!r.ok) { toast(j.erro || 'Erro ao salvar.', false); return; }
+        bootstrap.Modal.getInstance(document.getElementById('modalForm')).hide();
+        toast(id ? 'Personalização atualizada.' : 'Personalização criada.');
+        await carregar();
+        carregarPersBadge();
+    } catch {
+        toast('Erro de conexão.', false);
+    }
+}
+
+async function confirmarExcluir(id, numPedido) {
+    if (!confirm(`Excluir personalização do pedido #${numPedido}?`)) return;
+    try {
+        await fetch(`/api/personalizacoes/${id}`, { method: 'DELETE' });
+        toast('Personalização excluída.');
+        await carregar();
+        carregarPersBadge();
+    } catch {
+        toast('Erro ao excluir.', false);
+    }
+}
+
+carregar();
+</script>
+{% endblock %}

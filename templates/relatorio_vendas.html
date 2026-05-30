@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Relatório de Vendas — GS Mantos</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0d1117; --card-bg: #161b22; --border: #30363d;
+            --text: #e6edf3; --muted: #8b949e; --green: #3fb950;
+            --blue: #58a6ff; --orange: #f0883e; --red: #f85149;
+            --purple: #8957e5;
+        }
+        body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; margin: 0; }
+
+        /* ── Toolbar ── */
+        .toolbar {
+            background: #010409; border-bottom: 1px solid var(--border);
+            padding: 10px 20px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+            position: sticky; top: 0; z-index: 100;
+        }
+        .toolbar h6 { margin: 0; font-size: .88rem; color: var(--text); white-space: nowrap; }
+        .sep { color: var(--border); }
+        .input-range {
+            background: #161b22; border: 1px solid var(--border); border-radius: 6px;
+            color: var(--text); padding: 5px 10px; font-size: .82rem;
+        }
+        .input-range:focus { outline: none; border-color: var(--blue); }
+        input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.7); }
+        .btn-gerar {
+            background: #238636; color: #fff; border: none; border-radius: 6px;
+            padding: 6px 16px; font-size: .83rem; font-weight: 600; cursor: pointer;
+            display: flex; align-items: center; gap: 6px; white-space: nowrap;
+        }
+        .btn-gerar:hover { background: #2ea043; }
+        .btn-print {
+            background: #1f6feb; color: #fff; border: none; border-radius: 6px;
+            padding: 6px 16px; font-size: .83rem; font-weight: 600; cursor: pointer;
+            display: flex; align-items: center; gap: 6px; white-space: nowrap;
+        }
+        .btn-print:hover { background: #388bfd; }
+        .btn-excel {
+            background: #1a7a3c; color: #fff; border: none; border-radius: 6px;
+            padding: 6px 16px; font-size: .83rem; font-weight: 600; cursor: pointer;
+            display: flex; align-items: center; gap: 6px; white-space: nowrap;
+            text-decoration: none;
+        }
+        .btn-excel:hover { background: #238636; color: #fff; }
+        .btn-back {
+            background: transparent; color: var(--muted); border: 1px solid var(--border);
+            border-radius: 6px; padding: 5px 12px; font-size: .82rem;
+            cursor: pointer; text-decoration: none; display: flex; align-items: center; gap: 5px;
+            white-space: nowrap;
+        }
+        .btn-back:hover { border-color: #8b949e; color: var(--text); }
+
+        /* ── Área de conteúdo ── */
+        #reportArea { max-width: 860px; margin: 0 auto; padding: 28px 20px; }
+
+        /* ── Cabeçalho do relatório ── */
+        .report-header {
+            display: flex; align-items: flex-start; justify-content: space-between;
+            margin-bottom: 22px; padding-bottom: 14px; border-bottom: 2px solid var(--border);
+        }
+        .brand { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.5px; }
+        .brand span { color: var(--green); }
+        .brand-sub { font-size: .76rem; color: var(--muted); margin-top: 2px; }
+        .report-meta { text-align: right; font-size: .76rem; color: var(--muted); line-height: 1.8; }
+
+        /* ── Cards de resumo ── */
+        .summary-bar { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 24px; }
+        .sum-card {
+            background: var(--card-bg); border: 1px solid var(--border);
+            border-radius: 8px; padding: 14px 20px; flex: 1; min-width: 140px;
+        }
+        .sum-card .val { font-size: 1.7rem; font-weight: 700; line-height: 1.1; }
+        .sum-card .lbl { font-size: .72rem; color: var(--muted); margin-top: 3px; }
+
+        /* ── Seção (Produtos / Brindes) ── */
+        .section-header {
+            display: flex; align-items: center; gap: 10px;
+            margin: 28px 0 12px; padding-bottom: 10px;
+            border-bottom: 1px solid var(--border);
+        }
+        .section-header .s-icon { font-size: 1rem; }
+        .section-header .s-title { font-size: .85rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+        .section-header .s-count {
+            font-size: .72rem; background: rgba(255,255,255,.07); border: 1px solid var(--border);
+            border-radius: 10px; padding: 2px 9px; color: var(--muted);
+        }
+
+        /* ── Tabela ── */
+        .prod-table { width: 100%; border-collapse: collapse; }
+        .prod-table th {
+            font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
+            color: var(--muted); border-bottom: 1px solid var(--border);
+            padding: 7px 10px; text-align: left;
+        }
+        .prod-table th.right { text-align: right; }
+        .prod-table td { padding: 9px 10px; border-bottom: 1px solid #1c2128; vertical-align: middle; }
+        .prod-table tr:last-child td { border-bottom: none; }
+
+        .rank-badge {
+            width: 26px; height: 26px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: .72rem; font-weight: 700; flex-shrink: 0;
+        }
+        .rank-1 { background: rgba(255,215,0,.18); color: #ffd700; border: 1px solid #ffd70040; }
+        .rank-2 { background: rgba(192,192,192,.18); color: #c0c0c0; border: 1px solid #c0c0c040; }
+        .rank-3 { background: rgba(205,127,50,.18); color: #cd7f32; border: 1px solid #cd7f3240; }
+        .rank-n { background: rgba(139,148,158,.08); color: var(--muted); border: 1px solid #8b949e20; }
+
+        .prod-img { width: 48px; height: 48px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); }
+        .no-img {
+            width: 48px; height: 48px; border-radius: 6px; background: var(--card-bg);
+            border: 1px solid var(--border); display: flex; align-items: center;
+            justify-content: center; color: var(--muted); font-size: .8rem;
+        }
+        .prod-name { font-size: .84rem; font-weight: 600; line-height: 1.3; }
+        .tamanhos-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+        .tam-chip {
+            display: inline-flex; align-items: center; gap: 4px;
+            border-radius: 20px; padding: 2px 8px; font-size: .7rem; font-weight: 600;
+            border: 1px solid; white-space: nowrap;
+        }
+
+        .qty-cell { display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
+        .qty-val { font-size: 1rem; font-weight: 700; min-width: 44px; text-align: right; }
+        .qty-bar-outer { width: 90px; height: 5px; background: rgba(88,166,255,.1); border-radius: 3px; overflow: hidden; }
+        .qty-bar-inner { height: 100%; border-radius: 3px; }
+
+        /* ── Empty / Spinner ── */
+        #spinner { text-align: center; padding: 50px; color: var(--muted); }
+        #emptyState { text-align: center; padding: 50px; color: var(--muted); display: none; }
+
+        /* ── Rodapé ── */
+        .report-footer {
+            margin-top: 28px; padding-top: 12px; border-top: 1px solid var(--border);
+            display: flex; justify-content: space-between; font-size: .71rem; color: var(--muted);
+        }
+
+        /* ══════════════════════════════════════
+           IMPRESSÃO
+           ══════════════════════════════════════ */
+        @media print {
+            @page { size: A4 portrait; margin: 14mm 12mm; }
+            body { background: #fff !important; color: #111 !important; }
+            .toolbar, .no-print { display: none !important; }
+            :root {
+                --bg: #fff; --card-bg: #f5f5f5; --border: #ddd;
+                --text: #111; --muted: #666; --green: #1a7a3c;
+                --blue: #1a56c4; --orange: #c05a00; --purple: #6b3dbf;
+            }
+            #reportArea { padding: 0; max-width: 100%; }
+            .brand { color: #000 !important; }
+            .brand span { color: #1a7a3c !important; }
+            .report-header { border-bottom: 2px solid #111; }
+            .sum-card { background: #f5f5f5 !important; border: 1px solid #ddd !important; }
+            .prod-table th { color: #666; border-bottom: 1px solid #ddd; }
+            .prod-table td { border-bottom: 1px solid #eee; }
+            .section-header { border-bottom: 1px solid #ddd; }
+            .qty-bar-outer { background: #e0e0e0 !important; }
+            img, .qty-bar-inner, .rank-badge { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            tr { page-break-inside: avoid; }
+            .section-header { page-break-after: avoid; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ── Toolbar ─────────────────────────────────────── -->
+<div class="toolbar no-print">
+    <a href="/relatorios" class="btn-back"><i class="bi bi-arrow-left"></i> Relatórios</a>
+    <span class="sep">|</span>
+    <h6><i class="bi bi-bar-chart-line me-1"></i>Relatório de Vendas por Produto</h6>
+    <span class="sep">|</span>
+    <label style="font-size:.79rem;color:var(--muted)">De:</label>
+    <input type="date" id="dtInicio" class="input-range">
+    <label style="font-size:.79rem;color:var(--muted)">Até:</label>
+    <input type="date" id="dtFim" class="input-range">
+    <button class="btn-gerar" onclick="gerarRelatorio()"><i class="bi bi-arrow-clockwise"></i> Gerar</button>
+    <button class="btn-print" onclick="window.print()"><i class="bi bi-printer"></i> Imprimir / PDF</button>
+    <a id="btnExcel" href="#" class="btn-excel" onclick="baixarExcel(event)">
+        <i class="bi bi-file-earmark-excel"></i> Exportar Excel
+    </a>
+</div>
+
+<!-- ── Área do relatório ────────────────────────────── -->
+<div id="reportArea">
+
+    <div id="spinner">
+        <div class="spinner-border" style="color:var(--blue)" role="status"></div>
+        <div class="mt-3" style="font-size:.85rem">Carregando dados...</div>
+    </div>
+    <div id="emptyState"><i class="bi bi-inbox" style="font-size:2.5rem"></i><div class="mt-2">Nenhum dado no período.</div></div>
+
+    <div id="reportContent" style="display:none">
+
+        <!-- Cabeçalho PDF -->
+        <div class="report-header">
+            <div>
+                <div class="brand">GS <span>Mantos</span></div>
+                <div class="brand-sub">Relatório de Vendas por Produto</div>
+            </div>
+            <div class="report-meta">
+                <div id="labelPeriodo"></div>
+                <div id="labelGerado"></div>
+            </div>
+        </div>
+
+        <!-- Cards de resumo -->
+        <div class="summary-bar" id="summaryBar"></div>
+
+        <!-- Seção: PRODUTOS -->
+        <div class="section-header" id="secProd">
+            <i class="bi bi-bag-check-fill s-icon" style="color:var(--blue)"></i>
+            <span class="s-title" style="color:var(--blue)">Produtos Vendidos</span>
+            <span class="s-count" id="countProd"></span>
+        </div>
+        <table class="prod-table" id="tableProd">
+            <thead>
+                <tr>
+                    <th style="width:34px">#</th>
+                    <th style="width:56px">Foto</th>
+                    <th>Produto</th>
+                    <th class="right" style="width:170px">Qtd. Vendida</th>
+                </tr>
+            </thead>
+            <tbody id="tbodyProd"></tbody>
+        </table>
+
+        <!-- Seção: BRINDES -->
+        <div class="section-header" id="secBrinde">
+            <i class="bi bi-gift-fill s-icon" style="color:var(--orange)"></i>
+            <span class="s-title" style="color:var(--orange)">Brindes Enviados</span>
+            <span class="s-count" id="countBrinde"></span>
+        </div>
+        <table class="prod-table" id="tableBrinde">
+            <thead>
+                <tr>
+                    <th style="width:34px">#</th>
+                    <th style="width:56px">Foto</th>
+                    <th>Brinde</th>
+                    <th class="right" style="width:170px">Qtd. Enviada</th>
+                </tr>
+            </thead>
+            <tbody id="tbodyBrinde"></tbody>
+        </table>
+
+        <!-- Rodapé PDF -->
+        <div class="report-footer">
+            <span>GS Mantos — Relatório interno</span>
+            <span id="footerDate"></span>
+        </div>
+
+    </div>
+</div>
+
+<script>
+// Inicializar datas (últimos 30 dias)
+(function() {
+    const hoje = new Date();
+    const mes  = new Date(hoje); mes.setDate(hoje.getDate() - 30);
+    const fmt  = d => d.toISOString().slice(0, 10);
+    document.getElementById('dtInicio').value = fmt(mes);
+    document.getElementById('dtFim').value    = fmt(hoje);
+    gerarRelatorio();
+})();
+
+async function gerarRelatorio() {
+    const ini = document.getElementById('dtInicio').value;
+    const fim = document.getElementById('dtFim').value;
+    document.getElementById('spinner').style.display       = 'block';
+    document.getElementById('reportContent').style.display = 'none';
+    document.getElementById('emptyState').style.display    = 'none';
+    try {
+        const params = ini && fim ? `?inicio=${ini}&fim=${fim}` : '';
+        const res    = await fetch(`/api/relatorio/vendas-por-produto${params}`);
+        const dados  = await res.json();
+        document.getElementById('spinner').style.display = 'none';
+        if (!dados || (!dados.produtos?.length && !dados.brindes?.length)) {
+            document.getElementById('emptyState').style.display = 'block';
+            return;
+        }
+        renderRelatorio(dados, ini, fim);
+        document.getElementById('reportContent').style.display = 'block';
+    } catch(e) {
+        document.getElementById('spinner').style.display   = 'none';
+        document.getElementById('emptyState').style.display = 'block';
+    }
+}
+
+function renderRelatorio(dados, ini, fim) {
+    const produtos = dados.produtos || [];
+    const brindes  = dados.brindes  || [];
+
+    const totalPecas   = produtos.reduce((s,d) => s + d.total_qty, 0);
+    const totalBrindes = brindes.reduce((s,d)  => s + d.total_qty, 0);
+    const topProduto   = produtos[0]?.produto_nome || '—';
+
+    // Período / gerado em
+    const fmtDate = s => s ? new Date(s + 'T12:00:00').toLocaleDateString('pt-BR') : '—';
+    document.getElementById('labelPeriodo').textContent =
+        ini && fim ? `Período: ${fmtDate(ini)} — ${fmtDate(fim)}` : 'Todos os registros';
+    const agora = new Date().toLocaleString('pt-BR');
+    document.getElementById('labelGerado').textContent = `Gerado em: ${agora}`;
+    document.getElementById('footerDate').textContent  = `Gerado em ${agora}`;
+
+    // Resumo
+    document.getElementById('summaryBar').innerHTML = `
+        <div class="sum-card">
+            <div class="val" style="color:var(--blue)">${totalPecas.toLocaleString('pt-BR')}</div>
+            <div class="lbl"><i class="bi bi-bag-check me-1"></i>Peças vendidas</div>
+        </div>
+        <div class="sum-card">
+            <div class="val" style="color:var(--orange)">${totalBrindes.toLocaleString('pt-BR')}</div>
+            <div class="lbl"><i class="bi bi-gift me-1"></i>Brindes enviados</div>
+        </div>
+        <div class="sum-card">
+            <div class="val" style="color:var(--green)">${produtos.length}</div>
+            <div class="lbl"><i class="bi bi-grid me-1"></i>Produtos diferentes</div>
+        </div>
+        <div class="sum-card" style="flex:2;min-width:180px">
+            <div class="val" style="font-size:.95rem;font-weight:700;color:var(--orange);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(topProduto)}">${escHtml(topProduto)}</div>
+            <div class="lbl"><i class="bi bi-trophy me-1" style="color:#ffd700"></i>Produto mais vendido</div>
+        </div>
+    `;
+
+    // Contadores das seções
+    document.getElementById('countProd').textContent   = `${produtos.length} produto${produtos.length!==1?'s':''}`;
+    document.getElementById('countBrinde').textContent = `${brindes.length} tipo${brindes.length!==1?'s':''}`;
+
+    // Renderiza tabela
+    const maxProd    = produtos[0]?.total_qty || 1;
+    const maxBrinde  = brindes[0]?.total_qty  || 1;
+
+    document.getElementById('tbodyProd').innerHTML   = renderRows(produtos, maxProd,   'var(--blue)');
+    document.getElementById('tbodyBrinde').innerHTML = renderRows(brindes,  maxBrinde, 'var(--orange)');
+
+    // Oculta seção brindes se vazia
+    const secB = document.getElementById('secBrinde');
+    const tabB = document.getElementById('tableBrinde');
+    if (!brindes.length) { secB.style.display = 'none'; tabB.style.display = 'none'; }
+    else                  { secB.style.display = ''; tabB.style.display = ''; }
+}
+
+function renderRows(lista, maxQty, barColor) {
+    // Paleta de cores para os chips de tamanho (cíclica)
+    const chipColors = [
+        {bg:'rgba(88,166,255,.12)',  border:'rgba(88,166,255,.35)',  text:'#58a6ff'},
+        {bg:'rgba(63,185,80,.12)',   border:'rgba(63,185,80,.35)',   text:'#3fb950'},
+        {bg:'rgba(240,136,62,.12)',  border:'rgba(240,136,62,.35)',  text:'#f0883e'},
+        {bg:'rgba(137,87,229,.12)',  border:'rgba(137,87,229,.35)',  text:'#8957e5'},
+        {bg:'rgba(248,81,73,.12)',   border:'rgba(248,81,73,.35)',   text:'#f85149'},
+        {bg:'rgba(210,153,34,.12)',  border:'rgba(210,153,34,.35)',  text:'#d29922'},
+    ];
+
+    return lista.map((p, i) => {
+        const rank = i + 1;
+        const rClass = rank===1?'rank-1':rank===2?'rank-2':rank===3?'rank-3':'rank-n';
+        const pct = Math.round((p.total_qty / maxQty) * 100);
+        const img = p.imagem_url
+            ? `<img src="${escHtml(p.imagem_url)}" class="prod-img" alt="" loading="lazy">`
+            : `<div class="no-img"><i class="bi bi-image"></i></div>`;
+
+        // Chips de tamanho
+        let tamHtml = '';
+        if (p.tamanhos && p.tamanhos.length) {
+            const chips = p.tamanhos.map((t, ci) => {
+                const c = chipColors[ci % chipColors.length];
+                return `<span class="tam-chip" style="background:${c.bg};border-color:${c.border};color:${c.text}">
+                    ${escHtml(t.tamanho)} <span style="opacity:.7">×${t.qty}</span>
+                </span>`;
+            }).join('');
+            tamHtml = `<div class="tamanhos-row">${chips}</div>`;
+        }
+
+        return `<tr>
+            <td><div class="rank-badge ${rClass}">${rank}</div></td>
+            <td>${img}</td>
+            <td>
+                <div class="prod-name">${escHtml(p.produto_nome)}</div>
+                ${tamHtml}
+            </td>
+            <td>
+                <div class="qty-cell">
+                    <div class="qty-bar-outer">
+                        <div class="qty-bar-inner" style="width:${pct}%;background:${barColor}"></div>
+                    </div>
+                    <div class="qty-val" style="color:${barColor}">${p.total_qty.toLocaleString('pt-BR')}</div>
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+function baixarExcel(e) {
+    e.preventDefault();
+    const ini = document.getElementById('dtInicio').value;
+    const fim = document.getElementById('dtFim').value;
+    const params = ini && fim ? `?inicio=${ini}&fim=${fim}` : '';
+    window.location.href = `/api/relatorio/vendas-excel${params}`;
+}
+
+function escHtml(s) {
+    if (!s) return '';
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>

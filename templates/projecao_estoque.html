@@ -1,0 +1,693 @@
+{% extends "base.html" %}
+{% block title %}Projeção de Faturamento — GS Mantos{% endblock %}
+
+{% block content %}
+<!-- Cabeçalho -->
+<div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <div>
+        <h5 class="mb-0 fw-bold">Projeção de Faturamento por Estoque</h5>
+        <small class="text-muted">Custo × Preço de venda · baseado no estoque atual cadastrado</small>
+    </div>
+    <button class="btn btn-outline-secondary btn-sm" onclick="load()" id="refreshBtn">
+        <i class="bi bi-arrow-clockwise me-1"></i>Atualizar
+    </button>
+</div>
+
+<!-- Loading overlay -->
+<div id="loadingState" class="text-center py-5">
+    <div class="spinner-border spinner-border-sm me-2 text-muted"></div>
+    <span class="text-muted">Carregando produtos e preços da NuvemShop…</span>
+</div>
+
+<!-- Alertas de dados faltando -->
+<div id="alertas" class="mb-3" style="display:none"></div>
+
+<!-- KPI Cards -->
+<div id="kpiRow" class="row g-3 mb-4" style="display:none">
+
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="card h-100 p-3" style="border-left:3px solid var(--blue)">
+            <div class="stat-label">Receita Potencial</div>
+            <div class="stat-num" id="kpiReceita" style="font-size:1.4rem;color:var(--blue)">—</div>
+            <div style="font-size:.72rem;color:var(--muted);margin-top:4px">se vender todo estoque</div>
+        </div>
+    </div>
+
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="card h-100 p-3" style="border-left:3px solid var(--orange)">
+            <div class="stat-label">Custo em Estoque</div>
+            <div class="stat-num" id="kpiCusto" style="font-size:1.4rem;color:var(--orange)">—</div>
+            <div style="font-size:.72rem;color:var(--muted);margin-top:4px">capital imobilizado</div>
+        </div>
+    </div>
+
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="card h-100 p-3" style="border-left:3px solid var(--green)">
+            <div class="stat-label">Lucro Bruto Potencial</div>
+            <div class="stat-num" id="kpiLucro" style="font-size:1.4rem;color:var(--green)">—</div>
+            <div style="font-size:.72rem;color:var(--muted);margin-top:4px">receita − custo</div>
+        </div>
+    </div>
+
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="card h-100 p-3" style="border-left:3px solid var(--green)">
+            <div class="stat-label">Margem Bruta</div>
+            <div class="stat-num" id="kpiMargem" style="font-size:1.4rem;color:var(--green)">—</div>
+            <div style="font-size:.72rem;color:var(--muted);margin-top:4px">média ponderada</div>
+        </div>
+    </div>
+
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="card h-100 p-3" style="border-left:3px solid var(--yellow)">
+            <div class="stat-label">SKUs Cadastrados</div>
+            <div class="stat-num" id="kpiSkus" style="font-size:1.4rem;color:var(--yellow)">—</div>
+            <div style="font-size:.72rem;color:var(--muted);margin-top:4px" id="kpiSkusSub">com estoque</div>
+        </div>
+    </div>
+
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="card h-100 p-3" style="border-left:3px solid var(--red)">
+            <div class="stat-label">Dados Faltando</div>
+            <div class="stat-num" id="kpiFaltando" style="font-size:1.4rem;color:var(--red)">—</div>
+            <div style="font-size:.72rem;color:var(--muted);margin-top:4px" id="kpiFaltandoSub">sem custo ou preço</div>
+        </div>
+    </div>
+
+</div>
+
+<!-- Card: Personalização -->
+<div id="persProjecaoCard" class="card mb-4" style="display:none;border-color:rgba(137,87,229,.4)">
+    <div class="card-header d-flex align-items-center justify-content-between"
+         style="background:rgba(137,87,229,.08)">
+        <div class="d-flex align-items-center gap-2">
+            <i class="bi bi-stars" style="color:#8957e5"></i>
+            <small class="fw-bold" style="letter-spacing:.04em;color:#8957e5">CUSTO DE PERSONALIZAÇÃO</small>
+        </div>
+        <a href="/custos-sku" style="font-size:.78rem;color:#8957e5">Editar configuração →</a>
+    </div>
+    <div class="card-body">
+        <div class="row g-3 align-items-center">
+            <!-- Custos configurados -->
+            <div class="col-md-4">
+                <div style="font-size:.8rem;color:var(--muted);margin-bottom:6px">
+                    Custo por elemento impresso:
+                </div>
+                <div id="persProjecaoCustos" class="d-flex flex-column gap-1"></div>
+            </div>
+            <!-- Simulador inline -->
+            <div class="col-md-8">
+                <div style="font-size:.8rem;color:var(--muted);margin-bottom:8px">
+                    Simulador rápido — custo por camisa personalizada:
+                </div>
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                    <div class="d-flex align-items-center gap-1" style="font-size:.82rem">
+                        <i class="bi bi-person-badge" style="color:#58a6ff"></i>
+                        <input id="pNomes" type="number" min="0" max="10" value="1"
+                               class="form-control form-control-sm text-center"
+                               style="width:50px" oninput="atualizarPersProjecao()">
+                        <span style="color:var(--muted)">nome(s)</span>
+                    </div>
+                    <div class="d-flex align-items-center gap-1" style="font-size:.82rem">
+                        <i class="bi bi-hash" style="color:#f0883e"></i>
+                        <input id="pNumeros" type="number" min="0" max="10" value="1"
+                               class="form-control form-control-sm text-center"
+                               style="width:50px" oninput="atualizarPersProjecao()">
+                        <span style="color:var(--muted)">número(s)</span>
+                    </div>
+                    <div class="d-flex align-items-center gap-1" style="font-size:.82rem">
+                        <i class="bi bi-shield-fill" style="color:#3fb950"></i>
+                        <input id="pEscudos" type="number" min="0" max="10" value="0"
+                               class="form-control form-control-sm text-center"
+                               style="width:50px" oninput="atualizarPersProjecao()">
+                        <span style="color:var(--muted)">escudo(s)</span>
+                    </div>
+                    <div class="d-flex align-items-center gap-3 ms-2 p-2 rounded"
+                         style="background:rgba(137,87,229,.1);border:1px solid rgba(137,87,229,.25)">
+                        <div>
+                            <div style="font-size:.72rem;color:var(--muted)">Custo de pers.</div>
+                            <div id="pTotalPers" style="font-size:1.1rem;font-weight:700;color:#8957e5">R$ 0,00</div>
+                        </div>
+                        <div style="width:1px;height:36px;background:rgba(137,87,229,.3)"></div>
+                        <div>
+                            <div style="font-size:.72rem;color:var(--muted)">Custo base + pers.</div>
+                            <div id="pTotalComPers"
+                                 style="font-size:1.1rem;font-weight:700;color:var(--text)">—</div>
+                        </div>
+                        <div style="width:1px;height:36px;background:rgba(137,87,229,.3)"></div>
+                        <div>
+                            <div style="font-size:.72rem;color:var(--muted)">Margem c/ pers.</div>
+                            <div id="pMargemComPers"
+                                 style="font-size:1.1rem;font-weight:700">—</div>
+                        </div>
+                    </div>
+                </div>
+                <div style="font-size:.72rem;color:var(--muted);margin-top:6px" id="pBaseExplicacao">
+                    Use o custo base do produto + personalização para calcular a margem real.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Gráficos -->
+<div id="chartsRow" class="row g-3 mb-4" style="display:none">
+    <!-- Top produtos por receita potencial -->
+    <div class="col-lg-7">
+        <div class="card">
+            <div class="card-header d-flex align-items-center justify-content-between">
+                <small class="fw-bold text-uppercase" style="letter-spacing:.06em">Top 10 — Receita Potencial</small>
+                <small class="text-muted">por produto</small>
+            </div>
+            <div class="card-body" style="padding:1rem">
+                <canvas id="chartTop" height="260"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Distribuição por faixa de margem -->
+    <div class="col-lg-5">
+        <div class="card">
+            <div class="card-header d-flex align-items-center justify-content-between">
+                <small class="fw-bold text-uppercase" style="letter-spacing:.06em">Distribuição por Margem</small>
+                <small class="text-muted">% dos SKUs</small>
+            </div>
+            <div class="card-body d-flex align-items-center justify-content-center" style="padding:1rem;min-height:300px">
+                <canvas id="chartMargem" style="max-width:260px;max-height:260px"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filtros -->
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+            <input id="searchInput" type="text" class="form-control form-control-sm"
+                   placeholder="Buscar produto ou SKU…" style="max-width:220px"
+                   oninput="renderTable()">
+            <select id="filterMargem" class="form-select form-select-sm" style="max-width:180px"
+                    onchange="renderTable()">
+                <option value="">Todas as margens</option>
+                <option value="alta">Alta (>40%)</option>
+                <option value="media">Média (20–40%)</option>
+                <option value="baixa">Baixa (<20%)</option>
+                <option value="sem_preco">Sem preço cadastrado</option>
+                <option value="sem_custo">Sem custo cadastrado</option>
+            </select>
+            <select id="sortBy" class="form-select form-select-sm" style="max-width:185px"
+                    onchange="renderTable()">
+                <option value="receita_desc">Maior receita potencial</option>
+                <option value="margem_desc">Maior margem</option>
+                <option value="margem_asc">Menor margem</option>
+                <option value="lucro_desc">Maior lucro potencial</option>
+                <option value="estoque_desc">Maior estoque</option>
+                <option value="custo_desc">Maior custo em estoque</option>
+            </select>
+            <span id="statsLabel" class="text-muted ms-auto" style="font-size:.8rem;white-space:nowrap"></span>
+        </div>
+    </div>
+</div>
+
+<!-- Tabela -->
+<div id="tableWrap" class="card" style="display:none">
+    <div class="table-responsive">
+        <table class="table mb-0">
+            <thead>
+                <tr>
+                    <th style="min-width:200px">Produto</th>
+                    <th class="text-end">Estoque</th>
+                    <th class="text-end">Custo Unit.</th>
+                    <th class="text-end">Preço Venda</th>
+                    <th class="text-end">Markup</th>
+                    <th class="text-end" style="min-width:90px">
+                        <span style="color:var(--green)">Margem</span>
+                    </th>
+                    <th class="text-end">Receita Potencial</th>
+                    <th class="text-end">Custo Total</th>
+                    <th class="text-end" style="color:var(--green)">Lucro Potencial</th>
+                </tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+            <tfoot id="tableFoot" style="border-top:2px solid var(--border)"></tfoot>
+        </table>
+    </div>
+</div>
+
+<!-- Empty state -->
+<div id="emptyState" class="text-center text-muted py-5" style="display:none">
+    <i class="bi bi-box-seam" style="font-size:2.5rem;opacity:.3"></i>
+    <div class="mt-2">Nenhum produto encontrado com os filtros aplicados.</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script>
+/* ── Estado global ── */
+let allItems    = [];   // dados mesclados (estoque + custo + preço)
+let persCfg     = { ativo: false, custo_nome: 0, custo_numero: 0, custo_escudo: 0 };
+let chartTop    = null;
+let chartMargem = null;
+
+const R = v => 'R$ ' + (v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+const P = v => (v||0).toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1}) + '%';
+const N = v => (v||0).toLocaleString('pt-BR');
+
+/* ── Cores do tema ── */
+function cssVar(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+/* ── Personalização ── */
+function renderPersCard(){
+    const card = document.getElementById('persProjecaoCard');
+    if(!persCfg.ativo || (!persCfg.custo_nome && !persCfg.custo_numero && !persCfg.custo_escudo)){
+        card.style.display = 'none'; return;
+    }
+    card.style.display = '';
+    const custos = document.getElementById('persProjecaoCustos');
+    custos.innerHTML = [
+        { icon:'bi-person-badge', cor:'#58a6ff', label:'Por nome',   val:persCfg.custo_nome   },
+        { icon:'bi-hash',         cor:'#f0883e', label:'Por número', val:persCfg.custo_numero },
+        { icon:'bi-shield-fill',  cor:'#3fb950', label:'Por escudo', val:persCfg.custo_escudo },
+    ].filter(x=>x.val>0).map(x =>
+        `<div style="font-size:.82rem;display:flex;align-items:center;gap:5px">
+            <i class="bi ${x.icon}" style="color:${x.cor}"></i>
+            <span style="color:var(--muted)">${x.label}:</span>
+            <b>${R(x.val)}</b>
+         </div>`
+    ).join('');
+    atualizarPersProjecao();
+}
+
+function atualizarPersProjecao(){
+    const qN = Math.max(0, parseInt(document.getElementById('pNomes').value)   || 0);
+    const qU = Math.max(0, parseInt(document.getElementById('pNumeros').value) || 0);
+    const qE = Math.max(0, parseInt(document.getElementById('pEscudos').value) || 0);
+    const totalPers = qN*persCfg.custo_nome + qU*persCfg.custo_numero + qE*persCfg.custo_escudo;
+    document.getElementById('pTotalPers').textContent = R(totalPers);
+
+    // Pega custo médio dos itens com custo
+    const comCusto = allItems.filter(i=>i.hasCost && i.qty>0);
+    const custoMedio = comCusto.length
+        ? comCusto.reduce((a,i)=>a+i.cost,0)/comCusto.length : 0;
+
+    if(custoMedio > 0){
+        const custoComPers = custoMedio + totalPers;
+        const precoMedio   = allItems.filter(i=>i.hasPrice&&i.qty>0).reduce((a,i,_,arr)=>a+i.price/arr.length,0);
+        const margemComPers= precoMedio>0 ? ((precoMedio-custoComPers)/precoMedio*100) : null;
+        document.getElementById('pTotalComPers').textContent = R(custoComPers);
+        if(margemComPers!=null){
+            const el = document.getElementById('pMargemComPers');
+            el.textContent = P(margemComPers);
+            el.style.color = margemComPers>=40?'var(--green)':margemComPers>=20?'var(--yellow)':'var(--red)';
+        }
+        document.getElementById('pBaseExplicacao').textContent =
+            `Custo médio dos produtos: ${R(custoMedio)} · com personalização: ${R(custoComPers)} · preço médio de venda: ${R(precoMedio)}`;
+    }
+}
+
+/* ── Carga de dados ── */
+async function load(){
+    document.getElementById('loadingState').style.display = '';
+    document.getElementById('kpiRow').style.display = 'none';
+    document.getElementById('chartsRow').style.display = 'none';
+    document.getElementById('tableWrap').style.display = 'none';
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('alertas').style.display = 'none';
+    document.getElementById('persProjecaoCard').style.display = 'none';
+
+    try {
+        const [stockRes, prodsRes, persCfgRes] = await Promise.all([
+            fetch('/api/projecao-estoque').then(r=>r.json()),
+            fetch('/api/nuvemshop/produtos').then(r=>r.json()).catch(()=>[]),
+            fetch('/api/personalizacao/config').then(r=>r.json()).catch(()=>null)
+        ]);
+
+        if(persCfgRes) persCfg = persCfgRes;
+
+        // Monta mapa: nv_variant_id -> { price, productName, variantLabel, imageUrl }
+        const priceMap = {};
+        for (const prod of (prodsRes||[])) {
+            for (const v of (prod.variants||[])) {
+                if (v.id) {
+                    priceMap[v.id] = {
+                        price:       v.price || 0,
+                        productName: prod.name || '',
+                        variantLabel: (v.values||[]).join(' / ') || '',
+                        imageUrl:    v.imageUrl || prod.imageUrl || null,
+                        sku:         v.sku || ''
+                    };
+                }
+            }
+        }
+
+        // Mescla: estoque + custo + preço
+        allItems = stockRes.map(s => {
+            const vid  = s.nv_variant_id;
+            const info = vid ? (priceMap[vid] || null) : null;
+
+            const qty         = s.quantity || 0;
+            const cost        = (s.cost != null) ? Number(s.cost) : null;
+            const price       = info ? Number(info.price) : null;
+            const costTotal   = (cost != null) ? qty * cost : null;
+            const receita     = (price != null) ? qty * price : null;
+            const lucro       = (cost != null && price != null) ? qty * (price - cost) : null;
+            const margem      = (receita && receita > 0 && lucro != null) ? (lucro / receita * 100) : null;
+            const markup      = (cost && cost > 0 && price != null) ? ((price - cost) / cost * 100) : null;
+
+            return {
+                sku:          s.sku || '',
+                nv_variant_id: vid,
+                qty,
+                cost,
+                price,
+                costTotal,
+                receita,
+                lucro,
+                margem,
+                markup,
+                productName:  info ? info.productName : (s.cost_name || s.sku || '—'),
+                variantLabel: info ? info.variantLabel : '',
+                imageUrl:     info ? info.imageUrl : null,
+                hasCost:      cost != null,
+                hasPrice:     price != null,
+                min_quantity: s.min_quantity || 0
+            };
+        });
+
+        document.getElementById('loadingState').style.display = 'none';
+        updateKPIs();
+        renderAlerts();
+        renderCharts();
+        renderTable();
+        renderPersCard();
+
+        document.getElementById('kpiRow').style.display   = '';
+        document.getElementById('chartsRow').style.display= '';
+
+    } catch(e) {
+        document.getElementById('loadingState').innerHTML =
+            `<div class="text-danger"><i class="bi bi-exclamation-triangle me-1"></i>Erro ao carregar: ${e.message}</div>`;
+    }
+}
+
+/* ── KPIs ── */
+function updateKPIs(){
+    const withBoth  = allItems.filter(i => i.hasCost && i.hasPrice && i.qty > 0);
+    const totalRecei= withBoth.reduce((a,i)=>a+(i.receita||0),0);
+    const totalCusto= withBoth.reduce((a,i)=>a+(i.costTotal||0),0);
+    const totalLucro= totalRecei - totalCusto;
+    const margMedia = totalRecei > 0 ? (totalLucro / totalRecei * 100) : 0;
+
+    const semCusto  = allItems.filter(i=>i.qty>0 && !i.hasCost).length;
+    const semPreco  = allItems.filter(i=>i.qty>0 && !i.hasPrice).length;
+    const faltando  = allItems.filter(i=>i.qty>0 && (!i.hasCost || !i.hasPrice)).length;
+
+    document.getElementById('kpiReceita').textContent = R(totalRecei);
+    document.getElementById('kpiCusto').textContent   = R(totalCusto);
+
+    const kpiLucro = document.getElementById('kpiLucro');
+    kpiLucro.textContent = R(totalLucro);
+    kpiLucro.style.color = totalLucro >= 0 ? 'var(--green)' : 'var(--red)';
+
+    const kpiMargem = document.getElementById('kpiMargem');
+    kpiMargem.textContent = P(margMedia);
+    kpiMargem.style.color = margMedia >= 40 ? 'var(--green)' : margMedia >= 20 ? 'var(--yellow)' : 'var(--red)';
+
+    document.getElementById('kpiSkus').textContent = N(allItems.filter(i=>i.qty>0).length);
+    document.getElementById('kpiFaltando').textContent = N(faltando);
+    document.getElementById('kpiFaltandoSub').textContent =
+        `${semCusto} sem custo · ${semPreco} sem preço`;
+}
+
+/* ── Alertas ── */
+function renderAlerts(){
+    const semCusto = allItems.filter(i=>i.qty>0 && !i.hasCost);
+    const semPreco = allItems.filter(i=>i.qty>0 && !i.hasPrice && i.nv_variant_id);
+    const alertas  = document.getElementById('alertas');
+    let html = '';
+    if(semCusto.length){
+        html += `<div class="alert d-flex align-items-center gap-2 mb-2"
+                      style="background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.35);color:var(--yellow);border-radius:8px;padding:.6rem 1rem;font-size:.85rem">
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                    <span><b>${semCusto.length} SKU(s)</b> com estoque mas <b>sem custo cadastrado</b> — receita potencial subestimada.
+                    <a href="/custos-sku" style="color:var(--yellow);text-decoration:underline">Cadastrar custos →</a></span>
+                 </div>`;
+    }
+    if(semPreco.length){
+        html += `<div class="alert d-flex align-items-center gap-2 mb-2"
+                      style="background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.3);color:var(--red);border-radius:8px;padding:.6rem 1rem;font-size:.85rem">
+                    <i class="bi bi-tag-x-fill"></i>
+                    <span><b>${semPreco.length} variante(s)</b> com estoque mas <b>sem preço encontrado</b> na NuvemShop.
+                    Verifique se o produto está ativo e com preço definido.</span>
+                 </div>`;
+    }
+    if(html){
+        alertas.innerHTML = html;
+        alertas.style.display = '';
+    }
+}
+
+/* ── Gráficos ── */
+function renderCharts(){
+    // Destrói anteriores
+    if(chartTop)    { chartTop.destroy();    chartTop    = null; }
+    if(chartMargem) { chartMargem.destroy(); chartMargem = null; }
+
+    const isDark = !document.documentElement.classList.contains('light');
+    const mutedColor = cssVar('--muted');
+    const gridColor  = isDark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.06)';
+    const textColor  = cssVar('--text');
+
+    Chart.defaults.color = mutedColor;
+    Chart.defaults.borderColor = gridColor;
+
+    // ─ Top 10 por receita potencial ─
+    const top10 = allItems
+        .filter(i=>i.receita!=null && i.qty>0)
+        .sort((a,b)=>(b.receita||0)-(a.receita||0))
+        .slice(0,10);
+
+    const ctxTop = document.getElementById('chartTop').getContext('2d');
+    chartTop = new Chart(ctxTop, {
+        type: 'bar',
+        data: {
+            labels: top10.map(i=>{
+                const label = i.productName + (i.variantLabel ? ' · '+i.variantLabel : '');
+                return label.length > 32 ? label.slice(0,30)+'…' : label;
+            }),
+            datasets: [{
+                label: 'Receita Potencial (R$)',
+                data: top10.map(i=>i.receita),
+                backgroundColor: top10.map(i=>{
+                    if(!i.margem) return 'rgba(139,148,158,.4)';
+                    return i.margem>=40 ? 'rgba(63,185,80,.7)' :
+                           i.margem>=20 ? 'rgba(210,153,34,.7)' : 'rgba(248,81,73,.7)';
+                }),
+                borderRadius: 4,
+                borderSkipped: false,
+            },{
+                label: 'Custo Total (R$)',
+                data: top10.map(i=>i.costTotal),
+                backgroundColor: 'rgba(240,136,62,.35)',
+                borderRadius: 4,
+                borderSkipped: false,
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            indexAxis: 'y',
+            plugins: {
+                legend: { position:'bottom', labels:{font:{size:11}} },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => ' ' + R(ctx.raw),
+                        afterBody: (items) => {
+                            const i = top10[items[0].dataIndex];
+                            const lines = [];
+                            if(i.margem!=null) lines.push(`  Margem: ${P(i.margem)}`);
+                            if(i.lucro!=null)  lines.push(`  Lucro pot.: ${R(i.lucro)}`);
+                            return lines;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: { ticks:{ callback:v=>'R$ '+v.toLocaleString('pt-BR') }, grid:{color:gridColor} },
+                y: { ticks:{color:textColor, font:{size:11}} }
+            }
+        }
+    });
+
+    // ─ Distribuição por faixa de margem ─
+    const withMargem = allItems.filter(i=>i.margem!=null && i.qty>0);
+    const faixas = [
+        { label:'>60%',      min:60,  max:Infinity, color:'rgba(63,185,80,.8)'   },
+        { label:'40–60%',    min:40,  max:60,       color:'rgba(63,185,80,.45)'  },
+        { label:'20–40%',    min:20,  max:40,       color:'rgba(210,153,34,.7)'  },
+        { label:'0–20%',     min:0,   max:20,       color:'rgba(248,81,73,.55)'  },
+        { label:'Negativa',  min:-Infinity,max:0,   color:'rgba(248,81,73,.9)'   },
+    ];
+    const counts = faixas.map(f => withMargem.filter(i=>i.margem>f.min && i.margem<=f.max).length);
+    const semMarg = allItems.filter(i=>i.qty>0 && i.margem==null).length;
+
+    const ctxMargem = document.getElementById('chartMargem').getContext('2d');
+    chartMargem = new Chart(ctxMargem, {
+        type: 'doughnut',
+        data: {
+            labels: [...faixas.map(f=>f.label), 'Sem dados'],
+            datasets: [{
+                data: [...counts, semMarg],
+                backgroundColor: [...faixas.map(f=>f.color), 'rgba(139,148,158,.3)'],
+                borderWidth: 1,
+                borderColor: isDark ? '#161b22' : '#fff'
+            }]
+        },
+        options: {
+            responsive:true, maintainAspectRatio:true,
+            cutout:'62%',
+            plugins: {
+                legend: { position:'bottom', labels:{font:{size:11}, padding:10} },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => {
+                            const total = ctx.dataset.data.reduce((a,b)=>a+b,0);
+                            const pct   = total>0 ? (ctx.raw/total*100).toFixed(1) : 0;
+                            return ` ${ctx.raw} SKU(s) — ${pct}%`;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+/* ── Tabela ── */
+function renderTable(){
+    const search  = document.getElementById('searchInput').value.trim().toLowerCase();
+    const fMargem = document.getElementById('filterMargem').value;
+    const sortBy  = document.getElementById('sortBy').value;
+
+    let items = allItems.filter(i => i.qty > 0);
+
+    // Filtro de busca
+    if(search){
+        items = items.filter(i =>
+            (i.productName||'').toLowerCase().includes(search) ||
+            (i.variantLabel||'').toLowerCase().includes(search) ||
+            (i.sku||'').toLowerCase().includes(search)
+        );
+    }
+
+    // Filtro de margem
+    if(fMargem === 'alta')       items = items.filter(i=>i.margem!=null && i.margem>40);
+    else if(fMargem === 'media') items = items.filter(i=>i.margem!=null && i.margem>=20 && i.margem<=40);
+    else if(fMargem === 'baixa') items = items.filter(i=>i.margem!=null && i.margem<20);
+    else if(fMargem === 'sem_preco') items = items.filter(i=>!i.hasPrice);
+    else if(fMargem === 'sem_custo') items = items.filter(i=>!i.hasCost);
+
+    // Ordenação
+    items.sort((a,b)=>{
+        if(sortBy==='receita_desc') return (b.receita||0)-(a.receita||0);
+        if(sortBy==='margem_desc')  return (b.margem??-999)-(a.margem??-999);
+        if(sortBy==='margem_asc')   return (a.margem??999)-(b.margem??999);
+        if(sortBy==='lucro_desc')   return (b.lucro||0)-(a.lucro||0);
+        if(sortBy==='estoque_desc') return b.qty-a.qty;
+        if(sortBy==='custo_desc')   return (b.costTotal||0)-(a.costTotal||0);
+        return 0;
+    });
+
+    document.getElementById('statsLabel').textContent = `${items.length} SKU(s) exibido(s)`;
+
+    if(items.length === 0){
+        document.getElementById('tableWrap').style.display = 'none';
+        document.getElementById('emptyState').style.display = '';
+        return;
+    }
+    document.getElementById('tableWrap').style.display = '';
+    document.getElementById('emptyState').style.display = 'none';
+
+    const tbody = document.getElementById('tableBody');
+    tbody.innerHTML = items.map(i => {
+        // Badge de margem
+        let margemBadge = '—';
+        if(i.margem != null){
+            const cor = i.margem>=40 ? 'var(--green)' : i.margem>=20 ? 'var(--yellow)' : 'var(--red)';
+            const bg  = i.margem>=40 ? 'rgba(63,185,80,.12)' : i.margem>=20 ? 'rgba(210,153,34,.12)' : 'rgba(248,81,73,.12)';
+            margemBadge = `<span style="background:${bg};color:${cor};border:1px solid ${cor}33;
+                border-radius:20px;padding:2px 8px;font-size:.78rem;font-weight:600">${P(i.margem)}</span>`;
+        }
+
+        // Markup
+        const markupStr = i.markup!=null ? `<span style="font-size:.75rem;color:var(--muted)">${P(i.markup)}</span>` : '—';
+
+        // Estoque: colorido se baixo
+        const estoqueColor = i.qty <= 0 ? 'var(--red)' : i.qty <= i.min_quantity ? 'var(--orange)' : 'var(--text)';
+
+        // Imagem
+        const imgHtml = i.imageUrl
+            ? `<img src="${i.imageUrl}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;
+               border:1px solid var(--border);flex-shrink:0" onerror="this.style.display='none'">`
+            : `<div style="width:36px;height:36px;background:var(--border);border-radius:4px;
+               display:flex;align-items:center;justify-content:center;flex-shrink:0">
+               <i class="bi bi-box" style="font-size:.75rem;color:var(--muted)"></i></div>`;
+
+        // Produto + variante
+        const nomeSub = i.variantLabel
+            ? `<small style="color:var(--muted);font-size:.75rem">${escHtml(i.variantLabel)}</small>`
+            : (i.sku ? `<small style="color:var(--muted);font-size:.72rem;font-family:monospace">${escHtml(i.sku)}</small>` : '');
+
+        return `<tr>
+            <td>
+                <div style="display:flex;align-items:center;gap:10px">
+                    ${imgHtml}
+                    <div>
+                        <div style="font-size:.87rem;font-weight:500">${escHtml(i.productName)}</div>
+                        ${nomeSub}
+                    </div>
+                </div>
+            </td>
+            <td class="text-end" style="color:${estoqueColor};font-weight:600">${N(i.qty)}</td>
+            <td class="text-end" style="font-size:.87rem">${i.hasCost ? R(i.cost) : '<span style="color:var(--red);font-size:.78rem">sem custo</span>'}</td>
+            <td class="text-end" style="font-size:.87rem">${i.hasPrice ? R(i.price) : '<span style="color:var(--muted);font-size:.78rem">—</span>'}</td>
+            <td class="text-end">${markupStr}</td>
+            <td class="text-end">${margemBadge}</td>
+            <td class="text-end" style="font-weight:600;color:var(--blue)">${i.receita!=null ? R(i.receita) : '<span style="color:var(--muted)">—</span>'}</td>
+            <td class="text-end" style="font-size:.87rem">${i.costTotal!=null ? R(i.costTotal) : '<span style="color:var(--muted)">—</span>'}</td>
+            <td class="text-end" style="font-weight:700;color:${i.lucro!=null?(i.lucro>=0?'var(--green)':'var(--red)'):'var(--muted)'}">${i.lucro!=null ? R(i.lucro) : '—'}</td>
+        </tr>`;
+    }).join('');
+
+    // Totais do rodapé (apenas itens filtrados com dados completos)
+    const completos = items.filter(i=>i.receita!=null && i.costTotal!=null);
+    const totReceita = completos.reduce((a,i)=>a+(i.receita||0),0);
+    const totCusto   = completos.reduce((a,i)=>a+(i.costTotal||0),0);
+    const totLucro   = totReceita - totCusto;
+    const totMargem  = totReceita>0 ? (totLucro/totReceita*100) : 0;
+
+    const tfoot = document.getElementById('tableFoot');
+    tfoot.innerHTML = `<tr style="background:var(--hover-row)">
+        <td colspan="5" style="font-weight:700;font-size:.82rem;padding:.6rem .75rem">
+            TOTAL FILTRADO (${completos.length} SKUs com dados completos)
+        </td>
+        <td class="text-end" style="font-weight:700">
+            <span style="font-size:.82rem;background:${totMargem>=40?'rgba(63,185,80,.12)':totMargem>=20?'rgba(210,153,34,.12)':'rgba(248,81,73,.12)'};
+            color:${totMargem>=40?'var(--green)':totMargem>=20?'var(--yellow)':'var(--red)'};
+            border-radius:20px;padding:2px 8px">${P(totMargem)}</span>
+        </td>
+        <td class="text-end" style="font-weight:700;color:var(--blue)">${R(totReceita)}</td>
+        <td class="text-end" style="font-weight:700">${R(totCusto)}</td>
+        <td class="text-end" style="font-weight:700;color:${totLucro>=0?'var(--green)':'var(--red)'}">${R(totLucro)}</td>
+    </tr>`;
+}
+
+function escHtml(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* ── Re-render gráficos ao mudar tema ── */
+const _origAlt = window.alternarTema;
+window.alternarTema = function(){
+    if(_origAlt) _origAlt();
+    setTimeout(()=>{ if(allItems.length) renderCharts(); }, 300);
+};
+
+/* ── Init ── */
+load();
+</script>
+{% endblock %}

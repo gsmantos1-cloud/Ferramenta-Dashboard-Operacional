@@ -1,0 +1,356 @@
+{% extends "base.html" %}
+{% block title %}Romaneio — Ferramenta de Pedidos{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+        <h5 class="mb-0 fw-bold">Romaneio de Envio</h5>
+        <small class="text-muted">Selecione os pedidos do dia e gere o manifesto</small>
+    </div>
+    <button class="btn btn-outline-secondary btn-sm" onclick="carregarTudo()">
+        <i class="bi bi-arrow-clockwise me-1"></i>Atualizar
+    </button>
+</div>
+
+<!-- Geração do romaneio -->
+<div class="card mb-4">
+    <div class="card-header d-flex align-items-center justify-content-between">
+        <span class="text-muted fw-semibold" style="font-size:.78rem;letter-spacing:.06em">PEDIDOS ATIVOS</span>
+        <div class="d-flex align-items-center gap-2">
+            <input id="busca" type="text" class="form-control form-control-sm"
+                   placeholder="Buscar por número ou cliente…" style="width:220px"
+                   oninput="renderTabela()">
+            <span id="contadorSel" class="text-muted" style="font-size:.82rem;white-space:nowrap">0 selecionados</span>
+        </div>
+    </div>
+    <div class="table-responsive">
+        <table class="table mb-0">
+            <thead>
+                <tr>
+                    <th style="width:36px">
+                        <input type="checkbox" id="chkTodos" onchange="toggleTodos(this.checked)"
+                               style="accent-color:var(--blue)">
+                    </th>
+                    <th>Número</th>
+                    <th>Cliente</th>
+                    <th>Transportadora</th>
+                    <th>Data</th>
+                    <th>Dias</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="corpoTabela">
+                <tr><td colspan="7" class="text-center text-muted py-4">Carregando…</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="card-footer d-flex align-items-center justify-content-between gap-3 flex-wrap"
+         style="background:rgba(255,255,255,.02);border-top:1px solid var(--border);padding:.75rem 1rem">
+        <div class="d-flex align-items-center gap-2 flex-grow-1">
+            <label class="form-label mb-0" style="white-space:nowrap">Observação</label>
+            <input id="obsInput" type="text" class="form-control form-control-sm"
+                   placeholder="Ex: Correios PAC — 07/05/2026" style="max-width:380px">
+        </div>
+        <button class="btn btn-primary btn-sm px-4" onclick="gerarRomaneio()">
+            <i class="bi bi-send-fill me-1"></i>Gerar Romaneio
+        </button>
+    </div>
+</div>
+
+<!-- Histórico -->
+<div class="card">
+    <div class="card-header">
+        <span class="text-muted fw-semibold" style="font-size:.78rem;letter-spacing:.06em">HISTÓRICO DE ROMANEIOS</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table mb-0">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Data / Hora</th>
+                    <th>Pedidos</th>
+                    <th>Observação</th>
+                    <th style="width:120px"></th>
+                </tr>
+            </thead>
+            <tbody id="corpoHistorico">
+                <tr><td colspan="5" class="text-center text-muted py-4">Carregando…</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Modal visualizar romaneio -->
+<div class="modal fade" id="modalVer" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border)">
+            <div class="modal-header" style="border-bottom:1px solid var(--border)">
+                <h6 class="modal-title fw-bold" id="modalVerTitulo">Romaneio</h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-0">
+                <div id="modalVerInfo" class="px-3 pt-3 pb-2" style="font-size:.83rem;color:var(--muted)"></div>
+                <!-- Resumo por transportadora -->
+                <div id="modalTranspResumo" class="px-3 pb-3 d-flex flex-wrap gap-2"></div>
+                <!-- Conteúdo agrupado por transportadora -->
+                <div id="modalVerCorpo"></div>
+            </div>
+            <div class="modal-footer" style="border-top:1px solid var(--border)">
+                <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Fechar</button>
+                <button class="btn btn-primary btn-sm" id="btnExportarModal">
+                    <i class="bi bi-file-earmark-excel me-1"></i>Exportar Excel (por transportadora)
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast -->
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999">
+    <div id="toast" class="toast align-items-center border-0" role="alert">
+        <div class="d-flex">
+            <div class="toast-body fw-semibold" id="toastMsg"></div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const BADGE = {
+    'NO PRAZO':       'b-prazo',
+    'Atraso leve':    'b-leve',
+    'Atraso moderado':'b-moderado',
+    'Atraso crítico': 'b-critico',
+};
+
+let todosPedidos = [];
+let selecionados = new Set();
+let modalRomaneioId = null;
+
+function toast(msg, ok = true) {
+    const el = document.getElementById('toast');
+    el.className = `toast align-items-center border-0 text-bg-${ok ? 'success' : 'danger'}`;
+    document.getElementById('toastMsg').textContent = msg;
+    bootstrap.Toast.getOrCreateInstance(el, { delay: 3500 }).show();
+}
+
+async function carregarTudo() {
+    await Promise.all([carregarPedidos(), carregarHistorico()]);
+}
+
+async function carregarPedidos() {
+    try {
+        const r = await fetch('/api/pedidos');
+        todosPedidos = await r.json();
+        selecionados.clear();
+        renderTabela();
+    } catch {
+        document.getElementById('corpoTabela').innerHTML =
+            '<tr><td colspan="7" class="text-center text-danger py-4">Erro ao carregar pedidos.</td></tr>';
+    }
+}
+
+function renderTabela() {
+    const busca = document.getElementById('busca').value.toLowerCase();
+    const filtrado = todosPedidos.filter(p => {
+        if (!busca) return true;
+        return p.numero.includes(busca) || (p.cliente || '').toLowerCase().includes(busca);
+    });
+
+    const tbody = document.getElementById('corpoTabela');
+    if (!filtrado.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Nenhum pedido ativo.</td></tr>';
+        atualizarContador();
+        return;
+    }
+
+    tbody.innerHTML = filtrado.map(p => {
+        const chk = selecionados.has(p.id) ? 'checked' : '';
+        const cls = BADGE[p.status] || '';
+        const badges = [];
+        if (p.suspeito) badges.push('<span class="badge b-leve ms-1" style="font-size:.67rem">⚠ Suspeito</span>');
+        if (p.categoria === 'Personalizado') badges.push('<span class="badge b-prazo ms-1" style="font-size:.67rem">★</span>');
+        if (p.categoria === 'Internacional') badges.push('<span class="badge" style="font-size:.67rem;background:rgba(63,185,80,.15);color:#3fb950;border:1px solid rgba(63,185,80,.3)" >🌐</span>');
+        return `<tr class="${selecionados.has(p.id) ? 'table-active' : ''}" onclick="toggleRow(${p.id},this)" style="cursor:pointer">
+            <td onclick="event.stopPropagation()">
+                <input type="checkbox" ${chk} onchange="toggleCheck(${p.id},this)"
+                       style="accent-color:var(--blue)">
+            </td>
+            <td class="fw-semibold">#${p.numero}${badges.join('')}</td>
+            <td style="color:var(--muted);font-size:.88rem">${p.cliente || '—'}</td>
+            <td style="color:var(--muted);font-size:.88rem">${p.transportadora || '—'}</td>
+            <td style="font-size:.85rem">${p.data_pedido}</td>
+            <td style="font-size:.85rem">${p.dias_uteis}d</td>
+            <td><span class="badge ${cls}" style="font-size:.75rem">${p.status}</span></td>
+        </tr>`;
+    }).join('');
+
+    atualizarContador();
+}
+
+function toggleRow(id, tr) {
+    if (selecionados.has(id)) selecionados.delete(id);
+    else selecionados.add(id);
+    renderTabela();
+}
+
+function toggleCheck(id, el) {
+    if (el.checked) selecionados.add(id);
+    else selecionados.delete(id);
+    atualizarContador();
+    // update row highlight without full re-render
+    el.closest('tr').className = el.checked ? 'table-active' : '';
+}
+
+function toggleTodos(checked) {
+    const busca = document.getElementById('busca').value.toLowerCase();
+    const filtrado = todosPedidos.filter(p => {
+        if (!busca) return true;
+        return p.numero.includes(busca) || (p.cliente || '').toLowerCase().includes(busca);
+    });
+    filtrado.forEach(p => checked ? selecionados.add(p.id) : selecionados.delete(p.id));
+    renderTabela();
+}
+
+function atualizarContador() {
+    document.getElementById('contadorSel').textContent =
+        selecionados.size === 0 ? '0 selecionados'
+        : selecionados.size === 1 ? '1 pedido selecionado'
+        : `${selecionados.size} pedidos selecionados`;
+    document.getElementById('chkTodos').checked =
+        selecionados.size > 0 && selecionados.size === todosPedidos.length;
+}
+
+async function gerarRomaneio() {
+    if (!selecionados.size) { toast('Selecione ao menos um pedido.', false); return; }
+    const obs = document.getElementById('obsInput').value.trim();
+    const btn = document.querySelector('[onclick="gerarRomaneio()"]');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Gerando…';
+
+    try {
+        const r = await fetch('/api/romaneios', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ ids: [...selecionados], observacao: obs }),
+        });
+        const j = await r.json();
+        if (!r.ok) { toast(j.erro || 'Erro ao gerar romaneio.', false); return; }
+        toast(j.mensagem);
+        document.getElementById('obsInput').value = '';
+        await carregarTudo();
+    } catch {
+        toast('Erro de conexão.', false);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-send-fill me-1"></i>Gerar Romaneio';
+    }
+}
+
+async function carregarHistorico() {
+    try {
+        const r = await fetch('/api/romaneios');
+        const lista = await r.json();
+        const tbody = document.getElementById('corpoHistorico');
+        if (!lista.length) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">Nenhum romaneio gerado ainda.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = lista.map(rom => `
+            <tr>
+                <td class="fw-semibold" style="color:var(--blue)">#${rom.id}</td>
+                <td style="font-size:.85rem">${rom.criado_em}</td>
+                <td>
+                    <span class="badge" style="background:rgba(88,166,255,.15);color:var(--blue);border:1px solid rgba(88,166,255,.3)">
+                        ${rom.total} pedido${rom.total !== 1 ? 's' : ''}
+                    </span>
+                </td>
+                <td style="color:var(--muted);font-size:.85rem">${rom.observacao || '—'}</td>
+                <td class="text-end">
+                    <button class="btn btn-outline-secondary btn-sm py-0 px-2 me-1" onclick="verRomaneio(${rom.id})">
+                        <i class="bi bi-eye"></i>
+                    </button>
+                    <a href="/api/romaneios/${rom.id}/exportar" class="btn btn-outline-secondary btn-sm py-0 px-2">
+                        <i class="bi bi-file-earmark-excel"></i>
+                    </a>
+                </td>
+            </tr>`).join('');
+    } catch {
+        document.getElementById('corpoHistorico').innerHTML =
+            '<tr><td colspan="5" class="text-center text-danger py-4">Erro ao carregar histórico.</td></tr>';
+    }
+}
+
+async function verRomaneio(id) {
+    modalRomaneioId = id;
+    document.getElementById('modalVerTitulo').textContent = `Romaneio #${id}`;
+    document.getElementById('modalVerInfo').textContent = 'Carregando…';
+    document.getElementById('modalVerCorpo').innerHTML = '';
+    document.getElementById('modalTranspResumo').innerHTML = '';
+    document.getElementById('btnExportarModal').onclick = () => {
+        window.location.href = `/api/romaneios/${id}/exportar`;
+    };
+    new bootstrap.Modal(document.getElementById('modalVer')).show();
+
+    try {
+        const r = await fetch(`/api/romaneios/${id}`);
+        const j = await r.json();
+        if (!r.ok) { document.getElementById('modalVerInfo').textContent = j.erro; return; }
+
+        let info = `Gerado em: ${j.criado_em}  |  Total: ${j.total} pedido(s)`;
+        if (j.observacao) info += `  |  Obs: ${j.observacao}`;
+        document.getElementById('modalVerInfo').textContent = info;
+
+        // Resumo por transportadora (badges no topo)
+        const grupos = j.por_transportadora || [];
+        if (grupos.length > 1) {
+            document.getElementById('modalTranspResumo').innerHTML = grupos.map(g => {
+                const cor = g.transportadora.toLowerCase().includes('loggi') ? '#58a6ff'
+                          : g.transportadora.toLowerCase().includes('correo') ? '#f0883e'
+                          : '#3fb950';
+                return `<span style="background:rgba(255,255,255,.07);border:1px solid var(--border);border-radius:20px;padding:3px 12px;font-size:.8rem">
+                    <span style="color:${cor};font-weight:700">${g.pedidos.length}</span>
+                    <span style="color:var(--muted);margin-left:4px">${g.transportadora}</span>
+                </span>`;
+            }).join('');
+        }
+
+        // Tabela agrupada por transportadora
+        const tabelaHdr = `<thead><tr>
+            <th class="ps-3">Número</th>
+            <th>Cliente</th>
+            <th>Data do Pedido</th>
+            <th>Status ao Enviar</th>
+        </tr></thead>`;
+
+        document.getElementById('modalVerCorpo').innerHTML = grupos.map(g => {
+            const linhas = g.pedidos.map(p => {
+                const cls = BADGE[p.status_ao_enviar] || (p.status_ao_enviar === 'Cancelado' ? 'b-cancelado' : '');
+                return `<tr>
+                    <td class="ps-3 fw-semibold">#${p.numero}</td>
+                    <td style="font-size:.85rem;color:var(--muted)">${p.cliente || '—'}</td>
+                    <td style="font-size:.85rem">${p.data_pedido || '—'}</td>
+                    <td><span class="badge ${cls}" style="font-size:.75rem">${p.status_ao_enviar || '—'}</span></td>
+                </tr>`;
+            }).join('');
+
+            return `<div style="border-top:1px solid var(--border)">
+                <div style="padding:8px 16px;background:rgba(255,255,255,.04);font-size:.8rem;font-weight:700;color:var(--muted);letter-spacing:.05em">
+                    ${g.transportadora.toUpperCase()} — ${g.pedidos.length} pedido(s)
+                </div>
+                <div class="table-responsive">
+                    <table class="table mb-0">${tabelaHdr}<tbody>${linhas}</tbody></table>
+                </div>
+            </div>`;
+        }).join('');
+
+    } catch {
+        document.getElementById('modalVerInfo').textContent = 'Erro ao carregar detalhes.';
+    }
+}
+
+carregarTudo();
+</script>
+{% endblock %}

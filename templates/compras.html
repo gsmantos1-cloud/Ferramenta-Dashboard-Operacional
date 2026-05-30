@@ -1,0 +1,604 @@
+{% extends "base.html" %}
+{% block title %}Compras do Dia — GS Mantos{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 py-3">
+
+  <!-- Cabeçalho -->
+  <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <div>
+      <h5 class="mb-0 fw-bold"><i class="bi bi-cart-fill me-2" style="color:#f0883e"></i>Compras do Dia</h5>
+      <small class="text-muted">Produtos com estoque baixo ou zerado que precisam ser repostos</small>
+    </div>
+    <div class="d-flex gap-2 align-items-center">
+      <span id="ultimaAtt" class="text-muted" style="font-size:.75rem"></span>
+      <button class="btn btn-sm btn-outline-secondary" onclick="carregarDados()">
+        <i class="bi bi-arrow-clockwise me-1"></i>Atualizar
+      </button>
+    </div>
+  </div>
+
+  <!-- KPI Cards -->
+  <div class="row g-3 mb-3">
+    <div class="col-6 col-md-3">
+      <div class="card p-3 h-100" style="border-left:3px solid #f85149">
+        <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Sem Estoque</div>
+        <div id="kpi-sem" class="fw-bold mt-1" style="font-size:1.8rem;color:#f85149">—</div>
+        <div style="font-size:.72rem;color:var(--muted)">produtos esgotados</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card p-3 h-100" style="border-left:3px solid #f0883e">
+        <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Estoque Baixo</div>
+        <div id="kpi-baixo" class="fw-bold mt-1" style="font-size:1.8rem;color:#f0883e">—</div>
+        <div style="font-size:.72rem;color:var(--muted)">abaixo do mínimo</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card p-3 h-100" style="border-left:3px solid #58a6ff">
+        <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Total de SKUs</div>
+        <div id="kpi-total" class="fw-bold mt-1" style="font-size:1.8rem;color:var(--blue)">—</div>
+        <div style="font-size:.72rem;color:var(--muted)">itens para comprar</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-3">
+      <div class="card p-3 h-100" style="border-left:3px solid #3fb950">
+        <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Gasto Estimado</div>
+        <div id="kpi-gasto" class="fw-bold mt-1" style="font-size:1.5rem;color:#3fb950">—</div>
+        <div style="font-size:.72rem;color:var(--muted)">custo total da reposição</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+
+    <!-- Tabela principal -->
+    <div class="col-lg-8">
+      <div class="card">
+        <div class="card-header d-flex align-items-center justify-content-between">
+          <small class="fw-bold text-uppercase" style="letter-spacing:.05em">
+            <i class="bi bi-box-seam me-1"></i>Lista de Compras
+          </small>
+          <div class="d-flex gap-2 align-items-center flex-wrap">
+            <!-- Filtro -->
+            <div class="btn-group btn-group-sm" role="group">
+              <button type="button" class="btn btn-outline-secondary active" id="filtro-todos" onclick="filtrar('todos')">Todos</button>
+              <button type="button" class="btn btn-outline-danger"           id="filtro-sem"   onclick="filtrar('sem_estoque')">Sem estoque</button>
+              <button type="button" class="btn btn-outline-warning"          id="filtro-baixo" onclick="filtrar('estoque_baixo')">Baixo</button>
+            </div>
+            <button class="btn btn-sm btn-primary" onclick="abrirModalManual()">
+              <i class="bi bi-plus-lg me-1"></i>Adicionar produto
+            </button>
+          </div>
+        </div>
+        <div class="table-responsive" style="max-height:520px;overflow-y:auto">
+          <table class="table mb-0" style="font-size:.84rem">
+            <thead style="position:sticky;top:0;background:var(--card-bg);z-index:2">
+              <tr style="font-size:.71rem;color:var(--muted)">
+                <th style="padding:8px 12px">SKU</th>
+                <th style="padding:8px 12px">Produto / Variante</th>
+                <th style="padding:8px 12px;text-align:center">Atual</th>
+                <th style="padding:8px 12px;text-align:center">Mín.</th>
+                <th style="padding:8px 12px;text-align:center">A comprar</th>
+                <th style="padding:8px 12px;text-align:right">Custo unit.</th>
+                <th style="padding:8px 12px;text-align:right">Total</th>
+                <th style="padding:8px 12px;text-align:center">Status</th>
+              </tr>
+            </thead>
+            <tbody id="tabela-body">
+              <tr><td colspan="8" class="text-center text-muted py-4">
+                <div class="spinner-border spinner-border-sm me-2"></div>Carregando...
+              </td></tr>
+            </tbody>
+            <tfoot id="tabela-footer" style="display:none;position:sticky;bottom:0;background:var(--card-bg)">
+              <tr style="font-size:.8rem;font-weight:700;border-top:2px solid var(--border)">
+                <td colspan="6" style="padding:8px 12px;text-align:right">Total estimado:</td>
+                <td id="total-footer" style="padding:8px 12px;text-align:right;color:#3fb950"></td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Itens manuais -->
+    <div class="col-12" id="manual-section" style="display:none">
+      <div class="card">
+        <div class="card-header d-flex align-items-center justify-content-between">
+          <small class="fw-bold text-uppercase" style="letter-spacing:.05em">
+            <i class="bi bi-pencil-square me-1" style="color:#8b5cf6"></i>Adicionados Manualmente
+          </small>
+          <span id="manual-count" class="badge rounded-pill" style="background:#8b5cf6;font-size:.68rem">0</span>
+        </div>
+        <div class="table-responsive">
+          <table class="table mb-0" style="font-size:.84rem">
+            <thead style="position:sticky;top:0;background:var(--card-bg);z-index:2">
+              <tr style="font-size:.71rem;color:var(--muted)">
+                <th style="padding:8px 12px">SKU</th>
+                <th style="padding:8px 12px">Produto / Obs.</th>
+                <th style="padding:8px 12px;text-align:center">Qtd</th>
+                <th style="padding:8px 12px;text-align:right">Custo unit.</th>
+                <th style="padding:8px 12px;text-align:right">Total</th>
+                <th style="padding:8px 12px;text-align:center">Ações</th>
+              </tr>
+            </thead>
+            <tbody id="manual-body"></tbody>
+            <tfoot id="manual-footer" style="display:none;position:sticky;bottom:0;background:var(--card-bg)">
+              <tr style="font-size:.8rem;font-weight:700;border-top:2px solid var(--border)">
+                <td colspan="4" style="padding:8px 12px;text-align:right">Total manual:</td>
+                <td id="manual-total-footer" style="padding:8px 12px;text-align:right;color:#8b5cf6"></td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Alertas em tempo real -->
+    <div class="col-lg-4">
+      <div class="card h-100">
+        <div class="card-header d-flex align-items-center justify-content-between">
+          <small class="fw-bold text-uppercase" style="letter-spacing:.05em">
+            <i class="bi bi-bell-fill me-1" style="color:#f0883e"></i>Alertas de Venda
+          </small>
+          <div class="d-flex align-items-center gap-2">
+            <span id="sse-status" title="Status da conexão"
+                  style="width:8px;height:8px;border-radius:50%;background:#8b949e;display:inline-block"></span>
+            <button class="btn btn-sm py-0 px-1" style="font-size:.7rem;border:1px solid var(--border);background:none;color:var(--muted)" onclick="limparAlertas()">
+              Limpar
+            </button>
+          </div>
+        </div>
+        <div id="alertas-container" style="height:490px;overflow-y:auto;padding:10px">
+          <div id="alertas-vazio" class="text-center text-muted py-5" style="font-size:.82rem">
+            <i class="bi bi-bell" style="font-size:1.8rem;opacity:.3;display:block;margin-bottom:8px"></i>
+            Aguardando vendas...<br>
+            <small>Quando entrar um pedido com estoque baixo,<br>o alerta aparece aqui automaticamente.</small>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Modal — Adicionar/Editar produto manual -->
+<div class="modal fade" id="modalManual" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border)">
+      <div class="modal-header" style="border-bottom:1px solid var(--border)">
+        <h6 class="modal-title fw-bold" id="modalManualTitulo">
+          <i class="bi bi-plus-circle me-2" style="color:#8b5cf6"></i>Adicionar Produto
+        </h6>
+        <button type="button" class="btn-close" style="filter:var(--btn-close-filter)" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="m-id">
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label" style="font-size:.78rem;color:var(--muted)">Nome do Produto <span class="text-danger">*</span></label>
+            <input id="m-nome" type="text" class="form-control form-control-sm" placeholder="Ex: Camiseta Flamengo M">
+          </div>
+          <div class="col-6">
+            <label class="form-label" style="font-size:.78rem;color:var(--muted)">SKU <span style="color:var(--muted)">(opcional)</span></label>
+            <input id="m-sku" type="text" class="form-control form-control-sm" placeholder="Ex: fla-m-branco">
+          </div>
+          <div class="col-6">
+            <label class="form-label" style="font-size:.78rem;color:var(--muted)">Qtd a Comprar</label>
+            <input id="m-qty" type="number" min="1" value="1" class="form-control form-control-sm">
+          </div>
+          <div class="col-6">
+            <label class="form-label" style="font-size:.78rem;color:var(--muted)">Custo Unitário (R$)</label>
+            <input id="m-custo" type="number" min="0" step="0.01" value="0" class="form-control form-control-sm" placeholder="0,00" oninput="calcularPreviewManual()">
+          </div>
+          <div class="col-6 d-flex align-items-end">
+            <div class="w-100 text-center p-2 rounded" style="background:rgba(139,92,246,.1);border:1px solid rgba(139,92,246,.25)">
+              <div style="font-size:.68rem;color:var(--muted)">Total estimado</div>
+              <div id="m-preview" class="fw-bold" style="color:#8b5cf6;font-size:1.1rem">R$ 0,00</div>
+            </div>
+          </div>
+          <div class="col-12">
+            <label class="form-label" style="font-size:.78rem;color:var(--muted)">Observação <span style="color:var(--muted)">(opcional)</span></label>
+            <input id="m-obs" type="text" class="form-control form-control-sm" placeholder="Ex: comprar na fornecedora X">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid var(--border)">
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-sm btn-primary px-4" onclick="salvarManual()">
+          <i class="bi bi-check2 me-1"></i>Salvar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999">
+  <div id="toast" class="toast align-items-center border-0" role="alert">
+    <div class="d-flex">
+      <div class="toast-body fw-semibold" id="toastMsg"></div>
+      <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── Estado ──────────────────────────────────────────────────────────────────
+let todosItens  = [];
+let filtroAtivo = 'todos';
+let alertCount  = 0;
+// Mapa nv_variant_id → { productName, variantLabel, imageUrl }
+let variantMap  = new Map();
+
+function fmtBRL(v) {
+  return 'R$ ' + Number(v || 0).toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
+function toast(msg, ok = true) {
+  const el = document.getElementById('toast');
+  el.className = `toast align-items-center border-0 text-bg-${ok ? 'success' : 'danger'}`;
+  document.getElementById('toastMsg').textContent = msg;
+  bootstrap.Toast.getOrCreateInstance(el, {delay: 4000}).show();
+}
+
+// ─── Carregar dados da API ────────────────────────────────────────────────────
+async function carregarDados() {
+  try {
+    // Busca estoque+custo e produtos NuvemShop em paralelo
+    const [rComp, rProd] = await Promise.all([
+      fetch('/api/compras/dia'),
+      fetch('/api/nuvemshop/produtos'),
+    ]);
+    const data  = await rComp.json();
+    const prods = rProd.ok ? await rProd.json() : [];
+
+    // Monta mapa de variantes: id → { productName, variantLabel, imageUrl }
+    variantMap.clear();
+    for (const p of (prods.products || prods || [])) {
+      const nomeProd = p.name || '';
+      const imgProd  = p.imageUrl || p.image_url || '';
+      for (const v of (p.variants || [])) {
+        const varLabel  = (v.values || []).join(', ');
+        const imgVar    = v.imageUrl || imgProd;
+        variantMap.set(v.id, {
+          productName:  nomeProd,
+          variantLabel: varLabel,
+          imageUrl:     imgVar,
+        });
+      }
+    }
+
+    todosItens = data.items || [];
+
+    // KPIs
+    document.getElementById('kpi-sem').textContent   = data.sem_estoque   || 0;
+    document.getElementById('kpi-baixo').textContent = data.estoque_baixo || 0;
+    document.getElementById('kpi-total').textContent = data.total_itens   || 0;
+    document.getElementById('kpi-gasto').textContent = fmtBRL(data.total_estimado);
+
+    document.getElementById('ultimaAtt').textContent =
+      'Atualizado às ' + new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+
+    renderTabela();
+  } catch(e) {
+    document.getElementById('tabela-body').innerHTML =
+      '<tr><td colspan="8" class="text-center text-danger py-4">Erro ao carregar dados</td></tr>';
+  }
+}
+
+// ─── Renderizar tabela ────────────────────────────────────────────────────────
+function renderTabela() {
+  const itens = filtroAtivo === 'todos'
+    ? todosItens
+    : todosItens.filter(i => i.status === filtroAtivo);
+
+  const tbody  = document.getElementById('tabela-body');
+  const footer = document.getElementById('tabela-footer');
+
+  if (!itens.length) {
+    tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-5">
+      <i class="bi bi-check-circle" style="font-size:1.6rem;color:var(--green);display:block;margin-bottom:6px"></i>
+      Nenhum produto para repor${filtroAtivo !== 'todos' ? ' neste filtro' : ''}!
+    </td></tr>`;
+    footer.style.display = 'none';
+    return;
+  }
+
+  const totalFiltrado = itens.reduce((s, i) => s + (i.total_item || 0), 0);
+
+  tbody.innerHTML = itens.map(item => {
+    const isSem  = item.status === 'sem_estoque';
+    const corQty = isSem ? '#f85149' : '#f0883e';
+    const badge  = isSem
+      ? `<span class="badge" style="background:rgba(248,81,73,.15);color:#f85149;font-size:.68rem">Sem estoque</span>`
+      : `<span class="badge" style="background:rgba(240,136,62,.15);color:#f0883e;font-size:.68rem">Estoque baixo</span>`;
+
+    // Dados do produto via variantMap
+    const vInfo      = variantMap.get(item.nv_variant_id) || {};
+    const imgUrl     = vInfo.imageUrl || '';
+    const nomeProd   = vInfo.productName  || item.nome || '—';
+    const varLabel   = vInfo.variantLabel || '';
+    const nomeCompl  = varLabel ? `${nomeProd} — ${varLabel}` : nomeProd;
+
+    const imgHtml = imgUrl
+      ? `<img src="${imgUrl}" alt="" style="width:38px;height:38px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0">`
+      : `<div style="width:38px;height:38px;background:var(--border);border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+           <i class="bi bi-image" style="font-size:.75rem;color:var(--muted)"></i>
+         </div>`;
+
+    return `<tr style="transition:background .15s" onmouseover="this.style.background='var(--hover-row)'" onmouseout="this.style.background=''">
+      <td style="padding:8px 12px;font-family:monospace;font-size:.75rem;color:var(--muted);white-space:nowrap">${item.sku !== '—' ? item.sku : ''}</td>
+      <td style="padding:8px 12px">
+        <div style="display:flex;align-items:center;gap:10px">
+          ${imgHtml}
+          <div style="min-width:0">
+            <div style="font-weight:600;font-size:.83rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px" title="${nomeCompl}">${nomeProd}</div>
+            ${varLabel ? `<div style="font-size:.72rem;color:var(--muted)">${varLabel}</div>` : ''}
+          </div>
+        </div>
+      </td>
+      <td style="padding:8px 12px;text-align:center;font-weight:700;color:${corQty}">${item.qty_atual}</td>
+      <td style="padding:8px 12px;text-align:center;color:var(--muted)">${item.min_qty}</td>
+      <td style="padding:8px 12px;text-align:center">
+        <span style="background:rgba(88,166,255,.12);color:var(--blue);border-radius:4px;padding:2px 8px;font-weight:600">${item.qty_comprar}</span>
+      </td>
+      <td style="padding:8px 12px;text-align:right;color:var(--muted)">${item.custo_unit > 0 ? fmtBRL(item.custo_unit) : '—'}</td>
+      <td style="padding:8px 12px;text-align:right;font-weight:600;color:#3fb950">${item.total_item > 0 ? fmtBRL(item.total_item) : '—'}</td>
+      <td style="padding:8px 12px;text-align:center">${badge}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('total-footer').textContent = fmtBRL(totalFiltrado);
+  footer.style.display = '';
+}
+
+// ─── Filtros ──────────────────────────────────────────────────────────────────
+function filtrar(tipo) {
+  filtroAtivo = tipo;
+  ['todos','sem_estoque','estoque_baixo'].forEach(f => {
+    const btn = document.getElementById(`filtro-${f === 'sem_estoque' ? 'sem' : f === 'estoque_baixo' ? 'baixo' : 'todos'}`);
+    if (btn) btn.classList.toggle('active', f === tipo);
+  });
+  renderTabela();
+}
+
+// ─── Alertas em tempo real (SSE) ──────────────────────────────────────────────
+let sseSource = null;
+
+function conectarSSE() {
+  if (sseSource) sseSource.close();
+  sseSource = new EventSource('/api/stream/alertas');
+
+  sseSource.onopen = () => {
+    document.getElementById('sse-status').style.background = '#3fb950';
+    document.getElementById('sse-status').title = 'Conectado — recebendo alertas em tempo real';
+  };
+
+  sseSource.onerror = () => {
+    document.getElementById('sse-status').style.background = '#f85149';
+    document.getElementById('sse-status').title = 'Desconectado — reconectando...';
+    setTimeout(conectarSSE, 5000);
+  };
+
+  sseSource.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'ping') return;
+    if (data.type === 'alerta_venda') receberAlerta(data);
+  };
+}
+
+function receberAlerta(alerta) {
+  alertCount++;
+
+  const vazio = document.getElementById('alertas-vazio');
+  if (vazio) vazio.style.display = 'none';
+
+  const isSem   = alerta.status === 'sem_estoque';
+  const cor     = isSem ? '#f85149' : '#f0883e';
+  const icone   = isSem ? 'bi-exclamation-triangle-fill' : 'bi-exclamation-circle-fill';
+  const label   = isSem ? 'SEM ESTOQUE' : 'ESTOQUE BAIXO';
+  const produto = alerta.variante ? `${alerta.produto} — ${alerta.variante}` : alerta.produto;
+
+  const card = document.createElement('div');
+  card.style.cssText = `
+    background:rgba(${isSem ? '248,81,73' : '240,136,62'},.08);
+    border:1px solid rgba(${isSem ? '248,81,73' : '240,136,62'},.3);
+    border-radius:8px;padding:10px 12px;margin-bottom:8px;
+    animation:slideIn .25s ease;
+  `;
+  card.innerHTML = `
+    <div class="d-flex justify-content-between align-items-start mb-1">
+      <span style="font-size:.68rem;font-weight:700;color:${cor};letter-spacing:.04em">
+        <i class="bi ${icone} me-1"></i>${label}
+      </span>
+      <span style="font-size:.65rem;color:var(--muted)">${alerta.timestamp}</span>
+    </div>
+    <div style="font-size:.8rem;font-weight:600;color:var(--text);margin-bottom:3px">${produto}</div>
+    <div style="font-size:.73rem;color:var(--muted)">
+      Pedido <strong style="color:var(--text)">#${alerta.numero_pedido}</strong>
+      · Cliente: ${alerta.cliente || '—'}
+    </div>
+    <div style="font-size:.73rem;margin-top:4px">
+      <span style="color:${cor}">Estoque: <strong>${alerta.qty_atual}</strong></span>
+      <span style="color:var(--muted);margin:0 4px">·</span>
+      <span style="color:var(--muted)">Pedido: ${alerta.qty_pedida} un</span>
+      <span style="color:var(--muted);margin:0 4px">·</span>
+      <span style="color:var(--muted)">Mín: ${alerta.min_qty}</span>
+    </div>
+  `;
+
+  const container = document.getElementById('alertas-container');
+  container.insertBefore(card, container.firstChild);
+
+  // Atualiza tabela principal pois o estoque pode ter mudado
+  carregarDados();
+
+  // Toast de notificação
+  toast(`⚠️ ${label}: ${produto}`, false);
+}
+
+function limparAlertas() {
+  alertCount = 0;
+  const c = document.getElementById('alertas-container');
+  c.innerHTML = `<div id="alertas-vazio" class="text-center text-muted py-5" style="font-size:.82rem">
+    <i class="bi bi-bell" style="font-size:1.8rem;opacity:.3;display:block;margin-bottom:8px"></i>
+    Aguardando vendas...<br>
+    <small>Quando entrar um pedido com estoque baixo,<br>o alerta aparece aqui automaticamente.</small>
+  </div>`;
+}
+
+// ─── Animação ─────────────────────────────────────────────────────────────────
+const style = document.createElement('style');
+style.textContent = `
+  @keyframes slideIn {
+    from { opacity:0; transform:translateY(-8px); }
+    to   { opacity:1; transform:translateY(0); }
+  }
+`;
+document.head.appendChild(style);
+
+// ─── Itens Manuais ───────────────────────────────────────────────────────────
+let itensManual = [];
+
+async function carregarManual() {
+  try {
+    const r = await fetch('/api/compras/manual');
+    itensManual = await r.json();
+    renderManual();
+  } catch(e) { /* silencioso */ }
+}
+
+function renderManual() {
+  const section = document.getElementById('manual-section');
+  const tbody   = document.getElementById('manual-body');
+  const footer  = document.getElementById('manual-footer');
+  const count   = document.getElementById('manual-count');
+
+  count.textContent = itensManual.length;
+
+  if (!itensManual.length) {
+    section.style.display = 'none';
+    footer.style.display  = 'none';
+    return;
+  }
+  section.style.display = '';
+
+  const totalManual = itensManual.reduce((s, i) => s + (i.qty_comprar * i.custo_unit), 0);
+
+  tbody.innerHTML = itensManual.map(item => {
+    const total = item.qty_comprar * item.custo_unit;
+    return `<tr style="transition:background .15s" onmouseover="this.style.background='var(--hover-row)'" onmouseout="this.style.background=''">
+      <td style="padding:8px 12px;font-family:monospace;font-size:.75rem;color:var(--muted)">${item.sku || '—'}</td>
+      <td style="padding:8px 12px">
+        <div style="font-weight:600;font-size:.83rem">${item.nome}</div>
+        ${item.observacao ? `<div style="font-size:.72rem;color:var(--muted)">${item.observacao}</div>` : ''}
+      </td>
+      <td style="padding:8px 12px;text-align:center">
+        <span style="background:rgba(139,92,246,.12);color:#8b5cf6;border-radius:4px;padding:2px 8px;font-weight:600">${item.qty_comprar}</span>
+      </td>
+      <td style="padding:8px 12px;text-align:right;color:var(--muted)">${item.custo_unit > 0 ? fmtBRL(item.custo_unit) : '—'}</td>
+      <td style="padding:8px 12px;text-align:right;font-weight:600;color:#8b5cf6">${total > 0 ? fmtBRL(total) : '—'}</td>
+      <td style="padding:8px 12px;text-align:center;white-space:nowrap">
+        <button onclick="editarManual(${item.id})" title="Editar"
+                style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:2px 7px;font-size:.75rem;cursor:pointer;margin-right:4px">
+          <i class="bi bi-pencil"></i>
+        </button>
+        <button onclick="deletarManual(${item.id})" title="Remover"
+                style="background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.3);color:#f85149;border-radius:4px;padding:2px 7px;font-size:.75rem;cursor:pointer">
+          <i class="bi bi-trash"></i>
+        </button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('manual-total-footer').textContent = fmtBRL(totalManual);
+  footer.style.display = '';
+}
+
+function abrirModalManual() {
+  document.getElementById('m-id').value    = '';
+  document.getElementById('m-nome').value  = '';
+  document.getElementById('m-sku').value   = '';
+  document.getElementById('m-qty').value   = '1';
+  document.getElementById('m-custo').value = '0';
+  document.getElementById('m-obs').value   = '';
+  document.getElementById('m-preview').textContent = 'R$ 0,00';
+  document.getElementById('modalManualTitulo').innerHTML =
+    '<i class="bi bi-plus-circle me-2" style="color:#8b5cf6"></i>Adicionar Produto';
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalManual')).show();
+  setTimeout(() => document.getElementById('m-nome').focus(), 300);
+}
+
+function editarManual(id) {
+  const item = itensManual.find(i => i.id === id);
+  if (!item) return;
+  document.getElementById('m-id').value    = id;
+  document.getElementById('m-nome').value  = item.nome;
+  document.getElementById('m-sku').value   = item.sku || '';
+  document.getElementById('m-qty').value   = item.qty_comprar;
+  document.getElementById('m-custo').value = item.custo_unit;
+  document.getElementById('m-obs').value   = item.observacao || '';
+  document.getElementById('modalManualTitulo').innerHTML =
+    '<i class="bi bi-pencil-square me-2" style="color:#8b5cf6"></i>Editar Produto';
+  calcularPreviewManual();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalManual')).show();
+}
+
+function calcularPreviewManual() {
+  const qty   = parseInt(document.getElementById('m-qty').value)   || 0;
+  const custo = parseFloat(document.getElementById('m-custo').value) || 0;
+  document.getElementById('m-preview').textContent = fmtBRL(qty * custo);
+}
+
+async function salvarManual() {
+  const nome = document.getElementById('m-nome').value.trim();
+  if (!nome) { document.getElementById('m-nome').focus(); return; }
+
+  const id      = document.getElementById('m-id').value;
+  const payload = {
+    nome,
+    sku:        document.getElementById('m-sku').value.trim() || null,
+    qty_comprar: parseInt(document.getElementById('m-qty').value)    || 1,
+    custo_unit:  parseFloat(document.getElementById('m-custo').value) || 0,
+    observacao:  document.getElementById('m-obs').value.trim() || null,
+  };
+
+  try {
+    const url    = id ? `/api/compras/manual/${id}` : '/api/compras/manual';
+    const method = id ? 'PUT' : 'POST';
+    const res    = await fetch(url, {
+      method,
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('modalManual')).hide();
+      toast(id ? 'Item atualizado!' : 'Produto adicionado à lista!');
+      await carregarManual();
+    } else {
+      toast(data.erro || 'Erro ao salvar', false);
+    }
+  } catch(e) { toast('Erro de conexão', false); }
+}
+
+async function deletarManual(id) {
+  if (!confirm('Remover este item da lista?')) return;
+  try {
+    await fetch(`/api/compras/manual/${id}`, {method: 'DELETE'});
+    toast('Item removido');
+    await carregarManual();
+  } catch(e) { toast('Erro ao remover', false); }
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+carregarDados();
+carregarManual();
+conectarSSE();
+setInterval(carregarDados,  60000); // atualiza tabela a cada 1 min
+setInterval(carregarManual, 60000); // atualiza manuais a cada 1 min
+</script>
+{% endblock %}

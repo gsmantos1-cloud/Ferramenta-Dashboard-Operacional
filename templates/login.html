@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login — Ferramenta de Pedidos</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        :root {
+            --bg:      #0d1117;
+            --card-bg: #161b22;
+            --border:  #30363d;
+            --text:    #e6edf3;
+            --muted:   #8b949e;
+            --blue:    #58a6ff;
+        }
+        * { box-sizing: border-box; }
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .login-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 2.5rem 2rem;
+            width: 100%;
+            max-width: 380px;
+        }
+        .form-control {
+            background: #0d1117;
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 6px;
+        }
+        .form-control:focus {
+            background: #0d1117;
+            border-color: var(--blue);
+            color: var(--text);
+            box-shadow: 0 0 0 3px rgba(88,166,255,.15);
+        }
+        .form-control::placeholder { color: var(--muted); }
+        .form-label { color: var(--muted); font-size: 0.82rem; margin-bottom: 0.3rem; }
+        .btn-primary { background: #238636; border-color: #238636; font-weight: 500; width: 100%; }
+        .btn-primary:hover { background: #2ea043; border-color: #2ea043; }
+        .logo-icon { color: var(--blue); font-size: 2rem; }
+    </style>
+</head>
+<body>
+<div class="login-card">
+    <div class="text-center mb-4">
+        {% if logo_exists %}
+            <img src="{{ url_for('static', filename='logo.png') }}"
+                 style="height:56px;width:auto;object-fit:contain;margin-bottom:10px" alt="GS Mantos">
+        {% else %}
+            <div style="width:52px;height:52px;background:#fff;border-radius:8px;display:flex;align-items:center;justify-content:center;margin:0 auto 10px">
+                <span style="font-size:1.1rem;font-weight:900;color:#000;letter-spacing:-.5px">GS</span>
+            </div>
+        {% endif %}
+        <h5 class="mb-0 fw-bold" style="letter-spacing:.02em">GS Mantos</h5>
+        <small style="color:var(--muted);letter-spacing:.12em;font-size:.68rem">OPERACIONAL</small>
+    </div>
+
+    {% if erro %}
+    <div class="alert alert-danger py-2 px-3 mb-3" style="background:rgba(248,81,73,.12);border:1px solid rgba(248,81,73,.3);color:#f85149;border-radius:6px;font-size:.88rem">
+        <i class="bi bi-exclamation-triangle-fill me-1"></i>{{ erro }}
+    </div>
+    {% endif %}
+
+    <form method="POST" action="/login">
+        <div class="mb-3">
+            <label class="form-label">Usuário</label>
+            <input type="text" name="usuario" class="form-control" placeholder="gs.operacional"
+                   autocomplete="username" required autofocus>
+        </div>
+        <div class="mb-4">
+            <label class="form-label">Senha</label>
+            <input type="password" name="senha" class="form-control" placeholder="••••••"
+                   autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="btn btn-primary">
+            <i class="bi bi-box-arrow-in-right me-1"></i>Entrar
+        </button>
+    </form>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

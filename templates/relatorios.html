@@ -1,0 +1,448 @@
+{% extends 'base.html' %}
+{% block title %}Relatórios — Ferramenta de Pedidos{% endblock %}
+
+{% block content %}
+
+<!-- Header -->
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h5 class="mb-0 fw-bold">Relatórios</h5>
+        <small style="color:var(--muted)">Histórico de pedidos enviados por período</small>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="/relatorio/vendas-pdf" class="btn btn-sm" style="background:rgba(88,166,255,.12);border:1px solid rgba(88,166,255,.3);color:var(--blue)">
+            <i class="bi bi-file-earmark-pdf me-1"></i>Relatório de Vendas PDF
+        </a>
+        <button class="btn btn-outline-secondary btn-sm" onclick="exportar()">
+            <i class="bi bi-file-earmark-excel me-1"></i>Exportar Excel
+        </button>
+    </div>
+</div>
+
+<!-- Period selector -->
+<div class="card mb-4">
+    <div class="card-body py-2 px-3">
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+            <small style="color:var(--muted)" class="me-1">Período:</small>
+            <button class="btn btn-sm periodo-btn" data-p="diario"    onclick="selPeriodo('diario')">Hoje</button>
+            <button class="btn btn-sm periodo-btn" data-p="semanal"   onclick="selPeriodo('semanal')">7 dias</button>
+            <button class="btn btn-sm periodo-btn" data-p="quinzenal" onclick="selPeriodo('quinzenal')">15 dias</button>
+            <button class="btn btn-sm periodo-btn" data-p="30dias"    onclick="selPeriodo('30dias')">30 dias</button>
+            <button class="btn btn-sm periodo-btn" data-p="mes_atual" onclick="selPeriodo('mes_atual')">Mês atual</button>
+            <button class="btn btn-sm periodo-btn" data-p="3meses"    onclick="selPeriodo('3meses')">Últimos 3 meses</button>
+            <button class="btn btn-sm periodo-btn" data-p="custom"    onclick="selPeriodo('custom')">
+                <i class="bi bi-calendar-range me-1"></i>Personalizado
+            </button>
+        </div>
+        <!-- Custom date range (hidden by default) -->
+        <div id="customRange" class="d-flex flex-wrap gap-2 align-items-center mt-2" style="display:none!important">
+            <small style="color:var(--muted)">De:</small>
+            <input type="date" class="form-control form-control-sm" id="customDe"  style="width:145px">
+            <small style="color:var(--muted)">Até:</small>
+            <input type="date" class="form-control form-control-sm" id="customAte" style="width:145px">
+            <button class="btn btn-primary btn-sm" onclick="aplicarCustom()">
+                <i class="bi bi-search me-1"></i>Aplicar
+            </button>
+            <small id="erroCustom" style="color:var(--red);display:none"></small>
+        </div>
+    </div>
+</div>
+
+<!-- Status filter for table -->
+<div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+    <small class="fw-semibold me-1" style="color:var(--muted);letter-spacing:.05em">STATUS:</small>
+    <button class="filter-btn ativo" data-fs="todos"           onclick="setFiltroR('todos')">Todos</button>
+    <button class="filter-btn"       data-fs="NO PRAZO"        onclick="setFiltroR('NO PRAZO')">No prazo</button>
+    <button class="filter-btn"       data-fs="Atraso leve"     onclick="setFiltroR('Atraso leve')">Atraso leve</button>
+    <button class="filter-btn"       data-fs="Atraso moderado" onclick="setFiltroR('Atraso moderado')">Moderado</button>
+    <button class="filter-btn"       data-fs="Atraso crítico"  onclick="setFiltroR('Atraso crítico')">Crítico</button>
+    <button class="filter-btn"       data-fs="Cancelado"       onclick="setFiltroR('Cancelado')"
+            style="color:var(--muted)"><i class="bi bi-x-circle me-1"></i>Cancelados</button>
+</div>
+
+<!-- Banner de correção de dados (aparece só se houver pedidos afetados) -->
+<div id="bannerCorrecao" class="d-flex align-items-center justify-content-between mb-4"
+     style="display:none;background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.4);border-radius:8px;padding:12px 16px">
+    <div>
+        <strong style="color:#f85149"><i class="bi bi-exclamation-triangle-fill me-2"></i>Correção necessária</strong>
+        <span id="bannerCorrecaoTxt" style="color:var(--text);font-size:.88rem;margin-left:8px"></span>
+    </div>
+    <button class="btn btn-sm" id="btnCorrigir" onclick="corrigirReconciliacao()"
+            style="background:rgba(248,81,73,.2);border:1px solid rgba(248,81,73,.5);color:#f85149;white-space:nowrap;margin-left:16px">
+        <i class="bi bi-wrench me-1"></i>Corrigir agora
+    </button>
+</div>
+
+<!-- Summary cards -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="card p-3 text-center">
+            <div class="stat-num" id="r-total">—</div>
+            <div class="stat-label">TOTAL PERÍODO</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="card status-card s-prazo p-3 text-center">
+            <div class="stat-num" style="color:var(--green)" id="r-cnt-prazo">—</div>
+            <div class="stat-pct b-prazo mx-auto mt-1" style="display:inline-block" id="r-pct-prazo">—%</div>
+            <div class="stat-label mt-1">NO PRAZO</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="card status-card s-leve p-3 text-center">
+            <div class="stat-num" style="color:var(--yellow)" id="r-cnt-leve">—</div>
+            <div class="stat-pct b-leve mx-auto mt-1" style="display:inline-block" id="r-pct-leve">—%</div>
+            <div class="stat-label mt-1">ATRASO LEVE</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="card status-card s-moderado p-3 text-center">
+            <div class="stat-num" style="color:var(--orange)" id="r-cnt-moderado">—</div>
+            <div class="stat-pct b-moderado mx-auto mt-1" style="display:inline-block" id="r-pct-moderado">—%</div>
+            <div class="stat-label mt-1">MODERADO</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="card status-card s-critico p-3 text-center">
+            <div class="stat-num" style="color:var(--red)" id="r-cnt-critico">—</div>
+            <div class="stat-pct b-critico mx-auto mt-1" style="display:inline-block" id="r-pct-critico">—%</div>
+            <div class="stat-label mt-1">CRÍTICO</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+        <div class="card p-3 text-center" style="border-color:rgba(139,148,158,.25)">
+            <div class="stat-num" style="color:var(--muted)" id="r-cnt-cancelado">—</div>
+            <div class="stat-pct b-cancelado mx-auto mt-1" style="display:inline-block" id="r-pct-cancelado">—%</div>
+            <div class="stat-label mt-1">CANCELADOS</div>
+        </div>
+    </div>
+</div>
+
+<!-- Breakdown por transportadora -->
+<div class="card mb-4" id="cardTransportadora" style="display:none">
+    <div class="card-header d-flex align-items-center justify-content-between">
+        <small class="fw-semibold" style="color:var(--muted)">ENVIOS POR TRANSPORTADORA</small>
+        <small id="lblTranspTotal" style="color:var(--muted)"></small>
+    </div>
+    <div class="card-body py-2 px-3">
+        <div id="listaTransp" class="d-flex flex-wrap gap-3"></div>
+    </div>
+</div>
+
+<!-- Charts -->
+<div class="row g-3 mb-4">
+    <div class="col-md-7">
+        <div class="card h-100">
+            <div class="card-header">
+                <small class="fw-semibold" style="color:var(--muted)">PEDIDOS POR STATUS</small>
+            </div>
+            <div class="card-body">
+                <canvas id="graficoBarras" height="180"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-5">
+        <div class="card h-100">
+            <div class="card-header">
+                <small class="fw-semibold" style="color:var(--muted)">DISTRIBUIÇÃO %</small>
+            </div>
+            <div class="card-body d-flex align-items-center justify-content-center">
+                <div style="max-width:200px;width:100%">
+                    <canvas id="graficoPizza"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- History table -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <small class="fw-semibold" style="color:var(--muted)">HISTÓRICO DE ENVIOS</small>
+        <small style="color:var(--muted)" id="r-count-label"></small>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th class="ps-3">Número</th>
+                        <th>Cliente</th>
+                        <th>Data do Pedido</th>
+                        <th>Transportadora</th>
+                        <th>Status ao Enviar</th>
+                        <th>Data de Envio</th>
+                    </tr>
+                </thead>
+                <tbody id="tabelaHist">
+                    <tr><td colspan="6" class="text-center py-4" style="color:var(--muted)">
+                        <span class="spinner-border spinner-border-sm me-2"></span>Carregando...
+                    </td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<style>
+    .periodo-btn {
+        border: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 0.82rem;
+        padding: 4px 12px;
+    }
+    .periodo-btn:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+    .periodo-btn.ativo { background: #238636; border-color: #238636; color: #fff; }
+
+    .filter-btn {
+        background: none; border: 1px solid var(--border); border-radius: 20px;
+        color: var(--muted); font-size: 0.78rem; padding: 3px 12px;
+        cursor: pointer; transition: all .15s;
+    }
+    .filter-btn:hover { border-color: #8b949e; color: var(--text); }
+    .filter-btn.ativo { background: rgba(35,134,54,.2); border-color: #238636; color: #3fb950; font-weight: 600; }
+</style>
+<script>
+const COLORS = {
+    'NO PRAZO':        '#3fb950',
+    'Atraso leve':     '#d29922',
+    'Atraso moderado': '#f0883e',
+    'Atraso crítico':  '#f85149',
+    'Cancelado':       '#8b949e',
+};
+const BADGE = {
+    'NO PRAZO':        'b-prazo',
+    'Atraso leve':     'b-leve',
+    'Atraso moderado': 'b-moderado',
+    'Atraso crítico':  'b-critico',
+    'Cancelado':       'b-cancelado',
+};
+
+let periodo = '30dias';
+let customInicio = '', customFim = '';
+let gBarras = null, gPizza = null;
+let todosPedidosR = [];
+let filtroStatusR  = 'todos';
+
+function fmtData(s) {
+    if (!s) return '—';
+    const iso = s.slice(0, 10) + 'T12:00:00';
+    const dt = new Date(iso);
+    if (isNaN(dt)) return '—';
+    return dt.toLocaleDateString('pt-BR');
+}
+
+function selPeriodo(p) {
+    periodo = p;
+    document.querySelectorAll('.periodo-btn').forEach(b =>
+        b.classList.toggle('ativo', b.dataset.p === p));
+    const customDiv = document.getElementById('customRange');
+    if (p === 'custom') {
+        customDiv.style.display = '';
+        return; // aguarda o usuário aplicar
+    }
+    customDiv.style.display = 'none';
+    customInicio = ''; customFim = '';
+    carregar();
+}
+
+function aplicarCustom() {
+    const de  = document.getElementById('customDe').value;
+    const ate = document.getElementById('customAte').value;
+    const err = document.getElementById('erroCustom');
+    err.style.display = 'none';
+    if (!de || !ate) { err.textContent = 'Preencha as duas datas.'; err.style.display = ''; return; }
+    if (de > ate)    { err.textContent = 'Data inicial maior que final.'; err.style.display = ''; return; }
+    const diffDias = (new Date(ate) - new Date(de)) / 86400000;
+    if (diffDias > 92) { err.textContent = 'Período máximo: 3 meses.'; err.style.display = ''; return; }
+    customInicio = de; customFim = ate;
+    carregar();
+}
+
+function setFiltroR(status) {
+    filtroStatusR = status;
+    document.querySelectorAll('.filter-btn').forEach(b =>
+        b.classList.toggle('ativo', b.dataset.fs === status));
+    renderTabelaR();
+}
+
+function renderTabelaR() {
+    const filtrado = todosPedidosR.filter(p =>
+        filtroStatusR === 'todos' || p.status_ao_enviar === filtroStatusR
+    );
+    document.getElementById('r-count-label').textContent =
+        filtroStatusR !== 'todos'
+            ? `${filtrado.length} de ${todosPedidosR.length} registro${todosPedidosR.length !== 1 ? 's' : ''}`
+            : `${todosPedidosR.length} registro${todosPedidosR.length !== 1 ? 's' : ''}`;
+
+    const tbody = document.getElementById('tabelaHist');
+    if (!filtrado.length) {
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center py-5" style="color:var(--muted)">
+            <i class="bi bi-inbox" style="font-size:2rem;display:block;margin-bottom:8px"></i>
+            Nenhum pedido enviado neste período
+        </td></tr>`;
+        return;
+    }
+    tbody.innerHTML = filtrado.map(p => `
+        <tr>
+            <td class="ps-3 fw-semibold">${p.numero}</td>
+            <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.cliente || '—'}</td>
+            <td>${fmtData(p.data_pedido)}</td>
+            <td style="color:var(--muted);font-size:.82rem">${p.transportadora || '—'}</td>
+            <td><span class="badge rounded-pill ${BADGE[p.status_ao_enviar] || 'b-critico'}">${p.status_ao_enviar || '—'}</span></td>
+            <td>${fmtData(p.enviado_em)}</td>
+        </tr>
+    `).join('');
+}
+
+async function carregar() {
+    let url = '/api/relatorios?';
+    if (customInicio && customFim) {
+        url += `inicio=${customInicio}&fim=${customFim}`;
+    } else {
+        url += `periodo=${periodo}`;
+    }
+    const d = await fetch(url).then(r => r.json());
+    const m = {};
+    d.por_status.forEach(s => m[s.status] = s);
+
+    document.getElementById('r-total').textContent       = d.total;
+    document.getElementById('r-count-label').textContent = `${d.total} registro${d.total !== 1 ? 's' : ''}`;
+
+    const set = (id, s) => {
+        document.getElementById(`r-cnt-${id}`).textContent = m[s]?.total ?? 0;
+        document.getElementById(`r-pct-${id}`).textContent = (m[s]?.percentual ?? 0) + '%';
+    };
+    set('prazo',    'NO PRAZO');
+    set('leve',     'Atraso leve');
+    set('moderado', 'Atraso moderado');
+    set('critico',  'Atraso crítico');
+
+    const nCanc = d.cancelados ?? 0;
+    document.getElementById('r-cnt-cancelado').textContent = nCanc;
+    document.getElementById('r-pct-cancelado').textContent =
+        d.total > 0 ? Math.round(nCanc / d.total * 100) + '%' : '0%';
+
+    const labels = d.por_status.map(s => s.status);
+    const vals   = d.por_status.map(s => s.total);
+    const cols   = labels.map(l => COLORS[l]);
+
+    if (gBarras) {
+        gBarras.data.datasets[0].data = vals;
+        gBarras.data.datasets[0].backgroundColor = cols.map(c => c + 'aa');
+        gBarras.data.datasets[0].borderColor = cols;
+        gBarras.update('none');
+    } else {
+        gBarras = new Chart(document.getElementById('graficoBarras'), {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    data: vals,
+                    backgroundColor: cols.map(c => c + 'aa'),
+                    borderColor: cols,
+                    borderWidth: 2,
+                    borderRadius: 6,
+                }]
+            },
+            options: {
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e', font: { size: 11 } } },
+                    y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e', stepSize: 1 }, beginAtZero: true }
+                }
+            }
+        });
+    }
+
+    if (gPizza) {
+        gPizza.data.datasets[0].data = vals;
+        gPizza.update('none');
+    } else {
+        gPizza = new Chart(document.getElementById('graficoPizza'), {
+            type: 'doughnut',
+            data: {
+                labels,
+                datasets: [{ data: vals, backgroundColor: cols, borderColor: '#161b22', borderWidth: 3 }]
+            },
+            options: {
+                plugins: {
+                    legend: { position: 'bottom', labels: { color: '#8b949e', font: { size: 11 }, padding: 12, boxWidth: 11 } }
+                },
+                cutout: '62%',
+            }
+        });
+    }
+
+    todosPedidosR = d.pedidos;
+    renderTabelaR();
+
+    // Breakdown por transportadora
+    const transp = d.por_transportadora || [];
+    const cardT = document.getElementById('cardTransportadora');
+    if (transp.length && d.enviados > 0) {
+        cardT.style.display = '';
+        document.getElementById('lblTranspTotal').textContent = `${d.enviados} envio(s)`;
+        document.getElementById('listaTransp').innerHTML = transp.map(t => {
+            const pct = Math.round(t.total / d.enviados * 100);
+            const isCorreios = t.transportadora.toLowerCase().includes('correo');
+            const isLoggi    = t.transportadora.toLowerCase().includes('loggi');
+            const cor = isCorreios ? '#f0883e' : isLoggi ? '#58a6ff' : '#3fb950';
+            return `<div style="min-width:140px;flex:1;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:10px 14px">
+                <div style="font-size:1.3rem;font-weight:700;color:${cor}">${t.total}</div>
+                <div style="font-size:.75rem;color:var(--muted);margin-top:2px">${t.transportadora}</div>
+                <div style="font-size:.72rem;color:var(--muted)">${pct}% do total</div>
+            </div>`;
+        }).join('');
+    } else {
+        cardT.style.display = 'none';
+    }
+}
+
+function exportar() {
+    if (customInicio && customFim) {
+        window.location = `/api/exportar?inicio=${customInicio}&fim=${customFim}`;
+    } else {
+        window.location = `/api/exportar?periodo=${periodo}`;
+    }
+}
+
+async function verificarCorrecao() {
+    try {
+        const r = await fetch('/api/manutencao/pendentes-correcao');
+        const d = await r.json();
+        const banner = document.getElementById('bannerCorrecao');
+        if (d.pendentes > 0) {
+            banner.style.display = '';
+            document.getElementById('bannerCorrecaoTxt').textContent =
+                `${d.pendentes} pedido(s) foram marcados como enviados hoje pela sincronização automática com status incorreto.`;
+        } else {
+            banner.style.display = 'none';
+        }
+    } catch(e) {}
+}
+
+async function corrigirReconciliacao() {
+    const btn = document.getElementById('btnCorrigir');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Corrigindo…';
+    try {
+        const r = await fetch('/api/manutencao/corrigir-reconciliacao', { method: 'POST' });
+        const d = await r.json();
+        document.getElementById('bannerCorrecao').style.display = 'none';
+        // Recarrega com o período atual para refletir as correções
+        carregar();
+        alert(`✓ ${d.mensagem}`);
+    } catch(e) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-wrench me-1"></i>Corrigir agora';
+    }
+}
+
+verificarCorrecao();
+selPeriodo('30dias');
+</script>
+{% endblock %}
