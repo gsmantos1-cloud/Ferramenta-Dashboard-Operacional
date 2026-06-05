@@ -1,11 +1,9 @@
-import sqlite3
-import webbrowser
+import turso_db as sqlite3
 import threading
 import os
 import csv
 import json
 import re
-import queue
 import urllib.parse
 import urllib.request
 from datetime import date, timedelta, datetime
@@ -16,18 +14,21 @@ import holidays
 import openpyxl
 from flask import Flask, jsonify, render_template, request, send_file, session, redirect, url_for
 from werkzeug.security import check_password_hash
-from dotenv import load_dotenv
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH  = os.path.join(BASE_DIR, "pedidos.db")
-
-load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev-secret-key-change-me")
 
 LOGIN_USUARIO    = os.getenv("LOGIN_USUARIO", "gs.operacional")
 LOGIN_SENHA_HASH = os.getenv("LOGIN_SENHA_HASH", "")
+LOGIN_SENHA      = os.getenv("LOGIN_SENHA", "")   # senha em texto plano (alternativa ao hash)
 
 
 @app.after_request
@@ -52,21 +53,10 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated
 
-# ── SSE — Fila de alertas de estoque em tempo real ───────────────────────────
-_alert_clients: list[queue.Queue] = []
-_alert_lock = threading.Lock()
-
+# ── Alertas de estoque (polling — SSE removido para compatibilidade Vercel) ──
 def push_alert(data: dict):
-    """Envia um alerta para todos os clientes SSE conectados."""
-    with _alert_lock:
-        mortos = []
-        for q in _alert_clients:
-            try:
-                q.put_nowait(data)
-            except queue.Full:
-                mortos.append(q)
-        for q in mortos:
-            _alert_clients.remove(q)
+    """No Vercel, alertas são consultados via polling. Esta função é no-op."""
+    pass
 
 def _verificar_e_alertar_estoque(conn, numero_pedido: str, cliente: str, produtos: list):
     """Checa estoque dos itens de um pedido recém-salvo e dispara alertas SSE."""
@@ -133,7 +123,7 @@ LIMITES = {
 # ── Database ─────────────────────────────────────────────────────────────────
 
 def init_db():
-    with sqlite3.connect(DB_PATH) as conn:
+    with get_conn() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS romaneios (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -371,9 +361,7 @@ def init_db():
 
 
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return sqlite3.connect()
 
 
 # ── Business logic ────────────────────────────────────────────────────────────
@@ -441,7 +429,11 @@ def login_page():
     if request.method == "POST":
         usuario = request.form.get("usuario", "").strip()
         senha   = request.form.get("senha", "")
-        if usuario == LOGIN_USUARIO and check_password_hash(LOGIN_SENHA_HASH, senha):
+        senha_ok = (
+            (LOGIN_SENHA and senha == LOGIN_SENHA) or
+            (LOGIN_SENHA_HASH and check_password_hash(LOGIN_SENHA_HASH, senha))
+        )
+        if usuario == LOGIN_USUARIO and senha_ok:
             session["logado"]  = True
             session["usuario"] = usuario
             return redirect(url_for("dashboard"))
@@ -1995,23 +1987,139 @@ def exportar_romaneio(rid):
 
 # ── NuvemShop sync ───────────────────────────────────────────────────────────
 
+def _get_nv_credentials():
+    """Lê store_id e access_token: primeiro das env vars, depois do banco."""
+    store_id = os.getenv("NUVEMSHOP_STORE_ID", "")
+    token    = os.getenv("NUVEMSHOP_ACCESS_TOKEN", "")
+    if not store_id or not token:
+        try:
+            with get_conn() as conn:
+                row_id = conn.execute(
+                    "SELECT valor FROM config WHERE chave='nuvemshop_store_id'"
+                ).fetchone()
+                row_tk = conn.execute(
+                    "SELECT valor FROM config WHERE chave='nuvemshop_access_token'"
+                ).fetchone()
+                if row_id and row_id["valor"]:
+                    store_id = row_id["valor"]
+                if row_tk and row_tk["valor"]:
+                    token = row_tk["valor"]
+        except Exception:
+            pass
+    return store_id, token
+
+
 def _nuvemshop_headers():
-    token = os.getenv("NUVEMSHOP_ACCESS_TOKEN", "")
+    _, token = _get_nv_credentials()
     return {
         "Authentication": f"bearer {token}",
         "User-Agent": "GS Mantos Interno (contato@gsmantos.com.br)",
         "Content-Type": "application/json",
     }
 
+def _processar_order(conn, o):
+    """Processa um pedido da NuvemShop e insere no banco se novo. Retorna 'salvo'|'ja_enviado'|'duplicado'|'skip'."""
+    hoje     = date.today()
+    numero   = str(o.get("number", "")).strip()
+    data_str = o.get("created_at", "")[:10]
+    cliente  = o.get("contact_name", "") or ""
+    total    = str(o.get("total", ""))
+
+    # Ignora pedidos cancelados
+    if o.get("status") == "cancelled" or o.get("payment_status") in ("voided", "refunded"):
+        return "skip"
+
+    shipping_status = o.get("shipping_status", "")
+    if shipping_status == "shipped":
+        envio = "Enviada"
+    elif shipping_status == "delivered":
+        envio = "Entregue"
+    else:
+        envio = "Por enviar"
+
+    transportadora = ""
+    for f in (o.get("fulfillments") or []):
+        carrier = (f.get("shipping") or {}).get("carrier", {}).get("name", "")
+        option  = (f.get("shipping") or {}).get("option",  {}).get("name", "")
+        if carrier or option:
+            transportadora = f"{carrier} - {option}".strip(" -")
+        break
+    if not transportadora:
+        transportadora = o.get("shipping_option", "") or ""
+    transportadora = transportadora.replace("Nuvem Envio - ", "")
+
+    gateway = o.get("gateway_name", "") or ""
+    payment_details = o.get("payment_details") or {}
+    method = payment_details.get("method", "") or ""
+    if gateway and method:
+        forma_pagamento = f"{gateway} - {method}"
+    elif gateway:
+        forma_pagamento = gateway
+    else:
+        forma_pagamento = method or ""
+
+    produtos = o.get("products") or []
+
+    if not numero or not data_str:
+        return "skip"
+
+    existente = conn.execute(
+        "SELECT id, ativo FROM pedidos WHERE numero = ?", (numero,)
+    ).fetchone()
+    if existente:
+        if produtos:
+            _salvar_itens_pedido(conn, numero, produtos)
+        return "duplicado"
+
+    try:
+        dp = date.fromisoformat(data_str)
+    except ValueError:
+        return "skip"
+
+    if dp > hoje:
+        dp = hoje
+
+    dias   = calcular_dias_uteis(dp, hoje)
+    status = determinar_status(dias, "Normal")
+    is_env = envio in ("Enviada", "Entregue")
+
+    try:
+        if is_env:
+            conn.execute(
+                """INSERT INTO pedidos
+                   (numero,data_pedido,categoria,status,cliente,total,pagamento,forma_pagamento,
+                    transportadora,ativo,enviado_em,status_ao_enviar)
+                   VALUES (?,?,?,?,?,?,?,?,?,0,?,?)""",
+                (numero, data_str, "Normal", status, cliente, total,
+                 "Recebido", forma_pagamento, transportadora,
+                 hoje.isoformat(), status),
+            )
+            if produtos:
+                _salvar_itens_pedido(conn, numero, produtos)
+            return "ja_enviado"
+        else:
+            conn.execute(
+                """INSERT INTO pedidos
+                   (numero,data_pedido,categoria,status,cliente,total,pagamento,forma_pagamento,transportadora)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (numero, data_str, "Normal", status, cliente, total,
+                 "Recebido", forma_pagamento, transportadora),
+            )
+            if produtos:
+                _salvar_itens_pedido(conn, numero, produtos)
+                _verificar_e_alertar_estoque(conn, numero, cliente, produtos)
+            return "salvo"
+    except Exception:
+        return "skip"
+
+
 def sincronizar_nuvemshop():
     import urllib.request as ureq
-    store_id = os.getenv("NUVEMSHOP_STORE_ID", "")
-    token    = os.getenv("NUVEMSHOP_ACCESS_TOKEN", "")
+    store_id, token = _get_nv_credentials()
     if not store_id or not token:
-        return {"erro": "NuvemShop não configurada no .env"}
+        return {"erro": "NuvemShop não configurada"}
 
     headers = _nuvemshop_headers()
-    hoje    = date.today()
 
     with get_conn() as conn:
         row = conn.execute("SELECT valor FROM config WHERE chave='ultima_sincronizacao'").fetchone()
@@ -2028,96 +2136,6 @@ def sincronizar_nuvemshop():
             ts_min = str(int(dt.timestamp()))
         except Exception:
             ts_min = ""
-
-    def _processar_order(conn, o):
-        """Processa um pedido da NuvemShop e insere no banco se novo. Retorna 'salvo'|'ja_enviado'|'duplicado'|'skip'."""
-        numero   = str(o.get("number", "")).strip()
-        data_str = o.get("created_at", "")[:10]
-        cliente  = o.get("contact_name", "") or ""
-        total    = str(o.get("total", ""))
-
-        shipping_status = o.get("shipping_status", "")
-        if shipping_status == "shipped":
-            envio = "Enviada"
-        elif shipping_status == "delivered":
-            envio = "Entregue"
-        else:
-            envio = "Por enviar"
-
-        transportadora = ""
-        for f in (o.get("fulfillments") or []):
-            carrier = (f.get("shipping") or {}).get("carrier", {}).get("name", "")
-            option  = (f.get("shipping") or {}).get("option",  {}).get("name", "")
-            if carrier or option:
-                transportadora = f"{carrier} - {option}".strip(" -")
-            break
-        if not transportadora:
-            transportadora = o.get("shipping_option", "") or ""
-        transportadora = transportadora.replace("Nuvem Envio - ", "")
-
-        gateway = o.get("gateway_name", "") or ""
-        payment_details = o.get("payment_details") or {}
-        method = payment_details.get("method", "") or ""
-        if gateway and method:
-            forma_pagamento = f"{gateway} - {method}"
-        elif gateway:
-            forma_pagamento = gateway
-        else:
-            forma_pagamento = method or ""
-
-        produtos = o.get("products") or []
-
-        if not numero or not data_str:
-            return "skip"
-
-        existente = conn.execute(
-            "SELECT id, ativo FROM pedidos WHERE numero = ?", (numero,)
-        ).fetchone()
-        if existente:
-            if produtos:
-                _salvar_itens_pedido(conn, numero, produtos)
-            return "duplicado"
-
-        try:
-            dp = date.fromisoformat(data_str)
-        except ValueError:
-            return "skip"
-
-        if dp > hoje:
-            dp = hoje
-
-        dias   = calcular_dias_uteis(dp, hoje)
-        status = determinar_status(dias, "Normal")
-        is_env = envio in ("Enviada", "Entregue")
-
-        try:
-            if is_env:
-                conn.execute(
-                    """INSERT INTO pedidos
-                       (numero,data_pedido,categoria,status,cliente,total,pagamento,forma_pagamento,
-                        transportadora,ativo,enviado_em,status_ao_enviar)
-                       VALUES (?,?,?,?,?,?,?,?,?,0,?,?)""",
-                    (numero, data_str, "Normal", status, cliente, total,
-                     "Recebido", forma_pagamento, transportadora,
-                     hoje.isoformat(), status),
-                )
-                if produtos:
-                    _salvar_itens_pedido(conn, numero, produtos)
-                return "ja_enviado"
-            else:
-                conn.execute(
-                    """INSERT INTO pedidos
-                       (numero,data_pedido,categoria,status,cliente,total,pagamento,forma_pagamento,transportadora)
-                       VALUES (?,?,?,?,?,?,?,?,?)""",
-                    (numero, data_str, "Normal", status, cliente, total,
-                     "Recebido", forma_pagamento, transportadora),
-                )
-                if produtos:
-                    _salvar_itens_pedido(conn, numero, produtos)
-                    _verificar_e_alertar_estoque(conn, numero, cliente, produtos)
-                return "salvo"
-        except Exception:
-            return "skip"
 
     # ── Fase 1: payment_status=paid com filtro incremental (ts_min) ─────────────
     page = 1
@@ -2176,35 +2194,45 @@ def sincronizar_nuvemshop():
         if len(orders_auth) < 200:
             break
 
-    # ── Reconciliação: verifica cada pedido ativo individualmente na NuvemShop ──
-    # (shipping_status[] filter returns HTTP 500 — must query per order)
+    # ── Fase 3: busca pedidos cancelados na NuvemShop e remove do banco ────────
     reconciliados = 0
     try:
         agora_rec = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Busca números de pedidos ativos no banco
         with get_conn() as conn:
             ativos_db = conn.execute(
                 "SELECT id, numero, status FROM pedidos WHERE ativo=1"
             ).fetchall()
-        for row in ativos_db:
-            try:
-                url_check = (f"https://api.nuvemshop.com.br/v1/{store_id}/orders"
-                             f"?q={row['numero']}&per_page=5")
-                req_check = ureq.Request(url_check, headers=headers)
-                with ureq.urlopen(req_check, timeout=10) as r:
-                    orders_check = json.loads(r.read())
-                match = next(
-                    (o for o in orders_check if str(o.get("number", "")) == row["numero"]),
-                    None,
-                )
-                if match and match.get("shipping_status") in ("shipped", "delivered"):
+        ativos_map = {row["numero"]: row for row in ativos_db}
+
+        if ativos_map:
+            # Busca pedidos cancelados na NuvemShop (paginado)
+            cancelados_nv = set()
+            pg = 1
+            while True:
+                url_can = f"https://api.nuvemshop.com.br/v1/{store_id}/orders?status=cancelled&per_page=200&page={pg}"
+                req_can = ureq.Request(url_can, headers=headers)
+                try:
+                    with ureq.urlopen(req_can, timeout=20) as r:
+                        orders_can = json.loads(r.read())
+                except Exception:
+                    break
+                for o in orders_can:
+                    cancelados_nv.add(str(o.get("number", "")))
+                if len(orders_can) < 200:
+                    break
+                pg += 1
+
+            # Marca como cancelado no banco qualquer pedido ativo que está cancelado na NuvemShop
+            for numero, row in ativos_map.items():
+                if numero in cancelados_nv:
                     with get_conn() as conn:
                         conn.execute(
-                            "UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar=? WHERE id=?",
-                            (agora_rec, row["status"], row["id"]),
+                            "UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar='Cancelado' WHERE id=?",
+                            (agora_rec, row["id"]),
                         )
                     reconciliados += 1
-            except Exception:
-                pass
     except Exception:
         pass
 
@@ -2225,52 +2253,27 @@ def sincronizar_nuvemshop():
             "reconciliados": reconciliados, "total": salvos + ja_enviados}
 
 
-_sync_state = {"running": False, "ultimo_resultado": None}
-
-
-def _run_sincronizacao():
-    _sync_state["running"] = True
-    try:
-        resultado = sincronizar_nuvemshop()
-        _sync_state["ultimo_resultado"] = resultado
-    except Exception as e:
-        _sync_state["ultimo_resultado"] = {"erro": str(e)}
-    finally:
-        _sync_state["running"] = False
-
-
-def _loop_sincronizacao():
-    import time
-    time.sleep(30)
-    while True:
-        try:
-            _run_sincronizacao()
-        except Exception:
-            pass
-        time.sleep(15 * 60)
-
-
 @app.route("/api/sincronizar", methods=["POST"])
 @login_required
 def sincronizar_manual():
-    if _sync_state["running"]:
-        return jsonify({"mensagem": "Sincronização já em andamento", "running": True})
-    t = threading.Thread(target=_run_sincronizacao, daemon=True)
-    t.start()
-    return jsonify({"mensagem": "Sincronização iniciada em background", "running": True})
+    try:
+        resultado = sincronizar_nuvemshop()
+    except Exception as e:
+        resultado = {"erro": str(e)}
+    return jsonify(resultado)
 
 
 @app.route("/api/sync/status")
 @login_required
 def sync_status():
-    store_id = os.getenv("NUVEMSHOP_STORE_ID", "")
+    store_id, _ = _get_nv_credentials()
     with get_conn() as conn:
         row = conn.execute("SELECT valor FROM config WHERE chave='ultima_sincronizacao'").fetchone()
     return jsonify({
         "configurado": bool(store_id),
         "ultima_sincronizacao": row["valor"] if row else None,
-        "running": _sync_state["running"],
-        "ultimo_resultado": _sync_state["ultimo_resultado"],
+        "running": False,
+        "ultimo_resultado": None,
     })
 
 
@@ -2315,20 +2318,19 @@ def nuvemshop_callback():
         access_token = token_data.get("access_token", "")
         tid          = str(token_data.get("user_id", store_id))
 
-        env_path = os.path.join(BASE_DIR, ".env")
-        with open(env_path, "r", encoding="utf-8") as f:
-            env_content = f.read()
+        # Salva credenciais no banco de dados (Vercel não tem sistema de arquivos persistente)
+        with get_conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO config (chave, valor) VALUES ('nuvemshop_store_id', ?)",
+                (tid,),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO config (chave, valor) VALUES ('nuvemshop_access_token', ?)",
+                (access_token,),
+            )
 
-        for key, val in [("NUVEMSHOP_STORE_ID", tid), ("NUVEMSHOP_ACCESS_TOKEN", access_token)]:
-            if re.search(rf"^{key}=", env_content, re.MULTILINE):
-                env_content = re.sub(rf"^{key}=.*$", f"{key}={val}", env_content, flags=re.MULTILINE)
-            else:
-                env_content += f"\n{key}={val}"
-
-        with open(env_path, "w", encoding="utf-8") as f:
-            f.write(env_content)
-
-        load_dotenv(env_path, override=True)
+        # Registra webhooks automaticamente após OAuth
+        _registrar_webhooks_nuvemshop(tid, access_token, request.url_root.rstrip("/"))
 
         return f"""<html><body style="font-family:sans-serif;background:#0d1117;color:#e6edf3;padding:2rem">
             <h2 style="color:#3fb950">&#10003; Conectado com sucesso!</h2>
@@ -2345,6 +2347,188 @@ def nuvemshop_callback():
             <p style="color:#8b949e;font-size:.85rem"><b>Code recebido:</b> {code[:20]}…</p>
             <p style="color:#8b949e;font-size:.85rem"><b>redirect_uri usado:</b> {redirect_uri}</p>
         </body></html>"""
+
+
+# ── NuvemShop Webhooks ────────────────────────────────────────────────────────
+
+def _registrar_webhooks_nuvemshop(store_id, token, base_url):
+    """Registra os webhooks de pedidos na NuvemShop (idempotente)."""
+    import urllib.request as ureq
+    headers = {
+        "Authentication": f"bearer {token}",
+        "User-Agent": "GS Mantos Interno (contato@gsmantos.com.br)",
+        "Content-Type": "application/json",
+    }
+
+    # Busca webhooks já registrados para evitar duplicatas
+    try:
+        req = ureq.Request(
+            f"https://api.nuvemshop.com.br/v1/{store_id}/webhooks",
+            headers=headers,
+        )
+        with ureq.urlopen(req, timeout=15) as resp:
+            existentes = json.loads(resp.read())
+        urls_existentes = {wh.get("url", "") for wh in existentes}
+    except Exception:
+        urls_existentes = set()
+
+    eventos = [
+        ("orders/paid",      f"{base_url}/nuvemshop/webhooks/orders/paid"),
+        ("orders/fulfilled", f"{base_url}/nuvemshop/webhooks/orders/fulfilled"),
+        ("orders/cancelled", f"{base_url}/nuvemshop/webhooks/orders/cancelled"),
+    ]
+
+    for evento, url in eventos:
+        if url in urls_existentes:
+            continue
+        try:
+            payload = json.dumps({"event": evento, "url": url}).encode("utf-8")
+            req = ureq.Request(
+                f"https://api.nuvemshop.com.br/v1/{store_id}/webhooks",
+                data=payload,
+                headers=headers,
+                method="POST",
+            )
+            ureq.urlopen(req, timeout=15)
+        except Exception:
+            pass
+
+
+@app.route("/nuvemshop/webhooks/orders/paid", methods=["POST"])
+def webhook_order_paid():
+    """Recebe notificação da NuvemShop quando um pedido é pago."""
+    try:
+        order = request.get_json(force=True) or {}
+    except Exception:
+        return jsonify({"ok": False}), 400
+
+    if not order:
+        return jsonify({"ok": True}), 200
+
+    with get_conn() as conn:
+        resultado = _processar_order(conn, order)
+        if resultado == "salvo":
+            _sync_personalizacoes(conn)
+            try:
+                _processar_estoque_pedidos()
+            except Exception:
+                pass
+
+    return jsonify({"ok": True, "resultado": resultado}), 200
+
+
+@app.route("/nuvemshop/webhooks/orders/cancelled", methods=["POST"])
+def webhook_order_cancelled():
+    """Recebe notificação da NuvemShop quando um pedido é cancelado."""
+    try:
+        order = request.get_json(force=True) or {}
+    except Exception:
+        return jsonify({"ok": False}), 400
+
+    numero = str(order.get("number", "")).strip()
+    if not numero:
+        return jsonify({"ok": True}), 200
+
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM pedidos WHERE numero = ? AND ativo = 1", (numero,)
+        ).fetchone()
+        if row:
+            conn.execute(
+                "UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar='Cancelado' WHERE id=?",
+                (agora, row["id"]),
+            )
+
+    return jsonify({"ok": True}), 200
+
+
+@app.route("/nuvemshop/webhooks/orders/fulfilled", methods=["POST"])
+def webhook_order_fulfilled():
+    """Recebe notificação da NuvemShop quando um pedido é enviado."""
+    try:
+        order = request.get_json(force=True) or {}
+    except Exception:
+        return jsonify({"ok": False}), 400
+
+    numero = str(order.get("number", "")).strip()
+    if not numero:
+        return jsonify({"ok": True}), 200
+
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, status FROM pedidos WHERE numero = ? AND ativo = 1", (numero,)
+        ).fetchone()
+        if row:
+            conn.execute(
+                "UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar=? WHERE id=?",
+                (agora, row["status"], row["id"]),
+            )
+
+    return jsonify({"ok": True}), 200
+
+
+@app.route("/api/nuvemshop/registrar-webhooks", methods=["POST"])
+@login_required
+def api_registrar_webhooks():
+    """Registra manualmente os webhooks (caso o OAuth tenha sido feito antes desta feature)."""
+    store_id, token = _get_nv_credentials()
+    if not store_id or not token:
+        return jsonify({"erro": "NuvemShop não configurada"}), 400
+    base_url = request.url_root.rstrip("/")
+    try:
+        _registrar_webhooks_nuvemshop(store_id, token, base_url)
+        return jsonify({"ok": True, "mensagem": "Webhooks registrados com sucesso"})
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+
+@app.route("/api/nuvemshop/limpar-cancelados", methods=["POST"])
+@login_required
+def limpar_cancelados():
+    """Remove do banco todos os pedidos ativos que estão cancelados na NuvemShop."""
+    import urllib.request as ureq
+    store_id, token = _get_nv_credentials()
+    if not store_id or not token:
+        return jsonify({"erro": "NuvemShop não configurada"}), 400
+
+    headers = _nuvemshop_headers()
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Busca todos os pedidos cancelados na NuvemShop
+    cancelados_nv = set()
+    pg = 1
+    while True:
+        url = f"https://api.nuvemshop.com.br/v1/{store_id}/orders?status=cancelled&per_page=200&page={pg}"
+        req = ureq.Request(url, headers=headers)
+        try:
+            with ureq.urlopen(req, timeout=20) as r:
+                orders = json.loads(r.read())
+        except Exception as e:
+            return jsonify({"erro": str(e)}), 500
+        for o in orders:
+            cancelados_nv.add(str(o.get("number", "")))
+        if len(orders) < 200:
+            break
+        pg += 1
+
+    if not cancelados_nv:
+        return jsonify({"removidos": 0, "mensagem": "Nenhum pedido cancelado encontrado na NuvemShop"})
+
+    # Remove do banco os que estão ativos mas cancelados na NuvemShop
+    removidos = 0
+    with get_conn() as conn:
+        ativos = conn.execute("SELECT id, numero FROM pedidos WHERE ativo=1").fetchall()
+        for row in ativos:
+            if row["numero"] in cancelados_nv:
+                conn.execute(
+                    "UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar='Cancelado' WHERE id=?",
+                    (agora, row["id"]),
+                )
+                removidos += 1
+
+    return jsonify({"removidos": removidos, "mensagem": f"{removidos} pedido(s) cancelado(s) removido(s) da fila"})
 
 
 # ── Helpers — Estoque ────────────────────────────────────────────────────────
@@ -2546,8 +2730,7 @@ def api_estoque_sincronizar_catalogo():
     """Busca todos os produtos do NuvemShop, popula produto_nome+variante_label no sku_stock
     e sincroniza quantidades de registros com mesmo nome."""
     import urllib.request as ureq
-    store_id = os.getenv("NUVEMSHOP_STORE_ID", "")
-    token    = os.getenv("NUVEMSHOP_ACCESS_TOKEN", "")
+    store_id, token = _get_nv_credentials()
     if not store_id or not token:
         return jsonify({"erro": "NuvemShop não configurada"}), 400
 
@@ -2951,10 +3134,9 @@ def api_estoque_entrada_lote():
 @login_required
 def api_nuvemshop_produtos():
     import urllib.request as ureq
-    store_id = os.getenv("NUVEMSHOP_STORE_ID", "")
-    token    = os.getenv("NUVEMSHOP_ACCESS_TOKEN", "")
+    store_id, token = _get_nv_credentials()
     if not store_id or not token:
-        return jsonify({"erro": "NuvemShop não configurada no .env"}), 400
+        return jsonify({"erro": "NuvemShop não configurada"}), 400
 
     headers     = _nuvemshop_headers()
     sort_by     = request.args.get("sort_by", "newest")
@@ -3041,8 +3223,7 @@ def api_nuvemshop_produtos():
 @login_required
 def api_nuvemshop_categorias():
     import urllib.request as ureq
-    store_id = os.getenv("NUVEMSHOP_STORE_ID", "")
-    token    = os.getenv("NUVEMSHOP_ACCESS_TOKEN", "")
+    store_id, token = _get_nv_credentials()
     if not store_id or not token:
         return jsonify([])
 
@@ -3302,34 +3483,31 @@ def api_compras_dia():
     })
 
 
-@app.route("/api/stream/alertas")
+@app.route("/api/alertas/poll")
 @login_required
-def stream_alertas():
-    """SSE endpoint — envia alertas de estoque em tempo real para a página de Compras."""
-    q: queue.Queue = queue.Queue(maxsize=50)
-    with _alert_lock:
-        _alert_clients.append(q)
-
-    def generate():
-        try:
-            while True:
-                try:
-                    data = q.get(timeout=25)
-                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-                except queue.Empty:
-                    yield "data: {\"type\":\"ping\"}\n\n"
-        finally:
-            with _alert_lock:
-                try:
-                    _alert_clients.remove(q)
-                except ValueError:
-                    pass
-
-    return app.response_class(
-        generate(),
-        mimetype="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+def poll_alertas():
+    """Polling de alertas de estoque (substitui SSE para compatibilidade com Vercel)."""
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT sku, quantity, min_quantity, produto_nome, variante_label
+            FROM sku_stock
+            WHERE quantity <= min_quantity
+            ORDER BY quantity ASC
+            LIMIT 50
+        """).fetchall()
+    alertas = []
+    for r in rows:
+        alertas.append({
+            "type":     "alerta_estoque",
+            "status":   "sem_estoque" if (r["quantity"] or 0) <= 0 else "estoque_baixo",
+            "produto":  r["produto_nome"] or r["sku"] or "—",
+            "variante": r["variante_label"] or "",
+            "sku":      r["sku"] or "",
+            "qty_atual": r["quantity"] or 0,
+            "min_qty":  r["min_quantity"] or 0,
+            "timestamp": datetime.now().strftime("%H:%M:%S"),
+        })
+    return jsonify(alertas)
 
 
 # ── Routes — Compras Manuais ──────────────────────────────────────────────────
@@ -3973,63 +4151,32 @@ def api_atacado_reabrir(pid):
     return jsonify({"ok": True})
 
 
-# ── Route — Página de Links (sem login) ──────────────────────────────────────
-
-@app.route("/links")
-def links_page():
-    """Página pública com os links atuais dos dois sistemas."""
-    import re as _re
-
-    def _read_cf_url(url_file, err_file):
-        """Lê URL do cloudflare: primeiro do arquivo de URL salvo, depois do log de erro."""
-        # Tenta arquivo de URL direta (salvo pelo script)
-        try:
-            with open(url_file, encoding="utf-8") as fh:
-                u = fh.read().strip()
-            if u and u.startswith("https://"):
-                return u
-        except Exception:
-            pass
-        # Fallback: extrai do log de stderr do cloudflared
-        try:
-            with open(err_file, encoding="utf-8") as fh:
-                m = _re.search(r'https://[a-z0-9\-]+\.trycloudflare\.com', fh.read())
-                if m:
-                    return m.group(0)
-        except Exception:
-            pass
-        return ""
-
-    ped_url = _read_cf_url(
-        r"C:\Users\l3ti\AppData\Local\Temp\cf_pedidos_url.txt",
-        r"C:\Users\l3ti\AppData\Local\Temp\cf_pedidos_err.txt",
-    )
-    fin_url = _read_cf_url(
-        r"C:\Users\l3ti\AppData\Local\Temp\financeiro_url.txt",
-        r"C:\Users\l3ti\AppData\Local\Temp\cf_financeiro_err.txt",
-    )
-
-    return render_template("links.html", ped_url=ped_url, fin_url=fin_url)
-
-
-@app.route("/api/links/financeiro", methods=["POST"])
-def api_set_financeiro_url():
-    """Endpoint para o script de tunnel salvar a URL do financeiro."""
-    data = request.get_json() or {}
-    url  = data.get("url", "").strip()
-    if url:
-        try:
-            with open(r"C:\Users\l3ti\AppData\Local\Temp\financeiro_url.txt", "w", encoding="utf-8") as f:
-                f.write(url)
-        except Exception:
-            pass
-    return jsonify({"ok": True})
+# ── /links removido (dependia de arquivos locais do Windows) ─────────────────
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
+# Inicializa o banco na primeira importação (cold start do Vercel)
+try:
     init_db()
-    threading.Thread(target=_loop_sincronizacao, daemon=True).start()
-    threading.Timer(1.5, lambda: webbrowser.open("http://127.0.0.1:5000")).start()
+except Exception:
+    pass
+
+
+# ── NuvemShop LGPD webhooks ───────────────────────────────────────────────────
+
+@app.route("/nuvemshop/webhooks/store-redact", methods=["POST"])
+def lgpd_store_redact():
+    return jsonify({"ok": True}), 200
+
+@app.route("/nuvemshop/webhooks/customers-redact", methods=["POST"])
+def lgpd_customers_redact():
+    return jsonify({"ok": True}), 200
+
+@app.route("/nuvemshop/webhooks/customers-data-request", methods=["POST"])
+def lgpd_customers_data_request():
+    return jsonify({"ok": True}), 200
+
+
+if __name__ == "__main__":
     app.run(debug=False, host="0.0.0.0", port=5000)

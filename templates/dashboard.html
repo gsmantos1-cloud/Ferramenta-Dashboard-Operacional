@@ -708,45 +708,33 @@ function escHtml(s) {
 
 function atualizar() { carregarStats(); carregarPedidos(); }
 
-let _syncPoller = null;
-
 async function sincronizarAgora(btn) {
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sincronizando...';
-    document.getElementById('syncStatus').textContent = 'Sincronizando em background...';
+    const el = document.getElementById('syncStatus');
+    el.textContent = 'Sincronizando...';
+    el.style.color = '';
     try {
-        await fetch('/api/sincronizar', { method: 'POST' });
-    } catch(e) {}
-    _iniciarPollingSync();
-}
-
-function _iniciarPollingSync() {
-    if (_syncPoller) return;
-    _syncPoller = setInterval(async () => {
-        try {
-            const r = await fetch('/api/sync/status');
-            const d = await r.json();
-            const btn = document.getElementById('btnSync');
-            const el = document.getElementById('syncStatus');
-            if (!d.running) {
-                clearInterval(_syncPoller);
-                _syncPoller = null;
-                btn.disabled = false;
-                btn.innerHTML = '<i class="bi bi-cloud-download me-1"></i>Sincronizar NuvemShop';
-                const res = d.ultimo_resultado;
-                if (res && res.erro) {
-                    el.textContent = '⚠ Erro: ' + res.erro;
-                } else if (res) {
-                    const msg = `✓ ${res.salvos ?? 0} novo(s)${res.reconciliados ? ', ' + res.reconciliados + ' reconciliado(s)' : ''}`;
-                    el.textContent = msg + ' — ' + new Date().toLocaleTimeString('pt-BR');
-                    atualizar();
-                } else if (d.ultima_sincronizacao) {
-                    const dt = new Date(d.ultima_sincronizacao + 'Z');
-                    el.textContent = 'Última sincronização: ' + dt.toLocaleString('pt-BR');
-                }
-            }
-        } catch(e) {}
-    }, 3000);
+        const r = await fetch('/api/sincronizar', { method: 'POST' });
+        const d = await r.json();
+        if (d.erro) {
+            el.textContent = '⚠ Erro: ' + d.erro;
+            el.style.color = '#f85149';
+        } else {
+            const partes = [];
+            if (d.salvos)        partes.push(d.salvos + ' novo(s)');
+            if (d.ja_enviados)   partes.push(d.ja_enviados + ' já enviado(s)');
+            if (d.reconciliados) partes.push(d.reconciliados + ' reconciliado(s)');
+            const hora = new Date().toLocaleTimeString('pt-BR');
+            el.textContent = '✓ Sincronizado às ' + hora + (partes.length ? ' — ' + partes.join(', ') : ' — sem novidades');
+            atualizar();
+        }
+    } catch(e) {
+        el.textContent = '⚠ Erro de conexão';
+        el.style.color = '#f85149';
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-cloud-download me-1"></i>Sincronizar NuvemShop';
 }
 
 async function carregarSyncStatus() {
@@ -754,15 +742,13 @@ async function carregarSyncStatus() {
         const r = await fetch('/api/sync/status');
         const d = await r.json();
         const el = document.getElementById('syncStatus');
-        const btn = document.getElementById('btnSync');
-        if (d.running) {
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sincronizando...';
-            el.textContent = 'Sincronizando em background...';
-            _iniciarPollingSync();
-        } else if (d.ultima_sincronizacao) {
+        if (d.ultima_sincronizacao) {
             const dt = new Date(d.ultima_sincronizacao + 'Z');
             el.textContent = 'Última sincronização: ' + dt.toLocaleString('pt-BR');
+        }
+        if (!d.configurado) {
+            el.textContent = '⚠ NuvemShop não autorizada — clique em Sincronizar para conectar';
+            el.style.color = '#f0883e';
         }
     } catch(e) {}
 }
