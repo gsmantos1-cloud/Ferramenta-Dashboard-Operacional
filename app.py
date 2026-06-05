@@ -1,3 +1,27 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+#  ⚠️  PRIORIDADE Nº 1 — NÃO ESTOURAR A QUOTA GRÁTIS DO TURSO
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Plano grátis: 500 milhões de LEITURAS (rows read)/mês. O limite é POR CONTA e
+#  reseta no ciclo mensal de billing. Estourar BLOQUEIA as leituras da conta
+#  inteira até o reset → a ferramenta para. (Já aconteceu uma vez: 962M.)
+#
+#  REGRA DE OURO: toda mudança deve MINIMIZAR ao máximo as leituras, sem
+#  comprometer as funções da ferramenta. Antes de mergear qualquer alteração,
+#  pergunte: "isso adiciona leituras recorrentes? a consulta tem índice? roda
+#  dentro de um loop por item?"
+#
+#  PRÁTICAS OBRIGATÓRIAS (ver detalhes em CLAUDE.md):
+#   1. Toda coluna usada em WHERE/JOIN/GROUP BY PRECISA de índice (init_db) —
+#      sem índice = full table scan = milhares de leituras por consulta.
+#   2. Nunca ler no banco dentro de loop por item: pré-carregue em memória com
+#      UM SELECT e processe; grave em lote com conn.execute_batch().
+#   3. Sync da NuvemShop: sempre incremental (updated_at_min em ISO 8601, NUNCA
+#      timestamp unix) e retomável por tempo.
+#   4. Recálculos caros (status de atraso) no máximo 1x/dia (guard via config).
+#   5. Polling do front: o mínimo necessário; pausar quando a aba está oculta;
+#      não refazer leituras que já foram feitas no mesmo carregamento.
+# ═══════════════════════════════════════════════════════════════════════════════
+
 import turso_db as sqlite3
 import threading
 import os
