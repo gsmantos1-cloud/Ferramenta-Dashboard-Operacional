@@ -2155,43 +2155,45 @@ def sincronizar_nuvemshop():
         if len(orders_auth) < 200:
             break
 
-    # ── Reconciliação: verifica cada pedido ativo individualmente na NuvemShop ──
-    # (shipping_status[] filter returns HTTP 500 — must query per order)
-    # Limita a 30 pedidos por sync para evitar timeout no Vercel
+    # ── Fase 3: busca pedidos cancelados na NuvemShop e remove do banco ────────
     reconciliados = 0
     try:
         agora_rec = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Busca números de pedidos ativos no banco
         with get_conn() as conn:
             ativos_db = conn.execute(
-                "SELECT id, numero, status FROM pedidos WHERE ativo=1 ORDER BY id DESC LIMIT 30"
+                "SELECT id, numero, status FROM pedidos WHERE ativo=1"
             ).fetchall()
-        for row in ativos_db:
-            try:
-                url_check = (f"https://api.nuvemshop.com.br/v1/{store_id}/orders"
-                             f"?q={row['numero']}&per_page=5")
-                req_check = ureq.Request(url_check, headers=headers)
-                with ureq.urlopen(req_check, timeout=10) as r:
-                    orders_check = json.loads(r.read())
-                match = next(
-                    (o for o in orders_check if str(o.get("number", "")) == row["numero"]),
-                    None,
-                )
-                if match:
-                    is_cancelado = (
-                        match.get("status") == "cancelled" or
-                        match.get("payment_status") in ("voided", "refunded")
-                    )
-                    is_enviado = match.get("shipping_status") in ("shipped", "delivered")
-                    if is_enviado or is_cancelado:
-                        status_final = "Cancelado" if is_cancelado else row["status"]
-                        with get_conn() as conn:
-                            conn.execute(
-                                "UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar=? WHERE id=?",
-                                (agora_rec, status_final, row["id"]),
-                            )
-                        reconciliados += 1
-            except Exception:
-                pass
+        ativos_map = {row["numero"]: row for row in ativos_db}
+
+        if ativos_map:
+            # Busca pedidos cancelados na NuvemShop (paginado)
+            cancelados_nv = set()
+            pg = 1
+            while True:
+                url_can = f"https://api.nuvemshop.com.br/v1/{store_id}/orders?status=cancelled&per_page=200&page={pg}"
+                req_can = ureq.Request(url_can, headers=headers)
+                try:
+                    with ureq.urlopen(req_can, timeout=20) as r:
+                        orders_can = json.loads(r.read())
+                except Exception:
+                    break
+                for o in orders_can:
+                    cancelados_nv.add(str(o.get("number", "")))
+                if len(orders_can) < 200:
+                    break
+                pg += 1
+
+            # Marca como cancelado no banco qualquer pedido ativo que está cancelado na NuvemShop
+            for numero, row in ativos_map.items():
+                if numero in cancelados_nv:
+                    with get_conn() as conn:
+                        conn.execute(
+                            "UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar='Cancelado' WHERE id=?",
+                            (agora_rec, row["id"]),
+                        )
+                    reconciliados += 1
     except Exception:
         pass
 
@@ -2441,6 +2443,53 @@ def api_registrar_webhooks():
         return jsonify({"ok": True, "mensagem": "Webhooks registrados com sucesso"})
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
+
+
+@app.route("/api/nuvemshop/limpar-cancelados", methods=["POST"])
+@login_required
+def limpar_cancelados():
+    """Remove do banco todos os pedidos ativos que estão cancelados na NuvemShop."""
+    import urllib.request as ureq
+    store_id, token = _get_nv_credentials()
+    if not store_id or not token:
+        return jsonify({"erro": "NuvemShop não configurada"}), 400
+
+    headers = _nuvemshop_headers()
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Busca todos os pedidos cancelados na NuvemShop
+    cancelados_nv = set()
+    pg = 1
+    while True:
+        url = f"https://api.nuvemshop.com.br/v1/{store_id}/orders?status=cancelled&per_page=200&page={pg}"
+        req = ureq.Request(url, headers=headers)
+        try:
+            with ureq.urlopen(req, timeout=20) as r:
+                orders = json.loads(r.read())
+        except Exception as e:
+            return jsonify({"erro": str(e)}), 500
+        for o in orders:
+            cancelados_nv.add(str(o.get("number", "")))
+        if len(orders) < 200:
+            break
+        pg += 1
+
+    if not cancelados_nv:
+        return jsonify({"removidos": 0, "mensagem": "Nenhum pedido cancelado encontrado na NuvemShop"})
+
+    # Remove do banco os que estão ativos mas cancelados na NuvemShop
+    removidos = 0
+    with get_conn() as conn:
+        ativos = conn.execute("SELECT id, numero FROM pedidos WHERE ativo=1").fetchall()
+        for row in ativos:
+            if row["numero"] in cancelados_nv:
+                conn.execute(
+                    "UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar='Cancelado' WHERE id=?",
+                    (agora, row["id"]),
+                )
+                removidos += 1
+
+    return jsonify({"removidos": removidos, "mensagem": f"{removidos} pedido(s) cancelado(s) removido(s) da fila"})
 
 
 # ── Helpers — Estoque ────────────────────────────────────────────────────────
