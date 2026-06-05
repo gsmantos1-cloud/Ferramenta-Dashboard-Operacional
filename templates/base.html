@@ -329,8 +329,9 @@ function toggleNumeros(id) {
 
 async function carregarNotificacoes() {
     try {
-        const r = await fetch('/api/notificacoes');
-        const d = await r.json();
+        // Compartilha a resposta com outras partes da página (evita 2ª leitura)
+        window.__notifPromise = fetch('/api/notificacoes').then(r => r.json());
+        const d = await window.__notifPromise;
         notifCarregado = true;
 
         const badge = document.getElementById('notifBadge');

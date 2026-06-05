@@ -835,14 +835,26 @@ document.getElementById('formPedido').addEventListener('submit', async e => {
 });
 
 atualizar();
-setInterval(atualizar, 300000);  // 5 min — webhooks ja trazem pedidos em tempo real
+let _ultAtualiza = Date.now();
+function _atualizarSeVisivel() {
+    if (document.hidden) return;          // aba em segundo plano: não consome leituras
+    atualizar();
+    _ultAtualiza = Date.now();
+}
+setInterval(_atualizarSeVisivel, 300000); // 5 min — webhooks já trazem pedidos em tempo real
+// Ao voltar para a aba após um tempo, atualiza na hora
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && Date.now() - _ultAtualiza > 120000) _atualizarSeVisivel();
+});
 carregarAlertaUrgencia();
 carregarSyncStatus();
 
 async function carregarAlertaUrgencia() {
     try {
-        const r = await fetch('/api/notificacoes');
-        const d = await r.json();
+        // Reaproveita a chamada que o cabeçalho já fez (evita 2ª leitura ao banco)
+        const d = window.__notifPromise
+            ? await window.__notifPromise
+            : await fetch('/api/notificacoes').then(r => r.json());
         const el = document.getElementById('alertaUrgencia');
         if (!d.total || !d.grupos.length) { el.style.display = 'none'; return; }
 

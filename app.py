@@ -430,18 +430,42 @@ def determinar_status(dias: int, categoria: str) -> str:
     return "Atraso crítico"
 
 
-def atualizar_status_db():
-    hoje = date.today()
+def atualizar_status_db(force=False):
+    """Recalcula o status de atraso dos pedidos ativos.
+    O status só muda quando o dia vira, então roda no máximo 1x/dia — antes
+    lia TODOS os pedidos ativos a cada requisição (grande fonte de leituras).
+    Use force=True para recalcular na hora (botão 'Atualizar')."""
+    hoje     = date.today()
+    hoje_str = hoje.isoformat()
     with get_conn() as conn:
+        if not force:
+            row = conn.execute(
+                "SELECT valor FROM config WHERE chave = 'status_calc_data'"
+            ).fetchone()
+            if row and row["valor"] == hoje_str:
+                return  # já recalculado hoje — evita reler todos os ativos
         rows = conn.execute(
             "SELECT id, data_pedido, categoria, status FROM pedidos WHERE ativo = 1"
         ).fetchall()
+        updates = []
         for r in rows:
             dp   = date.fromisoformat(r["data_pedido"])
             dias = calcular_dias_uteis(dp, hoje)
             novo = determinar_status(dias, r["categoria"])
             if novo != r["status"]:
-                conn.execute("UPDATE pedidos SET status = ? WHERE id = ?", (novo, r["id"]))
+                updates.append(("UPDATE pedidos SET status = ? WHERE id = ?", (novo, r["id"])))
+        for i in range(0, len(updates), 100):
+            lote = updates[i:i + 100]
+            try:
+                conn.execute_batch(lote)
+            except Exception:
+                for sql, p in lote:
+                    try: conn.execute(sql, p)
+                    except Exception: pass
+        conn.execute(
+            "INSERT OR REPLACE INTO config (chave, valor) VALUES ('status_calc_data', ?)",
+            (hoje_str,),
+        )
 
 
 def periodo_para_data_inicio(periodo: str) -> date:
@@ -1255,7 +1279,7 @@ def get_stats():
 @app.route("/api/atualizar", methods=["POST"])
 @login_required
 def atualizar_manual():
-    atualizar_status_db()
+    atualizar_status_db(force=True)
     return jsonify({"mensagem": "Status atualizados"})
 
 
