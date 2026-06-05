@@ -4537,6 +4537,114 @@ def api_atacado_reabrir(pid):
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+# ── Migração / Backup (tudo pelo navegador, sem Turso CLI) ───────────────────
+
+_EXPORT_TABELAS = [
+    "config", "romaneios", "pedidos", "pedido_itens",
+    "personalizacoes", "personalizacao_historico",
+    "sku_costs", "sku_stock", "sku_stock_movements", "sku_pers_pricing",
+    "atacado_pedidos", "atacado_itens", "compras_manual",
+]
+
+
+@app.route("/api/admin/export", methods=["GET"])
+@login_required
+def admin_export():
+    """Baixa todos os dados como JSON. Se as leituras estiverem bloqueadas pela
+    quota, o campo 'erros' do arquivo mostra a mensagem do Turso (serve de teste)."""
+    dump  = {}
+    erros = {}
+    with get_conn() as conn:
+        for t in _EXPORT_TABELAS:
+            try:
+                rows = conn.execute(f"SELECT * FROM {t}").fetchall()
+                dump[t] = [dict(r) for r in rows]
+            except Exception as e:
+                erros[t] = str(e)
+    payload = {"erros": erros, "dados": dump}
+    buf = BytesIO(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+    buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name="backup_gsmantos.json",
+                     mimetype="application/json")
+
+
+@app.route("/api/admin/import", methods=["POST"])
+@login_required
+def admin_import():
+    """Restaura um backup JSON no banco atual (usar após trocar credenciais no Vercel)."""
+    f = request.files.get("arquivo")
+    if not f:
+        return jsonify({"erro": "Nenhum arquivo recebido"}), 400
+    try:
+        payload = json.loads(f.read().decode("utf-8", errors="replace"))
+    except Exception as e:
+        return jsonify({"erro": f"JSON inválido: {e}"}), 400
+
+    dados = payload.get("dados", payload)
+    total_ok = 0
+    resumo   = {}
+    with get_conn() as conn:
+        for tabela, rows in dados.items():
+            if not isinstance(rows, list) or not rows:
+                continue
+            stmts = []
+            for r in rows:
+                cols    = list(r.keys())
+                ph      = ",".join("?" * len(cols))
+                col_str = ",".join(cols)
+                stmts.append((
+                    f"INSERT OR REPLACE INTO {tabela} ({col_str}) VALUES ({ph})",
+                    [r[c] for c in cols],
+                ))
+            ins = 0
+            for i in range(0, len(stmts), 100):
+                lote = stmts[i:i + 100]
+                try:
+                    conn.execute_batch(lote)
+                    ins += len(lote)
+                except Exception:
+                    for sql, params in lote:
+                        try:
+                            conn.execute(sql, params); ins += 1
+                        except Exception:
+                            pass
+            resumo[tabela] = ins
+            total_ok += ins
+    return jsonify({"importados": total_ok, "por_tabela": resumo})
+
+
+@app.route("/admin/migrar", methods=["GET"])
+@login_required
+def admin_migrar_page():
+    return """<!doctype html><html><head><meta charset="utf-8">
+<title>Migração — GS Mantos</title>
+<style>body{font-family:system-ui,sans-serif;background:#0d1117;color:#e6edf3;max-width:640px;margin:40px auto;padding:0 20px}
+.box{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px;margin:16px 0}
+h3{margin-top:0}button{background:#238636;color:#fff;border:0;border-radius:6px;padding:10px 18px;cursor:pointer;font-size:1rem}
+.res{white-space:pre-wrap;font-family:monospace;font-size:.82rem;color:#8b949e;margin-top:12px}
+a{color:inherit;text-decoration:none}</style></head><body>
+<h2>🔄 Migração / Backup</h2>
+<div class="box"><h3>1. Baixar backup</h3>
+<p>Baixa todos os dados atuais como arquivo .json.</p>
+<a href="/api/admin/export"><button>⬇ Baixar backup.json</button></a></div>
+<div class="box"><h3>2. Restaurar backup</h3>
+<p>Envie o .json (faça isso <b>depois</b> de trocar as credenciais do Turso no Vercel).</p>
+<input type="file" id="arq" accept=".json"><br><br>
+<button onclick="enviar()">⬆ Restaurar dados</button>
+<div class="res" id="res"></div></div>
+<script>
+async function enviar(){
+  const f=document.getElementById('arq').files[0];
+  if(!f){alert('Escolha o arquivo .json');return;}
+  document.getElementById('res').textContent='Enviando...';
+  const fd=new FormData();fd.append('arquivo',f);
+  try{const r=await fetch('/api/admin/import',{method:'POST',body:fd});
+    document.getElementById('res').textContent=JSON.stringify(await r.json(),null,2);
+  }catch(e){document.getElementById('res').textContent='Erro: '+e;}
+}
+</script></body></html>"""
+
+
 # Inicializa o banco na primeira importação (cold start do Vercel)
 try:
     init_db()
