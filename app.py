@@ -975,6 +975,11 @@ def _processar_estoque_pedidos():
     Seguro para rodar múltiplas vezes: cada pedido é marcado após processar."""
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_conn() as conn:
+        # Sem estoque cadastrado (ex: banco novo) → nada a descontar, só marca
+        # como processado. Evita varrer item por item à toa.
+        if not conn.execute("SELECT 1 FROM sku_stock LIMIT 1").fetchone():
+            conn.execute("UPDATE pedidos SET estoque_processado = 1 WHERE estoque_processado = 0")
+            return
         itens = conn.execute("""
             SELECT pi.pedido_numero, pi.nv_variant_id, pi.quantidade
             FROM pedido_itens pi
@@ -2301,6 +2306,8 @@ def sincronizar_nuvemshop():
     with get_conn() as conn:
         row = conn.execute("SELECT valor FROM config WHERE chave='ultima_sincronizacao'").fetchone()
         ultima_sync = row["valor"] if row else None
+        est_row = conn.execute("SELECT valor FROM config WHERE chave='sync_estado'").fetchone()
+        sync_estado_val = est_row["valor"] if est_row else None
         existentes = {r["numero"] for r in
                       conn.execute("SELECT numero FROM pedidos").fetchall()}
         com_itens  = {r["pedido_numero"] for r in
@@ -2400,109 +2407,131 @@ def sincronizar_nuvemshop():
             pending.extend(_build_item_stmts(numero, produtos))
             com_itens.add(numero)
 
-    # ── Fase 1: payment_status=paid (incremental via updated_at_min) ────────────
-    # while page <= 100: trava de segurança (máx 20 mil pedidos/fase) — impede
-    # que um eventual bug entre em loop infinito de leituras.
-    page = 1
-    while page <= 100:
-        params = f"payment_status=paid&per_page=200&page={page}"
-        if iso_q:
-            params += f"&updated_at_min={iso_q}"
-        url = f"https://api.nuvemshop.com.br/v1/{store_id}/orders?{params}"
-        req = ureq.Request(url, headers=headers)
-        try:
-            with ureq.urlopen(req, timeout=20) as resp:
-                orders = json.loads(resp.read())
-        except Exception as e:
-            return {"erro": str(e)}
-        if not orders:
-            break
-        for o in orders:
-            _coletar(o)
-        page += 1
-        if len(orders) < 200:
-            break
-    _marco("fase1_paid")
+    # ── Sincronização retomável (resiliente ao tempo-limite serverless) ─────────
+    # Processa o que couber em ~6s, salva a fase/página em config e devolve
+    # done=False; o navegador chama de novo até concluir. Funciona em qualquer
+    # tamanho de loja sem estourar o tempo da função. while page<=100 = trava
+    # de segurança (máx 20 mil pedidos/fase) contra loop infinito.
+    _t_inicio = time.time()
+    TIME_BUDGET = 6.0
+    def _tempo_ok():
+        return (time.time() - _t_inicio) < TIME_BUDGET
 
-    # ── Fase 2: payment_status=authorized (incremental via updated_at_min) ──────
-    page = 1
-    while page <= 100:
-        params = f"payment_status=authorized&per_page=200&page={page}"
-        if iso_q:
-            params += f"&updated_at_min={iso_q}"
-        url = f"https://api.nuvemshop.com.br/v1/{store_id}/orders?{params}"
-        req = ureq.Request(url, headers=headers)
+    fase, fase_page = "paid", 1
+    if sync_estado_val:
         try:
-            with ureq.urlopen(req, timeout=20) as resp:
-                orders_auth = json.loads(resp.read())
+            _p = sync_estado_val.split(":")
+            fase = _p[0]
+            fase_page = int(_p[1]) if len(_p) > 1 else 1
         except Exception:
-            break  # falha silenciosa — não bloqueia o sync principal
-        if not orders_auth:
-            break
-        for o in orders_auth:
-            _coletar(o)
-        page += 1
-        if len(orders_auth) < 200:
-            break
-    _marco("fase2_authorized")
+            fase, fase_page = "paid", 1
 
-    # Grava tudo que foi coletado nas fases 1 e 2 (poucos lotes)
-    _flush()
-    _marco("gravacao_banco")
-
-    # ── Fase 3: cancelados na NuvemShop → marca como cancelado no banco ──────────
-    reconciliados = 0
-    try:
-        agora_rec = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    def _salvar_estado(valor):
         with get_conn() as conn:
-            ativos_db = conn.execute(
-                "SELECT id, numero FROM pedidos WHERE ativo=1"
-            ).fetchall()
-        ativos_map = {row["numero"]: row["id"] for row in ativos_db}
+            conn.execute("INSERT OR REPLACE INTO config (chave, valor) VALUES ('sync_estado', ?)", (valor,))
 
-        if ativos_map:
-            cancelados_nv = set()
-            pg = 1
-            while pg <= 100:
-                p_can = f"status=cancelled&per_page=200&page={pg}"
-                if iso_q:
-                    p_can += f"&updated_at_min={iso_q}"
-                url_can = f"https://api.nuvemshop.com.br/v1/{store_id}/orders?{p_can}"
-                req_can = ureq.Request(url_can, headers=headers)
-                try:
-                    with ureq.urlopen(req_can, timeout=20) as r:
-                        orders_can = json.loads(r.read())
-                except Exception:
-                    break
-                for o in orders_can:
-                    cancelados_nv.add(str(o.get("number", "")))
-                if len(orders_can) < 200:
-                    break
-                pg += 1
+    def _limpar_estado():
+        with get_conn() as conn:
+            conn.execute("DELETE FROM config WHERE chave = 'sync_estado'")
 
-            updates = [
-                ("UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar='Cancelado' WHERE id=?",
-                 (agora_rec, pid))
-                for numero, pid in ativos_map.items() if numero in cancelados_nv
-            ]
-            if updates:
-                with get_conn() as conn:
-                    for i in range(0, len(updates), 100):
-                        try:
-                            conn.execute_batch(updates[i:i + 100])
-                        except Exception:
-                            pass
-                reconciliados = len(updates)
-    except Exception:
-        pass
-    _marco("fase3_cancelados")
+    def _fetch_pagina(status_param, page):
+        params = f"{status_param}&per_page=200&page={page}"
+        if iso_q:
+            params += f"&updated_at_min={iso_q}"
+        url = f"https://api.nuvemshop.com.br/v1/{store_id}/orders?{params}"
+        req = ureq.Request(url, headers=headers)
+        with ureq.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read())
 
-    # ── Desconto automático de estoque para pedidos novos ───────────────────
+    # ── Fase paid ──
+    if fase == "paid":
+        page = fase_page
+        while page <= 100:
+            try:
+                orders = _fetch_pagina("payment_status=paid", page)
+            except Exception as e:
+                return {"erro": str(e), "done": False,
+                        "salvos": salvos, "ja_enviados": ja_enviados}
+            if not orders:
+                break
+            for o in orders:
+                _coletar(o)
+            _flush()
+            if len(orders) < 200:
+                break
+            page += 1
+            if not _tempo_ok():
+                _salvar_estado(f"paid:{page}")
+                return {"done": False, "fase": "pedidos pagos",
+                        "salvos": salvos, "ja_enviados": ja_enviados, "duplicados": duplicados}
+        fase, fase_page = "auth", 1
+        _salvar_estado("auth:1")
+
+    # ── Fase authorized ──
+    if fase == "auth":
+        page = fase_page
+        while page <= 100:
+            try:
+                orders_auth = _fetch_pagina("payment_status=authorized", page)
+            except Exception:
+                break  # falha silenciosa — não bloqueia o sync principal
+            if not orders_auth:
+                break
+            for o in orders_auth:
+                _coletar(o)
+            _flush()
+            if len(orders_auth) < 200:
+                break
+            page += 1
+            if not _tempo_ok():
+                _salvar_estado(f"auth:{page}")
+                return {"done": False, "fase": "pedidos em análise",
+                        "salvos": salvos, "ja_enviados": ja_enviados, "duplicados": duplicados}
+        fase = "final"
+        _salvar_estado("final")
+
+    # ── Fase final: reconciliação (só incremental) + estoque + conclusão ────────
+    _flush()
+    reconciliados = 0
+    if iso_q:   # no 1º sync completo, cancelados nunca entram como ativos → desnecessário
+        try:
+            agora_rec = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with get_conn() as conn:
+                ativos_db = conn.execute("SELECT id, numero FROM pedidos WHERE ativo=1").fetchall()
+            ativos_map = {row["numero"]: row["id"] for row in ativos_db}
+            if ativos_map:
+                cancelados_nv = set()
+                pg = 1
+                while pg <= 100:
+                    try:
+                        orders_can = _fetch_pagina("status=cancelled", pg)
+                    except Exception:
+                        break
+                    for o in orders_can:
+                        cancelados_nv.add(str(o.get("number", "")))
+                    if len(orders_can) < 200:
+                        break
+                    pg += 1
+                updates = [
+                    ("UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar='Cancelado' WHERE id=?",
+                     (agora_rec, pid))
+                    for numero, pid in ativos_map.items() if numero in cancelados_nv
+                ]
+                if updates:
+                    with get_conn() as conn:
+                        for i in range(0, len(updates), 100):
+                            try:
+                                conn.execute_batch(updates[i:i + 100])
+                            except Exception:
+                                pass
+                    reconciliados = len(updates)
+        except Exception:
+            pass
+
     try:
         _processar_estoque_pedidos()
     except Exception:
         pass
-    _marco("estoque")
 
     agora = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
     with get_conn() as conn:
@@ -2510,10 +2539,10 @@ def sincronizar_nuvemshop():
             "INSERT OR REPLACE INTO config (chave, valor) VALUES ('ultima_sincronizacao', ?)",
             (agora,),
         )
-
-    return {"salvos": salvos, "duplicados": duplicados, "ja_enviados": ja_enviados,
-            "reconciliados": reconciliados, "total": salvos + ja_enviados,
-            "tempos": tempos}
+    _limpar_estado()
+    return {"done": True, "salvos": salvos, "duplicados": duplicados,
+            "ja_enviados": ja_enviados, "reconciliados": reconciliados,
+            "total": salvos + ja_enviados}
 
 
 @app.route("/api/sincronizar", methods=["POST"])

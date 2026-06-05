@@ -714,30 +714,45 @@ async function sincronizarAgora(btn) {
     const el = document.getElementById('syncStatus');
     el.textContent = 'Sincronizando...';
     el.style.color = '';
-    const _ini = Date.now();
+    let totalSalvos = 0, totalEnv = 0, totalRec = 0, voltas = 0, done = false;
     try {
-        const r = await fetch('/api/sincronizar', { method: 'POST' });
-        const d = await r.json();
-        if (d.erro) {
-            el.textContent = '⚠ Erro: ' + d.erro;
-            el.style.color = '#f85149';
-        } else {
-            if (d.tempos) console.log('Tempos por fase (seg):', d.tempos);
-            const seg = ((Date.now() - _ini) / 1000).toFixed(1);
-            const partes = [];
-            if (d.salvos)        partes.push(d.salvos + ' novo(s)');
-            if (d.ja_enviados)   partes.push(d.ja_enviados + ' já enviado(s)');
-            if (d.reconciliados) partes.push(d.reconciliados + ' reconciliado(s)');
+        while (!done) {
+            voltas++;
+            el.textContent = 'Sincronizando... ' + (totalSalvos + totalEnv) + ' pedido(s) até agora';
+            let d;
+            try {
+                const r = await fetch('/api/sincronizar', { method: 'POST' });
+                d = await r.json();
+            } catch (e) {
+                // Pausou numa volta — o progresso já foi salvo no servidor
+                el.textContent = '⏳ Pausou (já trouxe ' + (totalSalvos + totalEnv) + '). Clique em Sincronizar para continuar.';
+                el.style.color = '#f0883e';
+                break;
+            }
+            totalSalvos += (d.salvos || 0);
+            totalEnv    += (d.ja_enviados || 0);
+            totalRec    += (d.reconciliados || 0);
+            if (d.erro) {
+                el.textContent = '⚠ ' + d.erro + ' — já trouxe ' + (totalSalvos + totalEnv) + '. Clique para continuar.';
+                el.style.color = '#f0883e';
+                break;
+            }
+            done = (d.done !== false);   // true/undefined = concluído
+            if (voltas >= 300) break;    // trava de segurança
+        }
+        if (done) {
             const hora = new Date().toLocaleTimeString('pt-BR');
-            el.textContent = '✓ Sincronizado às ' + hora + ' (' + seg + 's)' + (partes.length ? ' — ' + partes.join(', ') : ' — sem novidades');
+            const partes = [];
+            if (totalSalvos) partes.push(totalSalvos + ' novo(s)');
+            if (totalEnv)    partes.push(totalEnv + ' enviado(s)');
+            if (totalRec)    partes.push(totalRec + ' cancelado(s)');
+            el.textContent = '✓ Sincronizado às ' + hora + (partes.length ? ' — ' + partes.join(', ') : ' — sem novidades');
             atualizar();
         }
-    } catch(e) {
-        el.textContent = '⚠ Erro de conexão';
-        el.style.color = '#f85149';
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-cloud-download me-1"></i>Sincronizar NuvemShop';
     }
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-cloud-download me-1"></i>Sincronizar NuvemShop';
 }
 
 async function carregarSyncStatus() {
