@@ -359,6 +359,26 @@ def init_db():
         except Exception:
             pass
 
+        # ── Índices: SEM eles, cada "WHERE coluna = ?" lê a TABELA INTEIRA ─────────
+        # (full table scan). Isso multiplicava as leituras por milhares e estourou
+        # a quota do Turso. Com índice, cada busca lê só as linhas necessárias.
+        indices = [
+            "CREATE INDEX IF NOT EXISTS idx_pedidos_numero        ON pedidos(numero)",
+            "CREATE INDEX IF NOT EXISTS idx_pedidos_ativo         ON pedidos(ativo)",
+            "CREATE INDEX IF NOT EXISTS idx_pedidos_enviado_em    ON pedidos(enviado_em)",
+            "CREATE INDEX IF NOT EXISTS idx_pedidos_estoque_proc  ON pedidos(estoque_processado)",
+            "CREATE INDEX IF NOT EXISTS idx_itens_pedido_numero   ON pedido_itens(pedido_numero)",
+            "CREATE INDEX IF NOT EXISTS idx_itens_variant         ON pedido_itens(nv_variant_id)",
+            "CREATE INDEX IF NOT EXISTS idx_pers_numero_pedido    ON personalizacoes(numero_pedido)",
+            "CREATE INDEX IF NOT EXISTS idx_stock_variant         ON sku_stock(nv_variant_id)",
+            "CREATE INDEX IF NOT EXISTS idx_stock_produto_nome    ON sku_stock(produto_nome)",
+            "CREATE INDEX IF NOT EXISTS idx_costs_variant         ON sku_costs(nv_variant_id)",
+            "CREATE INDEX IF NOT EXISTS idx_movs_variant          ON sku_stock_movements(nv_variant_id)",
+        ]
+        for idx in indices:
+            try: conn.execute(idx)
+            except Exception: pass
+
 
 def get_conn():
     return sqlite3.connect()
