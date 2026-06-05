@@ -1,5 +1,6 @@
--- Dump de dados GS Mantos para Turso
--- INSERT OR IGNORE (seguro re-executar)
+-- Seed de dados manuais GS Mantos -> Turso
+-- Gerado a partir do pedidos.db local.
+-- INSERT OR IGNORE = seguro re-executar; nao duplica registros.
 PRAGMA foreign_keys=OFF;
 
 -- sku_stock (99 registros)
@@ -4632,3 +4633,47 @@ INSERT OR IGNORE INTO config (chave,valor) VALUES ('pers_custo_numero','20.0');
 INSERT OR IGNORE INTO config (chave,valor) VALUES ('pers_custo_escudo','0.0');
 INSERT OR IGNORE INTO config (chave,valor) VALUES ('pers_ativo','1');
 INSERT OR IGNORE INTO config (chave,valor) VALUES ('ultima_sincronizacao','2026-06-05T14:51:09');
+
+-- Pedidos marcados como SUSPEITOS (flag manual) — 9 pedidos
+UPDATE pedidos SET suspeito=1 WHERE numero='4398';
+UPDATE pedidos SET suspeito=1 WHERE numero='6356';
+UPDATE pedidos SET suspeito=1 WHERE numero='6442';
+UPDATE pedidos SET suspeito=1 WHERE numero='6443';
+UPDATE pedidos SET suspeito=1 WHERE numero='6727';
+UPDATE pedidos SET suspeito=1 WHERE numero='6748';
+UPDATE pedidos SET suspeito=1 WHERE numero='6762';
+UPDATE pedidos SET suspeito=1 WHERE numero='6770';
+UPDATE pedidos SET suspeito=1 WHERE numero='6771';
+
+-- Atribuicao de ROMANEIO (manual) — 31 pedidos
+UPDATE pedidos SET romaneio_id=5 WHERE numero='1142';
+UPDATE pedidos SET romaneio_id=5 WHERE numero='4392';
+UPDATE pedidos SET romaneio_id=5 WHERE numero='5873';
+UPDATE pedidos SET romaneio_id=2 WHERE numero='6239';
+UPDATE pedidos SET romaneio_id=2 WHERE numero='6295';
+UPDATE pedidos SET romaneio_id=3 WHERE numero='6321';
+UPDATE pedidos SET romaneio_id=5 WHERE numero='6330';
+UPDATE pedidos SET romaneio_id=5 WHERE numero='6356';
+UPDATE pedidos SET romaneio_id=5 WHERE numero='6443';
+UPDATE pedidos SET romaneio_id=2 WHERE numero='6452';
+UPDATE pedidos SET romaneio_id=2 WHERE numero='6489';
+UPDATE pedidos SET romaneio_id=2 WHERE numero='6490';
+UPDATE pedidos SET romaneio_id=2 WHERE numero='6491';
+UPDATE pedidos SET romaneio_id=2 WHERE numero='6492';
+UPDATE pedidos SET romaneio_id=2 WHERE numero='6494';
+UPDATE pedidos SET romaneio_id=2 WHERE numero='6495';
+UPDATE pedidos SET romaneio_id=2 WHERE numero='6496';
+UPDATE pedidos SET romaneio_id=5 WHERE numero='6533';
+UPDATE pedidos SET romaneio_id=5 WHERE numero='6534';
+UPDATE pedidos SET romaneio_id=5 WHERE numero='6535';
+UPDATE pedidos SET romaneio_id=4 WHERE numero='6537';
+UPDATE pedidos SET romaneio_id=4 WHERE numero='6539';
+UPDATE pedidos SET romaneio_id=4 WHERE numero='6541';
+UPDATE pedidos SET romaneio_id=5 WHERE numero='6542';
+UPDATE pedidos SET romaneio_id=5 WHERE numero='6543';
+UPDATE pedidos SET romaneio_id=5 WHERE numero='6544';
+UPDATE pedidos SET romaneio_id=5 WHERE numero='6545';
+UPDATE pedidos SET romaneio_id=5 WHERE numero='6546';
+UPDATE pedidos SET romaneio_id=5 WHERE numero='6547';
+UPDATE pedidos SET romaneio_id=5 WHERE numero='6548';
+UPDATE pedidos SET romaneio_id=5 WHERE numero='6549';
