@@ -359,6 +359,44 @@ def init_db():
         except Exception:
             pass
 
+        # personalizacoes: tipo (varejo/atacado) + histórico de mudanças
+        try: conn.execute("ALTER TABLE personalizacoes ADD COLUMN tipo TEXT DEFAULT 'varejo'")
+        except Exception: pass
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS personalizacao_historico (
+                    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                    personalizacao_id INTEGER NOT NULL,
+                    numero_pedido     TEXT,
+                    acao              TEXT NOT NULL,
+                    detalhe           TEXT,
+                    usuario           TEXT,
+                    created_at        TEXT DEFAULT (datetime('now','localtime'))
+                )
+            """)
+        except Exception: pass
+
+        # ── Índices: SEM eles, cada "WHERE coluna = ?" lê a TABELA INTEIRA ─────────
+        # (full table scan). Isso multiplicava as leituras por milhares e estourou
+        # a quota do Turso. Com índice, cada busca lê só as linhas necessárias.
+        indices = [
+            "CREATE INDEX IF NOT EXISTS idx_pedidos_numero        ON pedidos(numero)",
+            "CREATE INDEX IF NOT EXISTS idx_pedidos_ativo         ON pedidos(ativo)",
+            "CREATE INDEX IF NOT EXISTS idx_pedidos_enviado_em    ON pedidos(enviado_em)",
+            "CREATE INDEX IF NOT EXISTS idx_pedidos_estoque_proc  ON pedidos(estoque_processado)",
+            "CREATE INDEX IF NOT EXISTS idx_itens_pedido_numero   ON pedido_itens(pedido_numero)",
+            "CREATE INDEX IF NOT EXISTS idx_itens_variant         ON pedido_itens(nv_variant_id)",
+            "CREATE INDEX IF NOT EXISTS idx_pers_numero_pedido    ON personalizacoes(numero_pedido)",
+            "CREATE INDEX IF NOT EXISTS idx_pers_hist             ON personalizacao_historico(personalizacao_id)",
+            "CREATE INDEX IF NOT EXISTS idx_stock_variant         ON sku_stock(nv_variant_id)",
+            "CREATE INDEX IF NOT EXISTS idx_stock_produto_nome    ON sku_stock(produto_nome)",
+            "CREATE INDEX IF NOT EXISTS idx_costs_variant         ON sku_costs(nv_variant_id)",
+            "CREATE INDEX IF NOT EXISTS idx_movs_variant          ON sku_stock_movements(nv_variant_id)",
+        ]
+        for idx in indices:
+            try: conn.execute(idx)
+            except Exception: pass
+
 
 def get_conn():
     return sqlite3.connect()
@@ -854,14 +892,9 @@ def personalizacoes_page():
 
 # ── Personalizações sync helper ───────────────────────────────────────────────
 
-def _salvar_itens_pedido(conn, numero, produtos):
-    """Salva os itens de um pedido da NuvemShop em pedido_itens (idempotente).
-    Retorna True se os itens foram inseridos agora, False se já existiam."""
-    existem = conn.execute(
-        "SELECT COUNT(*) FROM pedido_itens WHERE pedido_numero = ?", (numero,)
-    ).fetchone()[0]
-    if existem:
-        return False
+def _build_item_stmts(numero, produtos):
+    """Monta os statements de INSERT dos itens de um pedido (para execução em batch)."""
+    stmts = []
     for p in produtos:
         nome          = p.get("name", "")
         qtd           = p.get("quantity", 1)
@@ -875,12 +908,26 @@ def _salvar_itens_pedido(conn, numero, produtos):
             imgs = p.get("images") or []
             if imgs:
                 imagem_url = (imgs[0] or {}).get("src") or (imgs[0] or {}).get("url") or None
-        conn.execute(
+        stmts.append((
             """INSERT INTO pedido_itens
                (pedido_numero, produto_nome, variante, quantidade, preco_unit, imagem_url, nv_variant_id)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (numero, nome, variante, qtd, preco, imagem_url, nv_variant_id),
-        )
+        ))
+    return stmts
+
+
+def _salvar_itens_pedido(conn, numero, produtos):
+    """Salva os itens de um pedido da NuvemShop em pedido_itens (idempotente).
+    Retorna True se os itens foram inseridos agora, False se já existiam."""
+    existem = conn.execute(
+        "SELECT COUNT(*) FROM pedido_itens WHERE pedido_numero = ?", (numero,)
+    ).fetchone()[0]
+    if existem:
+        return False
+    stmts = _build_item_stmts(numero, produtos)
+    if stmts:
+        conn.execute_batch(stmts)   # todos os itens numa requisição só
     return True
 
 
@@ -931,6 +978,19 @@ def _processar_estoque_pedidos():
         )
 
 
+def _log_pers(conn, pers_id, numero_pedido, acao, detalhe=None):
+    """Registra uma entrada no histórico de uma personalização (auditoria)."""
+    try:
+        conn.execute(
+            """INSERT INTO personalizacao_historico
+               (personalizacao_id, numero_pedido, acao, detalhe, usuario)
+               VALUES (?, ?, ?, ?, ?)""",
+            (pers_id, str(numero_pedido), acao, detalhe, session.get("usuario", "")),
+        )
+    except Exception:
+        pass
+
+
 def _sync_personalizacoes(conn):
     """Garante que todo pedido ativo com categoria='Personalizado' tenha entrada em personalizacoes."""
     pers_rows = conn.execute(
@@ -945,12 +1005,14 @@ def _sync_personalizacoes(conn):
 
     for p in novos:
         if p["numero"] not in ja_tem:
-            conn.execute(
+            cur = conn.execute(
                 """INSERT INTO personalizacoes
-                   (numero_pedido, nome_personalizacao, status)
-                   VALUES (?, ?, 'A SEPARAR')""",
+                   (numero_pedido, nome_personalizacao, status, tipo)
+                   VALUES (?, ?, 'A SEPARAR', 'varejo')""",
                 (p["numero"], p["cliente"] or None),
             )
+            _log_pers(conn, cur.lastrowid, p["numero"], "criada",
+                      "Criada automaticamente (venda do varejo)")
 
 
 # ── Routes — API ──────────────────────────────────────────────────────────────
@@ -1662,7 +1724,7 @@ def get_personalizacoes():
         _sync_personalizacoes(conn)
         rows = conn.execute(
             """SELECT id, numero_pedido, nome_personalizacao, numero_personalizacao,
-                      status, observacao, criado_em, atualizado_em
+                      status, observacao, criado_em, atualizado_em, tipo
                FROM personalizacoes ORDER BY
                CASE status
                    WHEN 'A SEPARAR'         THEN 1
@@ -1686,13 +1748,18 @@ def criar_personalizacao():
     nome     = str(data.get("nome_personalizacao", "")).strip()
     num_pers = str(data.get("numero_personalizacao", "")).strip()
     obs      = str(data.get("observacao", "")).strip()
+    tipo     = str(data.get("tipo", "varejo")).strip().lower()
+    if tipo not in ("varejo", "atacado"):
+        tipo = "varejo"
     with get_conn() as conn:
         cur = conn.execute(
             """INSERT INTO personalizacoes
-               (numero_pedido, nome_personalizacao, numero_personalizacao, observacao)
-               VALUES (?, ?, ?, ?)""",
-            (numero, nome or None, num_pers or None, obs or None),
+               (numero_pedido, nome_personalizacao, numero_personalizacao, observacao, tipo)
+               VALUES (?, ?, ?, ?, ?)""",
+            (numero, nome or None, num_pers or None, obs or None, tipo),
         )
+        _log_pers(conn, cur.lastrowid, numero, "criada",
+                  f"Criada manualmente ({tipo})")
     return jsonify({"mensagem": "Personalização criada", "id": cur.lastrowid}), 201
 
 
@@ -1705,14 +1772,25 @@ def atualizar_pers_status(pid):
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT id FROM personalizacoes WHERE id = ?", (pid,)
+            "SELECT id, numero_pedido, status FROM personalizacoes WHERE id = ?", (pid,)
         ).fetchone()
         if not row:
             return jsonify({"erro": "Personalização não encontrada"}), 404
+        anterior = row["status"]
         conn.execute(
             "UPDATE personalizacoes SET status = ?, atualizado_em = ? WHERE id = ?",
             (novo, agora, pid),
         )
+        if anterior != novo:
+            # Detecta se foi avanço ou retrocesso no fluxo
+            try:
+                voltou = PERS_STATUS.index(novo) < PERS_STATUS.index(anterior)
+            except ValueError:
+                voltou = False
+            seta = "←" if voltou else "→"
+            _log_pers(conn, pid, row["numero_pedido"],
+                      "retrocesso" if voltou else "status",
+                      f"{anterior} {seta} {novo}")
     return jsonify({"status": novo})
 
 
@@ -1720,8 +1798,27 @@ def atualizar_pers_status(pid):
 @login_required
 def deletar_personalizacao(pid):
     with get_conn() as conn:
+        row = conn.execute(
+            "SELECT numero_pedido FROM personalizacoes WHERE id = ?", (pid,)
+        ).fetchone()
         conn.execute("DELETE FROM personalizacoes WHERE id = ?", (pid,))
+        if row:
+            _log_pers(conn, pid, row["numero_pedido"], "excluida", "Personalização excluída")
     return jsonify({"mensagem": "Personalização excluída"})
+
+
+@app.route("/api/personalizacoes/<int:pid>/historico", methods=["GET"])
+@login_required
+def historico_personalizacao(pid):
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT acao, detalhe, usuario, created_at
+               FROM personalizacao_historico
+               WHERE personalizacao_id = ?
+               ORDER BY id DESC""",
+            (pid,),
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
 
 
 @app.route("/api/personalizacoes/<int:pid>", methods=["PATCH"])
@@ -1730,25 +1827,42 @@ def editar_personalizacao(pid):
     data = request.json or {}
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT id FROM personalizacoes WHERE id = ?", (pid,)
+            "SELECT * FROM personalizacoes WHERE id = ?", (pid,)
         ).fetchone()
         if not row:
             return jsonify({"erro": "Personalização não encontrada"}), 404
         agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        novo_nome = data.get("nome_personalizacao") or None
+        novo_num  = data.get("numero_personalizacao") or None
+        novo_obs  = data.get("observacao") or None
+        novo_tipo = str(data.get("tipo", row["tipo"] or "varejo")).strip().lower()
+        if novo_tipo not in ("varejo", "atacado"):
+            novo_tipo = row["tipo"] or "varejo"
+
         conn.execute(
             """UPDATE personalizacoes
                SET nome_personalizacao   = ?,
                    numero_personalizacao = ?,
                    observacao            = ?,
+                   tipo                  = ?,
                    atualizado_em         = ?
                WHERE id = ?""",
-            (
-                data.get("nome_personalizacao") or None,
-                data.get("numero_personalizacao") or None,
-                data.get("observacao") or None,
-                agora, pid,
-            ),
+            (novo_nome, novo_num, novo_obs, novo_tipo, agora, pid),
         )
+
+        # Registra no histórico apenas o que de fato mudou
+        mudancas = []
+        if (row["nome_personalizacao"] or None) != novo_nome:
+            mudancas.append(f"nome: '{row['nome_personalizacao'] or '—'}' → '{novo_nome or '—'}'")
+        if (row["numero_personalizacao"] or None) != novo_num:
+            mudancas.append(f"nº: '{row['numero_personalizacao'] or '—'}' → '{novo_num or '—'}'")
+        if (row["observacao"] or None) != novo_obs:
+            mudancas.append("observação alterada")
+        if (row["tipo"] or "varejo") != novo_tipo:
+            mudancas.append(f"tipo: {row['tipo'] or 'varejo'} → {novo_tipo}")
+        if mudancas:
+            _log_pers(conn, pid, row["numero_pedido"], "editada", "; ".join(mudancas))
     return jsonify({"mensagem": "Atualizado"})
 
 
@@ -2017,17 +2131,23 @@ def _nuvemshop_headers():
         "Content-Type": "application/json",
     }
 
-def _processar_order(conn, o):
-    """Processa um pedido da NuvemShop e insere no banco se novo. Retorna 'salvo'|'ja_enviado'|'duplicado'|'skip'."""
-    hoje     = date.today()
-    numero   = str(o.get("number", "")).strip()
-    data_str = o.get("created_at", "")[:10]
-    cliente  = o.get("contact_name", "") or ""
-    total    = str(o.get("total", ""))
+def _parse_order_fields(o, hoje=None):
+    """Extrai e normaliza os campos de um pedido vindo da API NuvemShop.
+    Retorna um dict pronto para inserção, ou None se o pedido for inválido/cancelado."""
+    if hoje is None:
+        hoje = date.today()
 
     # Ignora pedidos cancelados
     if o.get("status") == "cancelled" or o.get("payment_status") in ("voided", "refunded"):
-        return "skip"
+        return None
+
+    numero   = str(o.get("number", "")).strip()
+    data_str = o.get("created_at", "")[:10]
+    if not numero or not data_str:
+        return None
+
+    cliente = o.get("contact_name", "") or ""
+    total   = str(o.get("total", ""))
 
     shipping_status = o.get("shipping_status", "")
     if shipping_status == "shipped":
@@ -2049,8 +2169,7 @@ def _processar_order(conn, o):
     transportadora = transportadora.replace("Nuvem Envio - ", "")
 
     gateway = o.get("gateway_name", "") or ""
-    payment_details = o.get("payment_details") or {}
-    method = payment_details.get("method", "") or ""
+    method  = (o.get("payment_details") or {}).get("method", "") or ""
     if gateway and method:
         forma_pagamento = f"{gateway} - {method}"
     elif gateway:
@@ -2058,41 +2177,58 @@ def _processar_order(conn, o):
     else:
         forma_pagamento = method or ""
 
-    produtos = o.get("products") or []
+    try:
+        dp = date.fromisoformat(data_str)
+    except ValueError:
+        return None
+    if dp > hoje:
+        dp = hoje
 
-    if not numero or not data_str:
+    dias   = calcular_dias_uteis(dp, hoje)
+    status = determinar_status(dias, "Normal")
+
+    return {
+        "numero":          numero,
+        "data_str":        data_str,
+        "cliente":         cliente,
+        "total":           total,
+        "envio":           envio,
+        "transportadora":  transportadora,
+        "forma_pagamento": forma_pagamento,
+        "status":          status,
+        "is_env":          envio in ("Enviada", "Entregue"),
+        "produtos":        o.get("products") or [],
+    }
+
+
+def _processar_order(conn, o):
+    """Processa UM pedido da NuvemShop e insere no banco se novo (caminho usado pelo webhook).
+    Retorna 'salvo'|'ja_enviado'|'duplicado'|'skip'."""
+    c = _parse_order_fields(o)
+    if not c:
         return "skip"
 
+    numero, produtos = c["numero"], c["produtos"]
+
     existente = conn.execute(
-        "SELECT id, ativo FROM pedidos WHERE numero = ?", (numero,)
+        "SELECT id FROM pedidos WHERE numero = ?", (numero,)
     ).fetchone()
     if existente:
         if produtos:
             _salvar_itens_pedido(conn, numero, produtos)
         return "duplicado"
 
+    hoje = date.today()
     try:
-        dp = date.fromisoformat(data_str)
-    except ValueError:
-        return "skip"
-
-    if dp > hoje:
-        dp = hoje
-
-    dias   = calcular_dias_uteis(dp, hoje)
-    status = determinar_status(dias, "Normal")
-    is_env = envio in ("Enviada", "Entregue")
-
-    try:
-        if is_env:
+        if c["is_env"]:
             conn.execute(
                 """INSERT INTO pedidos
                    (numero,data_pedido,categoria,status,cliente,total,pagamento,forma_pagamento,
                     transportadora,ativo,enviado_em,status_ao_enviar)
                    VALUES (?,?,?,?,?,?,?,?,?,0,?,?)""",
-                (numero, data_str, "Normal", status, cliente, total,
-                 "Recebido", forma_pagamento, transportadora,
-                 hoje.isoformat(), status),
+                (numero, c["data_str"], "Normal", c["status"], c["cliente"], c["total"],
+                 "Recebido", c["forma_pagamento"], c["transportadora"],
+                 hoje.isoformat(), c["status"]),
             )
             if produtos:
                 _salvar_itens_pedido(conn, numero, produtos)
@@ -2102,12 +2238,11 @@ def _processar_order(conn, o):
                 """INSERT INTO pedidos
                    (numero,data_pedido,categoria,status,cliente,total,pagamento,forma_pagamento,transportadora)
                    VALUES (?,?,?,?,?,?,?,?,?)""",
-                (numero, data_str, "Normal", status, cliente, total,
-                 "Recebido", forma_pagamento, transportadora),
+                (numero, c["data_str"], "Normal", c["status"], c["cliente"], c["total"],
+                 "Recebido", c["forma_pagamento"], c["transportadora"]),
             )
             if produtos:
                 _salvar_itens_pedido(conn, numero, produtos)
-                _verificar_e_alertar_estoque(conn, numero, cliente, produtos)
             return "salvo"
     except Exception:
         return "skip"
@@ -2121,29 +2256,117 @@ def sincronizar_nuvemshop():
 
     headers = _nuvemshop_headers()
 
+    # ── Pré-carrega o estado do banco numa única leitura ────────────────────────
+    # Em vez de 1 SELECT por pedido (centenas de viagens de rede), carrega de uma vez
+    # o conjunto de números já cadastrados e quais já têm itens salvos.
     with get_conn() as conn:
         row = conn.execute("SELECT valor FROM config WHERE chave='ultima_sincronizacao'").fetchone()
         ultima_sync = row["valor"] if row else None
+        existentes = {r["numero"] for r in
+                      conn.execute("SELECT numero FROM pedidos").fetchall()}
+        com_itens  = {r["pedido_numero"] for r in
+                      conn.execute("SELECT DISTINCT pedido_numero FROM pedido_itens").fetchall()}
 
     salvos = duplicados = ja_enviados = 0
+    hoje = date.today()
 
-    # Converte última sync para Unix timestamp (usado apenas para 'paid' — incremental)
-    ts_min = ""
+    # Instrumentação: mede o tempo gasto em cada fase (retornado no resultado)
+    import time
+    _ult = [time.time()]
+    tempos = {}
+    def _marco(nome):
+        agora_t = time.time()
+        tempos[nome] = round(agora_t - _ult[0], 2)
+        _ult[0] = agora_t
+
+    # Filtro incremental: a API NuvemShop usa ISO 8601 (NÃO unix timestamp — o
+    # código antigo passava timestamp unix, que a API ignorava → baixava TUDO sempre).
+    # updated_at_min pega qualquer pedido que mudou de status desde a última sync.
+    # Recua 1 dia como margem de segurança contra diferenças de fuso horário.
+    iso_q = ""
     if ultima_sync:
         try:
-            from datetime import timezone
-            dt = datetime.fromisoformat(ultima_sync).replace(tzinfo=timezone.utc)
-            ts_min = str(int(dt.timestamp()))
+            from datetime import timedelta as _td
+            dt = datetime.fromisoformat(ultima_sync) - _td(days=1)
+            iso_q = dt.strftime("%Y-%m-%d")   # data simples ISO 8601 (sem hora/timezone)
         except Exception:
-            ts_min = ""
+            iso_q = ""
 
-    # ── Fase 1: payment_status=paid com filtro incremental (ts_min) ─────────────
+    # ── Acumulador: todas as escritas vão para 'pending' e são gravadas em lotes ──
+    pending = []
+
+    def _flush():
+        """Grava os statements acumulados em lotes de 100 (1 requisição por lote)."""
+        if not pending:
+            return
+        with get_conn() as conn:
+            for i in range(0, len(pending), 100):
+                lote = pending[i:i + 100]
+                try:
+                    conn.execute_batch(lote)
+                except Exception:
+                    # fallback: executa um a um, engolindo erros pontuais
+                    for sql, params in lote:
+                        try:
+                            conn.execute(sql, params)
+                        except Exception:
+                            pass
+        pending.clear()
+
+    SQL_ENV = """INSERT INTO pedidos
+                 (numero,data_pedido,categoria,status,cliente,total,pagamento,forma_pagamento,
+                  transportadora,ativo,enviado_em,status_ao_enviar)
+                 VALUES (?,?,?,?,?,?,?,?,?,0,?,?)"""
+    SQL_ATV = """INSERT INTO pedidos
+                 (numero,data_pedido,categoria,status,cliente,total,pagamento,forma_pagamento,transportadora)
+                 VALUES (?,?,?,?,?,?,?,?,?)"""
+
+    def _coletar(o):
+        """Decide o destino de um pedido da API e acumula os inserts necessários."""
+        nonlocal salvos, duplicados, ja_enviados
+        numero = str(o.get("number", "")).strip()
+        if not numero:
+            return
+
+        # Pedido já existe no banco → não reprocessa (só completa itens se faltarem)
+        if numero in existentes:
+            duplicados += 1
+            if numero not in com_itens:
+                produtos = o.get("products") or []
+                if produtos:
+                    pending.extend(_build_item_stmts(numero, produtos))
+                    com_itens.add(numero)
+            return
+
+        # Pedido novo → faz o parse completo (cancelados retornam None e são ignorados)
+        c = _parse_order_fields(o, hoje)
+        if not c:
+            return
+        existentes.add(numero)
+        produtos = c["produtos"]
+
+        if c["is_env"]:
+            pending.append((SQL_ENV, (
+                numero, c["data_str"], "Normal", c["status"], c["cliente"], c["total"],
+                "Recebido", c["forma_pagamento"], c["transportadora"],
+                hoje.isoformat(), c["status"])))
+            ja_enviados += 1
+        else:
+            pending.append((SQL_ATV, (
+                numero, c["data_str"], "Normal", c["status"], c["cliente"], c["total"],
+                "Recebido", c["forma_pagamento"], c["transportadora"])))
+            salvos += 1
+
+        if produtos:
+            pending.extend(_build_item_stmts(numero, produtos))
+            com_itens.add(numero)
+
+    # ── Fase 1: payment_status=paid (incremental via updated_at_min) ────────────
     page = 1
     while True:
         params = f"payment_status=paid&per_page=200&page={page}"
-        if ts_min:
-            params += f"&created_at_min={ts_min}"
-
+        if iso_q:
+            params += f"&updated_at_min={iso_q}"
         url = f"https://api.nuvemshop.com.br/v1/{store_id}/orders?{params}"
         req = ureq.Request(url, headers=headers)
         try:
@@ -2151,27 +2374,21 @@ def sincronizar_nuvemshop():
                 orders = json.loads(resp.read())
         except Exception as e:
             return {"erro": str(e)}
-
         if not orders:
             break
-
-        with get_conn() as conn:
-            for o in orders:
-                resultado = _processar_order(conn, o)
-                if resultado == "salvo":        salvos      += 1
-                elif resultado == "ja_enviado": ja_enviados += 1
-                elif resultado == "duplicado":  duplicados  += 1
-
+        for o in orders:
+            _coletar(o)
         page += 1
         if len(orders) < 200:
             break
+    _marco("fase1_paid")
 
-    # ── Fase 2: payment_status=authorized (sem ts_min — pedidos podem ser antigos) ──
-    # Pagamento "authorized" = aprovado pelo gateway mas ainda em análise; deve ser enviado.
-    # Não usa ts_min pois esses pedidos podem ter sido criados há muito tempo e nunca mudar de status.
+    # ── Fase 2: payment_status=authorized (incremental via updated_at_min) ──────
     page = 1
     while True:
         params = f"payment_status=authorized&per_page=200&page={page}"
+        if iso_q:
+            params += f"&updated_at_min={iso_q}"
         url = f"https://api.nuvemshop.com.br/v1/{store_id}/orders?{params}"
         req = ureq.Request(url, headers=headers)
         try:
@@ -2179,39 +2396,37 @@ def sincronizar_nuvemshop():
                 orders_auth = json.loads(resp.read())
         except Exception:
             break  # falha silenciosa — não bloqueia o sync principal
-
         if not orders_auth:
             break
-
-        with get_conn() as conn:
-            for o in orders_auth:
-                resultado = _processar_order(conn, o)
-                if resultado == "salvo":        salvos      += 1
-                elif resultado == "ja_enviado": ja_enviados += 1
-                elif resultado == "duplicado":  duplicados  += 1
-
+        for o in orders_auth:
+            _coletar(o)
         page += 1
         if len(orders_auth) < 200:
             break
+    _marco("fase2_authorized")
 
-    # ── Fase 3: busca pedidos cancelados na NuvemShop e remove do banco ────────
+    # Grava tudo que foi coletado nas fases 1 e 2 (poucos lotes)
+    _flush()
+    _marco("gravacao_banco")
+
+    # ── Fase 3: cancelados na NuvemShop → marca como cancelado no banco ──────────
     reconciliados = 0
     try:
         agora_rec = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        # Busca números de pedidos ativos no banco
         with get_conn() as conn:
             ativos_db = conn.execute(
-                "SELECT id, numero, status FROM pedidos WHERE ativo=1"
+                "SELECT id, numero FROM pedidos WHERE ativo=1"
             ).fetchall()
-        ativos_map = {row["numero"]: row for row in ativos_db}
+        ativos_map = {row["numero"]: row["id"] for row in ativos_db}
 
         if ativos_map:
-            # Busca pedidos cancelados na NuvemShop (paginado)
             cancelados_nv = set()
             pg = 1
             while True:
-                url_can = f"https://api.nuvemshop.com.br/v1/{store_id}/orders?status=cancelled&per_page=200&page={pg}"
+                p_can = f"status=cancelled&per_page=200&page={pg}"
+                if iso_q:
+                    p_can += f"&updated_at_min={iso_q}"
+                url_can = f"https://api.nuvemshop.com.br/v1/{store_id}/orders?{p_can}"
                 req_can = ureq.Request(url_can, headers=headers)
                 try:
                     with ureq.urlopen(req_can, timeout=20) as r:
@@ -2224,23 +2439,29 @@ def sincronizar_nuvemshop():
                     break
                 pg += 1
 
-            # Marca como cancelado no banco qualquer pedido ativo que está cancelado na NuvemShop
-            for numero, row in ativos_map.items():
-                if numero in cancelados_nv:
-                    with get_conn() as conn:
-                        conn.execute(
-                            "UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar='Cancelado' WHERE id=?",
-                            (agora_rec, row["id"]),
-                        )
-                    reconciliados += 1
+            updates = [
+                ("UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar='Cancelado' WHERE id=?",
+                 (agora_rec, pid))
+                for numero, pid in ativos_map.items() if numero in cancelados_nv
+            ]
+            if updates:
+                with get_conn() as conn:
+                    for i in range(0, len(updates), 100):
+                        try:
+                            conn.execute_batch(updates[i:i + 100])
+                        except Exception:
+                            pass
+                reconciliados = len(updates)
     except Exception:
         pass
+    _marco("fase3_cancelados")
 
     # ── Desconto automático de estoque para pedidos novos ───────────────────
     try:
         _processar_estoque_pedidos()
     except Exception:
         pass
+    _marco("estoque")
 
     agora = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
     with get_conn() as conn:
@@ -2250,7 +2471,8 @@ def sincronizar_nuvemshop():
         )
 
     return {"salvos": salvos, "duplicados": duplicados, "ja_enviados": ja_enviados,
-            "reconciliados": reconciliados, "total": salvos + ja_enviados}
+            "reconciliados": reconciliados, "total": salvos + ja_enviados,
+            "tempos": tempos}
 
 
 @app.route("/api/sincronizar", methods=["POST"])
@@ -2516,17 +2738,19 @@ def limpar_cancelados():
     if not cancelados_nv:
         return jsonify({"removidos": 0, "mensagem": "Nenhum pedido cancelado encontrado na NuvemShop"})
 
-    # Remove do banco os que estão ativos mas cancelados na NuvemShop
-    removidos = 0
+    # Remove do banco os que estão ativos mas cancelados na NuvemShop (em lote)
     with get_conn() as conn:
         ativos = conn.execute("SELECT id, numero FROM pedidos WHERE ativo=1").fetchall()
-        for row in ativos:
-            if row["numero"] in cancelados_nv:
-                conn.execute(
-                    "UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar='Cancelado' WHERE id=?",
-                    (agora, row["id"]),
-                )
-                removidos += 1
+    updates = [
+        ("UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar='Cancelado' WHERE id=?",
+         (agora, row["id"]))
+        for row in ativos if row["numero"] in cancelados_nv
+    ]
+    removidos = len(updates)
+    if updates:
+        with get_conn() as conn:
+            for i in range(0, len(updates), 100):
+                conn.execute_batch(updates[i:i + 100])
 
     return jsonify({"removidos": removidos, "mensagem": f"{removidos} pedido(s) cancelado(s) removido(s) da fila"})
 

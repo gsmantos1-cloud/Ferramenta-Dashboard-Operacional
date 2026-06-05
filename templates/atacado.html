@@ -714,10 +714,23 @@ async function salvarPedido() {
 // ── Detalhe ───────────────────────────────────────────────────────────
 async function abrirDetalhe(id) {
     pedidoAbertoId = id;
-    const r = await fetch(`/api/atacado/pedidos/${id}`);
+    const [r] = await Promise.all([
+        fetch(`/api/atacado/pedidos/${id}`),
+        carregarCatalogo(),   // garante imagens disponíveis (usa cache, não reconsulta)
+    ]);
     const {pedido, itens} = await r.json();
     renderDetalhe(pedido, itens);
     new bootstrap.Modal(document.getElementById('modalDetalhe')).show();
+}
+
+// Busca a imagem de uma variante no catálogo já carregado (sem tocar no banco)
+function imagemDaVariante(nvVid) {
+    if (!nvVid) return '';
+    for (const p of catalogoProdutos) {
+        const v = (p.variants || []).find(v => String(v.id) === String(nvVid));
+        if (v) return v.imageUrl || p.imageUrl || '';
+    }
+    return '';
 }
 
 function renderDetalhe(pedido, itens) {
@@ -771,10 +784,20 @@ function renderDetalhe(pedido, itens) {
             ? `<span style="font-size:.72rem;color:var(--green)"><i class="bi bi-check2-circle me-1"></i>Descontado</span>`
             : `<span style="font-size:.72rem;color:var(--muted)">—</span>`;
 
+        const imgVar = imagemDaVariante(item.nv_variant_id);
+        const imgHtml = imgVar
+            ? `<img src="${escHtml(imgVar)}" style="width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0">`
+            : `<div style="width:44px;height:44px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="bi bi-image" style="color:var(--muted)"></i></div>`;
+
         return `<tr class="item-det-row ${item.separado?'item-separado':''}" id="itemrow-${item.id}">
             <td>
-                <div class="fw-semibold">${escHtml(item.produto)}</div>
-                <div style="font-size:.75rem;color:var(--muted)">${escHtml(item.variante||'')}</div>
+                <div class="d-flex align-items-center gap-2">
+                    ${imgHtml}
+                    <div>
+                        <div class="fw-semibold">${escHtml(item.produto)}</div>
+                        <div style="font-size:.75rem;color:var(--muted)">${escHtml(item.variante||'')}</div>
+                    </div>
+                </div>
             </td>
             <td style="text-align:center;font-weight:700;color:var(--blue)">${item.quantidade}</td>
             <td style="text-align:right;color:var(--muted);font-size:.8rem">${vu>0?'R$ '+fmtMoeda(vu):'—'}</td>

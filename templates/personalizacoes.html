@@ -72,6 +72,14 @@
                                placeholder="Ex: 10">
                     </div>
                 </div>
+                <div class="mb-3">
+                    <label class="form-label">Tipo</label>
+                    <select id="fTipo" class="form-select form-select-sm"
+                            style="background:var(--card-bg);border-color:var(--border);color:var(--text)">
+                        <option value="varejo">Varejo</option>
+                        <option value="atacado">Atacado</option>
+                    </select>
+                </div>
                 <div class="mb-1">
                     <label class="form-label">Observação</label>
                     <input id="fObs" type="text" class="form-control form-control-sm"
@@ -82,6 +90,19 @@
                 <button class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
                 <button class="btn btn-primary btn-sm px-4" onclick="salvarForm()">Salvar</button>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal histórico -->
+<div class="modal fade" id="modalHist" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border)">
+            <div class="modal-header" style="border-bottom:1px solid var(--border)">
+                <h6 class="modal-title fw-bold"><i class="bi bi-clock-history me-2"></i>Histórico da Personalização</h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="histBody" style="max-height:60vh;overflow-y:auto"></div>
         </div>
     </div>
 </div>
@@ -120,6 +141,21 @@ const PROX_LABEL = {
     'SEPARAÇÃO':         'Enviar p/ Personalização',
     'NA PERSONALIZAÇÃO': 'Marcar como Pronto',
     'PRONTO':            'Marcar como Enviado',
+};
+
+// Status anterior (para retroceder no fluxo)
+const ANTERIOR = {
+    'ENVIADO':           'PRONTO',
+    'PRONTO':            'NA PERSONALIZAÇÃO',
+    'NA PERSONALIZAÇÃO': 'SEPARAÇÃO',
+    'SEPARAÇÃO':         'A SEPARAR',
+    'A SEPARAR':         null,
+};
+
+// Aparência da tag varejo/atacado
+const TIPO_TAG = {
+    varejo:  { label: 'Varejo',  cor: '#58a6ff', bg: 'rgba(88,166,255,.15)' },
+    atacado: { label: 'Atacado', cor: '#d29922', bg: 'rgba(210,153,34,.15)' },
 };
 
 let todos = [];
@@ -241,15 +277,24 @@ function renderKanban() {
 function renderCard(p, col) {
     const prox = PROX[p.status];
     const proxLabel = PROX_LABEL[p.status];
+    const anterior = ANTERIOR[p.status];
     const dataFmt = p.criado_em ? p.criado_em.slice(0, 10).split('-').reverse().join('/') : '—';
 
     const pendente = !p.nome_personalizacao && !p.numero_personalizacao;
+
+    const tipo = (p.tipo === 'atacado') ? TIPO_TAG.atacado : TIPO_TAG.varejo;
+    const tipoTag = `<span style="background:${tipo.bg};border:1px solid ${tipo.cor}55;color:${tipo.cor};
+                         border-radius:10px;padding:0 7px;font-size:.62rem;font-weight:700;
+                         letter-spacing:.04em">${tipo.label}</span>`;
 
     return `<div style="background:var(--card-bg);border:1px solid ${pendente ? 'rgba(137,87,229,.35)' : 'var(--border)'};
                         border-radius:6px;padding:10px;margin-bottom:8px;position:relative">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:4px">
             <div>
-                <span style="font-size:.72rem;font-weight:700;color:${col.cor}">Pedido #${p.numero_pedido}</span>
+                <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+                    <span style="font-size:.72rem;font-weight:700;color:${col.cor}">Pedido #${p.numero_pedido}</span>
+                    ${tipoTag}
+                </div>
                 ${p.nome_personalizacao
                     ? `<div style="font-size:.85rem;font-weight:600;color:var(--text);margin-top:2px">${p.nome_personalizacao}</div>`
                     : `<div style="font-size:.75rem;color:#8957e5;margin-top:3px;font-style:italic">
@@ -269,6 +314,11 @@ function renderCard(p, col) {
                                border-radius:4px;padding:2px 6px;font-size:.72rem;cursor:pointer;line-height:1.4">
                     <i class="bi bi-pencil"></i>
                 </button>
+                <button onclick="verHistorico(${p.id})" title="Histórico"
+                        style="background:none;border:1px solid rgba(88,166,255,.3);color:#58a6ff;
+                               border-radius:4px;padding:2px 6px;font-size:.72rem;cursor:pointer;line-height:1.4">
+                    <i class="bi bi-clock-history"></i>
+                </button>
                 <button onclick="confirmarExcluir(${p.id}, '${p.numero_pedido}')" title="Excluir"
                         style="background:none;border:1px solid rgba(248,81,73,.3);color:var(--red);
                                border-radius:4px;padding:2px 6px;font-size:.72rem;cursor:pointer;line-height:1.4">
@@ -276,15 +326,24 @@ function renderCard(p, col) {
                 </button>
             </div>
         </div>
-        ${prox ? `
-        <button onclick="avancarStatus(${p.id}, '${prox}')"
-                style="width:100%;margin-top:8px;background:${col.bg};border:1px solid ${col.cor}55;
-                       color:${col.cor};border-radius:4px;padding:4px 0;font-size:.72rem;
-                       font-weight:600;cursor:pointer;transition:background .15s"
-                onmouseover="this.style.background='${col.bg.replace('.1)', '.2)')}';"
-                onmouseout="this.style.background='${col.bg}';">
-            ${proxLabel} <i class="bi bi-arrow-right-short"></i>
-        </button>` : ''}
+        <div style="display:flex;gap:5px;margin-top:8px">
+            ${anterior ? `
+            <button onclick="avancarStatus(${p.id}, '${anterior}')" title="Voltar para ${anterior}"
+                    style="flex:0 0 auto;background:rgba(139,148,158,.1);border:1px solid var(--border);
+                           color:var(--muted);border-radius:4px;padding:4px 9px;font-size:.72rem;
+                           cursor:pointer;font-weight:600">
+                <i class="bi bi-arrow-left-short"></i>
+            </button>` : ''}
+            ${prox ? `
+            <button onclick="avancarStatus(${p.id}, '${prox}')"
+                    style="flex:1;background:${col.bg};border:1px solid ${col.cor}55;
+                           color:${col.cor};border-radius:4px;padding:4px 0;font-size:.72rem;
+                           font-weight:600;cursor:pointer;transition:background .15s"
+                    onmouseover="this.style.background='${col.bg.replace('.1)', '.2)')}';"
+                    onmouseout="this.style.background='${col.bg}';">
+                ${proxLabel} <i class="bi bi-arrow-right-short"></i>
+            </button>` : ''}
+        </div>
     </div>`;
 }
 
@@ -310,6 +369,7 @@ function abrirModal(p = null) {
     document.getElementById('fNome').value = p ? (p.nome_personalizacao || '') : '';
     document.getElementById('fNumero').value = p ? (p.numero_personalizacao || '') : '';
     document.getElementById('fObs').value = p ? (p.observacao || '') : '';
+    document.getElementById('fTipo').value = p ? (p.tipo || 'varejo') : 'varejo';
     document.getElementById('fNumeroPedido').disabled = !!p;
     new bootstrap.Modal(document.getElementById('modalForm')).show();
 }
@@ -329,6 +389,7 @@ async function salvarForm() {
         nome_personalizacao:   document.getElementById('fNome').value.trim(),
         numero_personalizacao: document.getElementById('fNumero').value.trim(),
         observacao:            document.getElementById('fObs').value.trim(),
+        tipo:                  document.getElementById('fTipo').value,
     };
 
     try {
@@ -366,6 +427,57 @@ async function confirmarExcluir(id, numPedido) {
         carregarPersBadge();
     } catch {
         toast('Erro ao excluir.', false);
+    }
+}
+
+// ── Histórico ──────────────────────────────────────────────────────────
+const ACAO_INFO = {
+    criada:     { label: 'Criada',   icone: 'bi-plus-circle-fill',        cor: '#3fb950' },
+    status:     { label: 'Avançou',  icone: 'bi-arrow-right-circle-fill', cor: '#58a6ff' },
+    retrocesso: { label: 'Voltou',   icone: 'bi-arrow-left-circle-fill',  cor: '#f0883e' },
+    editada:    { label: 'Editada',  icone: 'bi-pencil-fill',             cor: '#8957e5' },
+    excluida:   { label: 'Excluída', icone: 'bi-trash3-fill',             cor: '#f85149' },
+};
+
+function escHtmlH(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c =>
+        ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+}
+
+function fmtDataHora(s) {
+    if (!s) return '';
+    const m = String(s).replace('T', ' ').match(/(\d{4})-(\d{2})-(\d{2})[ ](\d{2}):(\d{2})/);
+    return m ? `${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}` : s;
+}
+
+async function verHistorico(id) {
+    const body = document.getElementById('histBody');
+    body.innerHTML = '<div style="text-align:center;padding:2rem;color:var(--muted)"><i class="bi bi-hourglass-split me-1"></i>Carregando…</div>';
+    new bootstrap.Modal(document.getElementById('modalHist')).show();
+    try {
+        const r = await fetch(`/api/personalizacoes/${id}/historico`);
+        const itens = await r.json();
+        if (!Array.isArray(itens) || !itens.length) {
+            body.innerHTML = '<div style="text-align:center;padding:2rem;color:var(--muted)">Nenhum registro ainda.</div>';
+            return;
+        }
+        body.innerHTML = itens.map(h => {
+            const info = ACAO_INFO[h.acao] || { label: h.acao, icone: 'bi-dot', cor: 'var(--muted)' };
+            return `<div style="display:flex;gap:10px;padding:8px 2px;border-bottom:1px solid var(--border)">
+                <i class="bi ${info.icone}" style="color:${info.cor};font-size:1.05rem;margin-top:2px"></i>
+                <div style="flex:1">
+                    <div style="font-size:.82rem;color:var(--text)">
+                        <span style="font-weight:600">${info.label}</span>
+                        ${h.detalhe ? `<span style="color:var(--muted)"> — ${escHtmlH(h.detalhe)}</span>` : ''}
+                    </div>
+                    <div style="font-size:.68rem;color:var(--muted);margin-top:2px">
+                        ${fmtDataHora(h.created_at)}${h.usuario ? ' · ' + escHtmlH(h.usuario) : ''}
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+    } catch {
+        body.innerHTML = '<div style="text-align:center;padding:2rem;color:var(--red)">Erro ao carregar histórico.</div>';
     }
 }
 
