@@ -1978,6 +1978,98 @@ def _nuvemshop_headers():
         "Content-Type": "application/json",
     }
 
+def _processar_order(conn, o):
+    """Processa um pedido da NuvemShop e insere no banco se novo. Retorna 'salvo'|'ja_enviado'|'duplicado'|'skip'."""
+    hoje     = date.today()
+    numero   = str(o.get("number", "")).strip()
+    data_str = o.get("created_at", "")[:10]
+    cliente  = o.get("contact_name", "") or ""
+    total    = str(o.get("total", ""))
+
+    shipping_status = o.get("shipping_status", "")
+    if shipping_status == "shipped":
+        envio = "Enviada"
+    elif shipping_status == "delivered":
+        envio = "Entregue"
+    else:
+        envio = "Por enviar"
+
+    transportadora = ""
+    for f in (o.get("fulfillments") or []):
+        carrier = (f.get("shipping") or {}).get("carrier", {}).get("name", "")
+        option  = (f.get("shipping") or {}).get("option",  {}).get("name", "")
+        if carrier or option:
+            transportadora = f"{carrier} - {option}".strip(" -")
+        break
+    if not transportadora:
+        transportadora = o.get("shipping_option", "") or ""
+    transportadora = transportadora.replace("Nuvem Envio - ", "")
+
+    gateway = o.get("gateway_name", "") or ""
+    payment_details = o.get("payment_details") or {}
+    method = payment_details.get("method", "") or ""
+    if gateway and method:
+        forma_pagamento = f"{gateway} - {method}"
+    elif gateway:
+        forma_pagamento = gateway
+    else:
+        forma_pagamento = method or ""
+
+    produtos = o.get("products") or []
+
+    if not numero or not data_str:
+        return "skip"
+
+    existente = conn.execute(
+        "SELECT id, ativo FROM pedidos WHERE numero = ?", (numero,)
+    ).fetchone()
+    if existente:
+        if produtos:
+            _salvar_itens_pedido(conn, numero, produtos)
+        return "duplicado"
+
+    try:
+        dp = date.fromisoformat(data_str)
+    except ValueError:
+        return "skip"
+
+    if dp > hoje:
+        dp = hoje
+
+    dias   = calcular_dias_uteis(dp, hoje)
+    status = determinar_status(dias, "Normal")
+    is_env = envio in ("Enviada", "Entregue")
+
+    try:
+        if is_env:
+            conn.execute(
+                """INSERT INTO pedidos
+                   (numero,data_pedido,categoria,status,cliente,total,pagamento,forma_pagamento,
+                    transportadora,ativo,enviado_em,status_ao_enviar)
+                   VALUES (?,?,?,?,?,?,?,?,?,0,?,?)""",
+                (numero, data_str, "Normal", status, cliente, total,
+                 "Recebido", forma_pagamento, transportadora,
+                 hoje.isoformat(), status),
+            )
+            if produtos:
+                _salvar_itens_pedido(conn, numero, produtos)
+            return "ja_enviado"
+        else:
+            conn.execute(
+                """INSERT INTO pedidos
+                   (numero,data_pedido,categoria,status,cliente,total,pagamento,forma_pagamento,transportadora)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (numero, data_str, "Normal", status, cliente, total,
+                 "Recebido", forma_pagamento, transportadora),
+            )
+            if produtos:
+                _salvar_itens_pedido(conn, numero, produtos)
+                _verificar_e_alertar_estoque(conn, numero, cliente, produtos)
+            return "salvo"
+    except Exception:
+        return "skip"
+
+
 def sincronizar_nuvemshop():
     import urllib.request as ureq
     store_id, token = _get_nv_credentials()
@@ -1985,7 +2077,6 @@ def sincronizar_nuvemshop():
         return {"erro": "NuvemShop não configurada"}
 
     headers = _nuvemshop_headers()
-    hoje    = date.today()
 
     with get_conn() as conn:
         row = conn.execute("SELECT valor FROM config WHERE chave='ultima_sincronizacao'").fetchone()
@@ -2002,96 +2093,6 @@ def sincronizar_nuvemshop():
             ts_min = str(int(dt.timestamp()))
         except Exception:
             ts_min = ""
-
-    def _processar_order(conn, o):
-        """Processa um pedido da NuvemShop e insere no banco se novo. Retorna 'salvo'|'ja_enviado'|'duplicado'|'skip'."""
-        numero   = str(o.get("number", "")).strip()
-        data_str = o.get("created_at", "")[:10]
-        cliente  = o.get("contact_name", "") or ""
-        total    = str(o.get("total", ""))
-
-        shipping_status = o.get("shipping_status", "")
-        if shipping_status == "shipped":
-            envio = "Enviada"
-        elif shipping_status == "delivered":
-            envio = "Entregue"
-        else:
-            envio = "Por enviar"
-
-        transportadora = ""
-        for f in (o.get("fulfillments") or []):
-            carrier = (f.get("shipping") or {}).get("carrier", {}).get("name", "")
-            option  = (f.get("shipping") or {}).get("option",  {}).get("name", "")
-            if carrier or option:
-                transportadora = f"{carrier} - {option}".strip(" -")
-            break
-        if not transportadora:
-            transportadora = o.get("shipping_option", "") or ""
-        transportadora = transportadora.replace("Nuvem Envio - ", "")
-
-        gateway = o.get("gateway_name", "") or ""
-        payment_details = o.get("payment_details") or {}
-        method = payment_details.get("method", "") or ""
-        if gateway and method:
-            forma_pagamento = f"{gateway} - {method}"
-        elif gateway:
-            forma_pagamento = gateway
-        else:
-            forma_pagamento = method or ""
-
-        produtos = o.get("products") or []
-
-        if not numero or not data_str:
-            return "skip"
-
-        existente = conn.execute(
-            "SELECT id, ativo FROM pedidos WHERE numero = ?", (numero,)
-        ).fetchone()
-        if existente:
-            if produtos:
-                _salvar_itens_pedido(conn, numero, produtos)
-            return "duplicado"
-
-        try:
-            dp = date.fromisoformat(data_str)
-        except ValueError:
-            return "skip"
-
-        if dp > hoje:
-            dp = hoje
-
-        dias   = calcular_dias_uteis(dp, hoje)
-        status = determinar_status(dias, "Normal")
-        is_env = envio in ("Enviada", "Entregue")
-
-        try:
-            if is_env:
-                conn.execute(
-                    """INSERT INTO pedidos
-                       (numero,data_pedido,categoria,status,cliente,total,pagamento,forma_pagamento,
-                        transportadora,ativo,enviado_em,status_ao_enviar)
-                       VALUES (?,?,?,?,?,?,?,?,?,0,?,?)""",
-                    (numero, data_str, "Normal", status, cliente, total,
-                     "Recebido", forma_pagamento, transportadora,
-                     hoje.isoformat(), status),
-                )
-                if produtos:
-                    _salvar_itens_pedido(conn, numero, produtos)
-                return "ja_enviado"
-            else:
-                conn.execute(
-                    """INSERT INTO pedidos
-                       (numero,data_pedido,categoria,status,cliente,total,pagamento,forma_pagamento,transportadora)
-                       VALUES (?,?,?,?,?,?,?,?,?)""",
-                    (numero, data_str, "Normal", status, cliente, total,
-                     "Recebido", forma_pagamento, transportadora),
-                )
-                if produtos:
-                    _salvar_itens_pedido(conn, numero, produtos)
-                    _verificar_e_alertar_estoque(conn, numero, cliente, produtos)
-                return "salvo"
-        except Exception:
-            return "skip"
 
     # ── Fase 1: payment_status=paid com filtro incremental (ts_min) ─────────────
     page = 1
@@ -2276,6 +2277,9 @@ def nuvemshop_callback():
                 (access_token,),
             )
 
+        # Registra webhooks automaticamente após OAuth
+        _registrar_webhooks_nuvemshop(tid, access_token, request.url_root.rstrip("/"))
+
         return f"""<html><body style="font-family:sans-serif;background:#0d1117;color:#e6edf3;padding:2rem">
             <h2 style="color:#3fb950">&#10003; Conectado com sucesso!</h2>
             <p><b>Store ID:</b> {tid}</p>
@@ -2291,6 +2295,114 @@ def nuvemshop_callback():
             <p style="color:#8b949e;font-size:.85rem"><b>Code recebido:</b> {code[:20]}…</p>
             <p style="color:#8b949e;font-size:.85rem"><b>redirect_uri usado:</b> {redirect_uri}</p>
         </body></html>"""
+
+
+# ── NuvemShop Webhooks ────────────────────────────────────────────────────────
+
+def _registrar_webhooks_nuvemshop(store_id, token, base_url):
+    """Registra os webhooks de pedidos na NuvemShop (idempotente)."""
+    import urllib.request as ureq
+    headers = {
+        "Authentication": f"bearer {token}",
+        "User-Agent": "GS Mantos Interno (contato@gsmantos.com.br)",
+        "Content-Type": "application/json",
+    }
+
+    # Busca webhooks já registrados para evitar duplicatas
+    try:
+        req = ureq.Request(
+            f"https://api.nuvemshop.com.br/v1/{store_id}/webhooks",
+            headers=headers,
+        )
+        with ureq.urlopen(req, timeout=15) as resp:
+            existentes = json.loads(resp.read())
+        urls_existentes = {wh.get("url", "") for wh in existentes}
+    except Exception:
+        urls_existentes = set()
+
+    eventos = [
+        ("orders/paid",      f"{base_url}/nuvemshop/webhooks/orders/paid"),
+        ("orders/fulfilled", f"{base_url}/nuvemshop/webhooks/orders/fulfilled"),
+    ]
+
+    for evento, url in eventos:
+        if url in urls_existentes:
+            continue
+        try:
+            payload = json.dumps({"event": evento, "url": url}).encode("utf-8")
+            req = ureq.Request(
+                f"https://api.nuvemshop.com.br/v1/{store_id}/webhooks",
+                data=payload,
+                headers=headers,
+                method="POST",
+            )
+            ureq.urlopen(req, timeout=15)
+        except Exception:
+            pass
+
+
+@app.route("/nuvemshop/webhooks/orders/paid", methods=["POST"])
+def webhook_order_paid():
+    """Recebe notificação da NuvemShop quando um pedido é pago."""
+    try:
+        order = request.get_json(force=True) or {}
+    except Exception:
+        return jsonify({"ok": False}), 400
+
+    if not order:
+        return jsonify({"ok": True}), 200
+
+    with get_conn() as conn:
+        resultado = _processar_order(conn, order)
+        if resultado == "salvo":
+            _sync_personalizacoes(conn)
+            try:
+                _processar_estoque_pedidos()
+            except Exception:
+                pass
+
+    return jsonify({"ok": True, "resultado": resultado}), 200
+
+
+@app.route("/nuvemshop/webhooks/orders/fulfilled", methods=["POST"])
+def webhook_order_fulfilled():
+    """Recebe notificação da NuvemShop quando um pedido é enviado."""
+    try:
+        order = request.get_json(force=True) or {}
+    except Exception:
+        return jsonify({"ok": False}), 400
+
+    numero = str(order.get("number", "")).strip()
+    if not numero:
+        return jsonify({"ok": True}), 200
+
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, status FROM pedidos WHERE numero = ? AND ativo = 1", (numero,)
+        ).fetchone()
+        if row:
+            conn.execute(
+                "UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar=? WHERE id=?",
+                (agora, row["status"], row["id"]),
+            )
+
+    return jsonify({"ok": True}), 200
+
+
+@app.route("/api/nuvemshop/registrar-webhooks", methods=["POST"])
+@login_required
+def api_registrar_webhooks():
+    """Registra manualmente os webhooks (caso o OAuth tenha sido feito antes desta feature)."""
+    store_id, token = _get_nv_credentials()
+    if not store_id or not token:
+        return jsonify({"erro": "NuvemShop não configurada"}), 400
+    base_url = request.url_root.rstrip("/")
+    try:
+        _registrar_webhooks_nuvemshop(store_id, token, base_url)
+        return jsonify({"ok": True, "mensagem": "Webhooks registrados com sucesso"})
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
 
 
 # ── Helpers — Estoque ────────────────────────────────────────────────────────
