@@ -854,14 +854,9 @@ def personalizacoes_page():
 
 # ── Personalizações sync helper ───────────────────────────────────────────────
 
-def _salvar_itens_pedido(conn, numero, produtos):
-    """Salva os itens de um pedido da NuvemShop em pedido_itens (idempotente).
-    Retorna True se os itens foram inseridos agora, False se já existiam."""
-    existem = conn.execute(
-        "SELECT COUNT(*) FROM pedido_itens WHERE pedido_numero = ?", (numero,)
-    ).fetchone()[0]
-    if existem:
-        return False
+def _build_item_stmts(numero, produtos):
+    """Monta os statements de INSERT dos itens de um pedido (para execução em batch)."""
+    stmts = []
     for p in produtos:
         nome          = p.get("name", "")
         qtd           = p.get("quantity", 1)
@@ -875,12 +870,26 @@ def _salvar_itens_pedido(conn, numero, produtos):
             imgs = p.get("images") or []
             if imgs:
                 imagem_url = (imgs[0] or {}).get("src") or (imgs[0] or {}).get("url") or None
-        conn.execute(
+        stmts.append((
             """INSERT INTO pedido_itens
                (pedido_numero, produto_nome, variante, quantidade, preco_unit, imagem_url, nv_variant_id)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (numero, nome, variante, qtd, preco, imagem_url, nv_variant_id),
-        )
+        ))
+    return stmts
+
+
+def _salvar_itens_pedido(conn, numero, produtos):
+    """Salva os itens de um pedido da NuvemShop em pedido_itens (idempotente).
+    Retorna True se os itens foram inseridos agora, False se já existiam."""
+    existem = conn.execute(
+        "SELECT COUNT(*) FROM pedido_itens WHERE pedido_numero = ?", (numero,)
+    ).fetchone()[0]
+    if existem:
+        return False
+    stmts = _build_item_stmts(numero, produtos)
+    if stmts:
+        conn.execute_batch(stmts)   # todos os itens numa requisição só
     return True
 
 
@@ -2017,17 +2026,23 @@ def _nuvemshop_headers():
         "Content-Type": "application/json",
     }
 
-def _processar_order(conn, o):
-    """Processa um pedido da NuvemShop e insere no banco se novo. Retorna 'salvo'|'ja_enviado'|'duplicado'|'skip'."""
-    hoje     = date.today()
-    numero   = str(o.get("number", "")).strip()
-    data_str = o.get("created_at", "")[:10]
-    cliente  = o.get("contact_name", "") or ""
-    total    = str(o.get("total", ""))
+def _parse_order_fields(o, hoje=None):
+    """Extrai e normaliza os campos de um pedido vindo da API NuvemShop.
+    Retorna um dict pronto para inserção, ou None se o pedido for inválido/cancelado."""
+    if hoje is None:
+        hoje = date.today()
 
     # Ignora pedidos cancelados
     if o.get("status") == "cancelled" or o.get("payment_status") in ("voided", "refunded"):
-        return "skip"
+        return None
+
+    numero   = str(o.get("number", "")).strip()
+    data_str = o.get("created_at", "")[:10]
+    if not numero or not data_str:
+        return None
+
+    cliente = o.get("contact_name", "") or ""
+    total   = str(o.get("total", ""))
 
     shipping_status = o.get("shipping_status", "")
     if shipping_status == "shipped":
@@ -2049,8 +2064,7 @@ def _processar_order(conn, o):
     transportadora = transportadora.replace("Nuvem Envio - ", "")
 
     gateway = o.get("gateway_name", "") or ""
-    payment_details = o.get("payment_details") or {}
-    method = payment_details.get("method", "") or ""
+    method  = (o.get("payment_details") or {}).get("method", "") or ""
     if gateway and method:
         forma_pagamento = f"{gateway} - {method}"
     elif gateway:
@@ -2058,41 +2072,58 @@ def _processar_order(conn, o):
     else:
         forma_pagamento = method or ""
 
-    produtos = o.get("products") or []
+    try:
+        dp = date.fromisoformat(data_str)
+    except ValueError:
+        return None
+    if dp > hoje:
+        dp = hoje
 
-    if not numero or not data_str:
+    dias   = calcular_dias_uteis(dp, hoje)
+    status = determinar_status(dias, "Normal")
+
+    return {
+        "numero":          numero,
+        "data_str":        data_str,
+        "cliente":         cliente,
+        "total":           total,
+        "envio":           envio,
+        "transportadora":  transportadora,
+        "forma_pagamento": forma_pagamento,
+        "status":          status,
+        "is_env":          envio in ("Enviada", "Entregue"),
+        "produtos":        o.get("products") or [],
+    }
+
+
+def _processar_order(conn, o):
+    """Processa UM pedido da NuvemShop e insere no banco se novo (caminho usado pelo webhook).
+    Retorna 'salvo'|'ja_enviado'|'duplicado'|'skip'."""
+    c = _parse_order_fields(o)
+    if not c:
         return "skip"
 
+    numero, produtos = c["numero"], c["produtos"]
+
     existente = conn.execute(
-        "SELECT id, ativo FROM pedidos WHERE numero = ?", (numero,)
+        "SELECT id FROM pedidos WHERE numero = ?", (numero,)
     ).fetchone()
     if existente:
         if produtos:
             _salvar_itens_pedido(conn, numero, produtos)
         return "duplicado"
 
+    hoje = date.today()
     try:
-        dp = date.fromisoformat(data_str)
-    except ValueError:
-        return "skip"
-
-    if dp > hoje:
-        dp = hoje
-
-    dias   = calcular_dias_uteis(dp, hoje)
-    status = determinar_status(dias, "Normal")
-    is_env = envio in ("Enviada", "Entregue")
-
-    try:
-        if is_env:
+        if c["is_env"]:
             conn.execute(
                 """INSERT INTO pedidos
                    (numero,data_pedido,categoria,status,cliente,total,pagamento,forma_pagamento,
                     transportadora,ativo,enviado_em,status_ao_enviar)
                    VALUES (?,?,?,?,?,?,?,?,?,0,?,?)""",
-                (numero, data_str, "Normal", status, cliente, total,
-                 "Recebido", forma_pagamento, transportadora,
-                 hoje.isoformat(), status),
+                (numero, c["data_str"], "Normal", c["status"], c["cliente"], c["total"],
+                 "Recebido", c["forma_pagamento"], c["transportadora"],
+                 hoje.isoformat(), c["status"]),
             )
             if produtos:
                 _salvar_itens_pedido(conn, numero, produtos)
@@ -2102,12 +2133,11 @@ def _processar_order(conn, o):
                 """INSERT INTO pedidos
                    (numero,data_pedido,categoria,status,cliente,total,pagamento,forma_pagamento,transportadora)
                    VALUES (?,?,?,?,?,?,?,?,?)""",
-                (numero, data_str, "Normal", status, cliente, total,
-                 "Recebido", forma_pagamento, transportadora),
+                (numero, c["data_str"], "Normal", c["status"], c["cliente"], c["total"],
+                 "Recebido", c["forma_pagamento"], c["transportadora"]),
             )
             if produtos:
                 _salvar_itens_pedido(conn, numero, produtos)
-                _verificar_e_alertar_estoque(conn, numero, cliente, produtos)
             return "salvo"
     except Exception:
         return "skip"
@@ -2121,11 +2151,19 @@ def sincronizar_nuvemshop():
 
     headers = _nuvemshop_headers()
 
+    # ── Pré-carrega o estado do banco numa única leitura ────────────────────────
+    # Em vez de 1 SELECT por pedido (centenas de viagens de rede), carrega de uma vez
+    # o conjunto de números já cadastrados e quais já têm itens salvos.
     with get_conn() as conn:
         row = conn.execute("SELECT valor FROM config WHERE chave='ultima_sincronizacao'").fetchone()
         ultima_sync = row["valor"] if row else None
+        existentes = {r["numero"] for r in
+                      conn.execute("SELECT numero FROM pedidos").fetchall()}
+        com_itens  = {r["pedido_numero"] for r in
+                      conn.execute("SELECT DISTINCT pedido_numero FROM pedido_itens").fetchall()}
 
     salvos = duplicados = ja_enviados = 0
+    hoje = date.today()
 
     # Converte última sync para Unix timestamp (usado apenas para 'paid' — incremental)
     ts_min = ""
@@ -2137,13 +2175,81 @@ def sincronizar_nuvemshop():
         except Exception:
             ts_min = ""
 
+    # ── Acumulador: todas as escritas vão para 'pending' e são gravadas em lotes ──
+    pending = []
+
+    def _flush():
+        """Grava os statements acumulados em lotes de 100 (1 requisição por lote)."""
+        if not pending:
+            return
+        with get_conn() as conn:
+            for i in range(0, len(pending), 100):
+                lote = pending[i:i + 100]
+                try:
+                    conn.execute_batch(lote)
+                except Exception:
+                    # fallback: executa um a um, engolindo erros pontuais
+                    for sql, params in lote:
+                        try:
+                            conn.execute(sql, params)
+                        except Exception:
+                            pass
+        pending.clear()
+
+    SQL_ENV = """INSERT INTO pedidos
+                 (numero,data_pedido,categoria,status,cliente,total,pagamento,forma_pagamento,
+                  transportadora,ativo,enviado_em,status_ao_enviar)
+                 VALUES (?,?,?,?,?,?,?,?,?,0,?,?)"""
+    SQL_ATV = """INSERT INTO pedidos
+                 (numero,data_pedido,categoria,status,cliente,total,pagamento,forma_pagamento,transportadora)
+                 VALUES (?,?,?,?,?,?,?,?,?)"""
+
+    def _coletar(o):
+        """Decide o destino de um pedido da API e acumula os inserts necessários."""
+        nonlocal salvos, duplicados, ja_enviados
+        numero = str(o.get("number", "")).strip()
+        if not numero:
+            return
+
+        # Pedido já existe no banco → não reprocessa (só completa itens se faltarem)
+        if numero in existentes:
+            duplicados += 1
+            if numero not in com_itens:
+                produtos = o.get("products") or []
+                if produtos:
+                    pending.extend(_build_item_stmts(numero, produtos))
+                    com_itens.add(numero)
+            return
+
+        # Pedido novo → faz o parse completo (cancelados retornam None e são ignorados)
+        c = _parse_order_fields(o, hoje)
+        if not c:
+            return
+        existentes.add(numero)
+        produtos = c["produtos"]
+
+        if c["is_env"]:
+            pending.append((SQL_ENV, (
+                numero, c["data_str"], "Normal", c["status"], c["cliente"], c["total"],
+                "Recebido", c["forma_pagamento"], c["transportadora"],
+                hoje.isoformat(), c["status"])))
+            ja_enviados += 1
+        else:
+            pending.append((SQL_ATV, (
+                numero, c["data_str"], "Normal", c["status"], c["cliente"], c["total"],
+                "Recebido", c["forma_pagamento"], c["transportadora"])))
+            salvos += 1
+
+        if produtos:
+            pending.extend(_build_item_stmts(numero, produtos))
+            com_itens.add(numero)
+
     # ── Fase 1: payment_status=paid com filtro incremental (ts_min) ─────────────
     page = 1
     while True:
         params = f"payment_status=paid&per_page=200&page={page}"
         if ts_min:
             params += f"&created_at_min={ts_min}"
-
         url = f"https://api.nuvemshop.com.br/v1/{store_id}/orders?{params}"
         req = ureq.Request(url, headers=headers)
         try:
@@ -2151,24 +2257,15 @@ def sincronizar_nuvemshop():
                 orders = json.loads(resp.read())
         except Exception as e:
             return {"erro": str(e)}
-
         if not orders:
             break
-
-        with get_conn() as conn:
-            for o in orders:
-                resultado = _processar_order(conn, o)
-                if resultado == "salvo":        salvos      += 1
-                elif resultado == "ja_enviado": ja_enviados += 1
-                elif resultado == "duplicado":  duplicados  += 1
-
+        for o in orders:
+            _coletar(o)
         page += 1
         if len(orders) < 200:
             break
 
     # ── Fase 2: payment_status=authorized (sem ts_min — pedidos podem ser antigos) ──
-    # Pagamento "authorized" = aprovado pelo gateway mas ainda em análise; deve ser enviado.
-    # Não usa ts_min pois esses pedidos podem ter sido criados há muito tempo e nunca mudar de status.
     page = 1
     while True:
         params = f"payment_status=authorized&per_page=200&page={page}"
@@ -2179,35 +2276,28 @@ def sincronizar_nuvemshop():
                 orders_auth = json.loads(resp.read())
         except Exception:
             break  # falha silenciosa — não bloqueia o sync principal
-
         if not orders_auth:
             break
-
-        with get_conn() as conn:
-            for o in orders_auth:
-                resultado = _processar_order(conn, o)
-                if resultado == "salvo":        salvos      += 1
-                elif resultado == "ja_enviado": ja_enviados += 1
-                elif resultado == "duplicado":  duplicados  += 1
-
+        for o in orders_auth:
+            _coletar(o)
         page += 1
         if len(orders_auth) < 200:
             break
 
-    # ── Fase 3: busca pedidos cancelados na NuvemShop e remove do banco ────────
+    # Grava tudo que foi coletado nas fases 1 e 2 (poucos lotes)
+    _flush()
+
+    # ── Fase 3: cancelados na NuvemShop → marca como cancelado no banco ──────────
     reconciliados = 0
     try:
         agora_rec = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        # Busca números de pedidos ativos no banco
         with get_conn() as conn:
             ativos_db = conn.execute(
-                "SELECT id, numero, status FROM pedidos WHERE ativo=1"
+                "SELECT id, numero FROM pedidos WHERE ativo=1"
             ).fetchall()
-        ativos_map = {row["numero"]: row for row in ativos_db}
+        ativos_map = {row["numero"]: row["id"] for row in ativos_db}
 
         if ativos_map:
-            # Busca pedidos cancelados na NuvemShop (paginado)
             cancelados_nv = set()
             pg = 1
             while True:
@@ -2224,15 +2314,19 @@ def sincronizar_nuvemshop():
                     break
                 pg += 1
 
-            # Marca como cancelado no banco qualquer pedido ativo que está cancelado na NuvemShop
-            for numero, row in ativos_map.items():
-                if numero in cancelados_nv:
-                    with get_conn() as conn:
-                        conn.execute(
-                            "UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar='Cancelado' WHERE id=?",
-                            (agora_rec, row["id"]),
-                        )
-                    reconciliados += 1
+            updates = [
+                ("UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar='Cancelado' WHERE id=?",
+                 (agora_rec, pid))
+                for numero, pid in ativos_map.items() if numero in cancelados_nv
+            ]
+            if updates:
+                with get_conn() as conn:
+                    for i in range(0, len(updates), 100):
+                        try:
+                            conn.execute_batch(updates[i:i + 100])
+                        except Exception:
+                            pass
+                reconciliados = len(updates)
     except Exception:
         pass
 
@@ -2516,17 +2610,19 @@ def limpar_cancelados():
     if not cancelados_nv:
         return jsonify({"removidos": 0, "mensagem": "Nenhum pedido cancelado encontrado na NuvemShop"})
 
-    # Remove do banco os que estão ativos mas cancelados na NuvemShop
-    removidos = 0
+    # Remove do banco os que estão ativos mas cancelados na NuvemShop (em lote)
     with get_conn() as conn:
         ativos = conn.execute("SELECT id, numero FROM pedidos WHERE ativo=1").fetchall()
-        for row in ativos:
-            if row["numero"] in cancelados_nv:
-                conn.execute(
-                    "UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar='Cancelado' WHERE id=?",
-                    (agora, row["id"]),
-                )
-                removidos += 1
+    updates = [
+        ("UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar='Cancelado' WHERE id=?",
+         (agora, row["id"]))
+        for row in ativos if row["numero"] in cancelados_nv
+    ]
+    removidos = len(updates)
+    if updates:
+        with get_conn() as conn:
+            for i in range(0, len(updates), 100):
+                conn.execute_batch(updates[i:i + 100])
 
     return jsonify({"removidos": removidos, "mensagem": f"{removidos} pedido(s) cancelado(s) removido(s) da fila"})
 

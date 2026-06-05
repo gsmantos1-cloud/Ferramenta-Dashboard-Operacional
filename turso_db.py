@@ -194,6 +194,18 @@ class TursoConnection:
         if stmts:
             _pipeline(stmts)
 
+    def execute_batch(self, statements) -> list:
+        """Executa várias queries numa única requisição HTTP (pipeline).
+
+        statements: lista de tuplas (sql, params).
+        Reduz drasticamente o número de viagens de rede ao Turso —
+        essencial para sincronizações que processam muitos pedidos.
+        """
+        if not statements:
+            return []
+        payload = [{"sql": sql, "args": list(params)} for sql, params in statements]
+        return _pipeline(payload)
+
     def commit(self) -> None:
         pass  # Turso faz auto-commit
 
