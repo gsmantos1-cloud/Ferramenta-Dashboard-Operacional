@@ -1986,6 +1986,10 @@ def _processar_order(conn, o):
     cliente  = o.get("contact_name", "") or ""
     total    = str(o.get("total", ""))
 
+    # Ignora pedidos cancelados
+    if o.get("status") == "cancelled" or o.get("payment_status") in ("voided", "refunded"):
+        return "skip"
+
     shipping_status = o.get("shipping_status", "")
     if shipping_status == "shipped":
         envio = "Enviada"
@@ -2172,13 +2176,20 @@ def sincronizar_nuvemshop():
                     (o for o in orders_check if str(o.get("number", "")) == row["numero"]),
                     None,
                 )
-                if match and match.get("shipping_status") in ("shipped", "delivered"):
-                    with get_conn() as conn:
-                        conn.execute(
-                            "UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar=? WHERE id=?",
-                            (agora_rec, row["status"], row["id"]),
-                        )
-                    reconciliados += 1
+                if match:
+                    is_cancelado = (
+                        match.get("status") == "cancelled" or
+                        match.get("payment_status") in ("voided", "refunded")
+                    )
+                    is_enviado = match.get("shipping_status") in ("shipped", "delivered")
+                    if is_enviado or is_cancelado:
+                        status_final = "Cancelado" if is_cancelado else row["status"]
+                        with get_conn() as conn:
+                            conn.execute(
+                                "UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar=? WHERE id=?",
+                                (agora_rec, status_final, row["id"]),
+                            )
+                        reconciliados += 1
             except Exception:
                 pass
     except Exception:
@@ -2323,6 +2334,7 @@ def _registrar_webhooks_nuvemshop(store_id, token, base_url):
     eventos = [
         ("orders/paid",      f"{base_url}/nuvemshop/webhooks/orders/paid"),
         ("orders/fulfilled", f"{base_url}/nuvemshop/webhooks/orders/fulfilled"),
+        ("orders/cancelled", f"{base_url}/nuvemshop/webhooks/orders/cancelled"),
     ]
 
     for evento, url in eventos:
@@ -2362,6 +2374,32 @@ def webhook_order_paid():
                 pass
 
     return jsonify({"ok": True, "resultado": resultado}), 200
+
+
+@app.route("/nuvemshop/webhooks/orders/cancelled", methods=["POST"])
+def webhook_order_cancelled():
+    """Recebe notificação da NuvemShop quando um pedido é cancelado."""
+    try:
+        order = request.get_json(force=True) or {}
+    except Exception:
+        return jsonify({"ok": False}), 400
+
+    numero = str(order.get("number", "")).strip()
+    if not numero:
+        return jsonify({"ok": True}), 200
+
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM pedidos WHERE numero = ? AND ativo = 1", (numero,)
+        ).fetchone()
+        if row:
+            conn.execute(
+                "UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar='Cancelado' WHERE id=?",
+                (agora, row["id"]),
+            )
+
+    return jsonify({"ok": True}), 200
 
 
 @app.route("/nuvemshop/webhooks/orders/fulfilled", methods=["POST"])
