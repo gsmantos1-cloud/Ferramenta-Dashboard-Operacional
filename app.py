@@ -359,6 +359,23 @@ def init_db():
         except Exception:
             pass
 
+        # personalizacoes: tipo (varejo/atacado) + histórico de mudanças
+        try: conn.execute("ALTER TABLE personalizacoes ADD COLUMN tipo TEXT DEFAULT 'varejo'")
+        except Exception: pass
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS personalizacao_historico (
+                    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                    personalizacao_id INTEGER NOT NULL,
+                    numero_pedido     TEXT,
+                    acao              TEXT NOT NULL,
+                    detalhe           TEXT,
+                    usuario           TEXT,
+                    created_at        TEXT DEFAULT (datetime('now','localtime'))
+                )
+            """)
+        except Exception: pass
+
         # ── Índices: SEM eles, cada "WHERE coluna = ?" lê a TABELA INTEIRA ─────────
         # (full table scan). Isso multiplicava as leituras por milhares e estourou
         # a quota do Turso. Com índice, cada busca lê só as linhas necessárias.
@@ -370,6 +387,7 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_itens_pedido_numero   ON pedido_itens(pedido_numero)",
             "CREATE INDEX IF NOT EXISTS idx_itens_variant         ON pedido_itens(nv_variant_id)",
             "CREATE INDEX IF NOT EXISTS idx_pers_numero_pedido    ON personalizacoes(numero_pedido)",
+            "CREATE INDEX IF NOT EXISTS idx_pers_hist             ON personalizacao_historico(personalizacao_id)",
             "CREATE INDEX IF NOT EXISTS idx_stock_variant         ON sku_stock(nv_variant_id)",
             "CREATE INDEX IF NOT EXISTS idx_stock_produto_nome    ON sku_stock(produto_nome)",
             "CREATE INDEX IF NOT EXISTS idx_costs_variant         ON sku_costs(nv_variant_id)",
@@ -960,6 +978,19 @@ def _processar_estoque_pedidos():
         )
 
 
+def _log_pers(conn, pers_id, numero_pedido, acao, detalhe=None):
+    """Registra uma entrada no histórico de uma personalização (auditoria)."""
+    try:
+        conn.execute(
+            """INSERT INTO personalizacao_historico
+               (personalizacao_id, numero_pedido, acao, detalhe, usuario)
+               VALUES (?, ?, ?, ?, ?)""",
+            (pers_id, str(numero_pedido), acao, detalhe, session.get("usuario", "")),
+        )
+    except Exception:
+        pass
+
+
 def _sync_personalizacoes(conn):
     """Garante que todo pedido ativo com categoria='Personalizado' tenha entrada em personalizacoes."""
     pers_rows = conn.execute(
@@ -974,12 +1005,14 @@ def _sync_personalizacoes(conn):
 
     for p in novos:
         if p["numero"] not in ja_tem:
-            conn.execute(
+            cur = conn.execute(
                 """INSERT INTO personalizacoes
-                   (numero_pedido, nome_personalizacao, status)
-                   VALUES (?, ?, 'A SEPARAR')""",
+                   (numero_pedido, nome_personalizacao, status, tipo)
+                   VALUES (?, ?, 'A SEPARAR', 'varejo')""",
                 (p["numero"], p["cliente"] or None),
             )
+            _log_pers(conn, cur.lastrowid, p["numero"], "criada",
+                      "Criada automaticamente (venda do varejo)")
 
 
 # ── Routes — API ──────────────────────────────────────────────────────────────
@@ -1691,7 +1724,7 @@ def get_personalizacoes():
         _sync_personalizacoes(conn)
         rows = conn.execute(
             """SELECT id, numero_pedido, nome_personalizacao, numero_personalizacao,
-                      status, observacao, criado_em, atualizado_em
+                      status, observacao, criado_em, atualizado_em, tipo
                FROM personalizacoes ORDER BY
                CASE status
                    WHEN 'A SEPARAR'         THEN 1
@@ -1715,13 +1748,18 @@ def criar_personalizacao():
     nome     = str(data.get("nome_personalizacao", "")).strip()
     num_pers = str(data.get("numero_personalizacao", "")).strip()
     obs      = str(data.get("observacao", "")).strip()
+    tipo     = str(data.get("tipo", "varejo")).strip().lower()
+    if tipo not in ("varejo", "atacado"):
+        tipo = "varejo"
     with get_conn() as conn:
         cur = conn.execute(
             """INSERT INTO personalizacoes
-               (numero_pedido, nome_personalizacao, numero_personalizacao, observacao)
-               VALUES (?, ?, ?, ?)""",
-            (numero, nome or None, num_pers or None, obs or None),
+               (numero_pedido, nome_personalizacao, numero_personalizacao, observacao, tipo)
+               VALUES (?, ?, ?, ?, ?)""",
+            (numero, nome or None, num_pers or None, obs or None, tipo),
         )
+        _log_pers(conn, cur.lastrowid, numero, "criada",
+                  f"Criada manualmente ({tipo})")
     return jsonify({"mensagem": "Personalização criada", "id": cur.lastrowid}), 201
 
 
@@ -1734,14 +1772,25 @@ def atualizar_pers_status(pid):
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT id FROM personalizacoes WHERE id = ?", (pid,)
+            "SELECT id, numero_pedido, status FROM personalizacoes WHERE id = ?", (pid,)
         ).fetchone()
         if not row:
             return jsonify({"erro": "Personalização não encontrada"}), 404
+        anterior = row["status"]
         conn.execute(
             "UPDATE personalizacoes SET status = ?, atualizado_em = ? WHERE id = ?",
             (novo, agora, pid),
         )
+        if anterior != novo:
+            # Detecta se foi avanço ou retrocesso no fluxo
+            try:
+                voltou = PERS_STATUS.index(novo) < PERS_STATUS.index(anterior)
+            except ValueError:
+                voltou = False
+            seta = "←" if voltou else "→"
+            _log_pers(conn, pid, row["numero_pedido"],
+                      "retrocesso" if voltou else "status",
+                      f"{anterior} {seta} {novo}")
     return jsonify({"status": novo})
 
 
@@ -1749,8 +1798,27 @@ def atualizar_pers_status(pid):
 @login_required
 def deletar_personalizacao(pid):
     with get_conn() as conn:
+        row = conn.execute(
+            "SELECT numero_pedido FROM personalizacoes WHERE id = ?", (pid,)
+        ).fetchone()
         conn.execute("DELETE FROM personalizacoes WHERE id = ?", (pid,))
+        if row:
+            _log_pers(conn, pid, row["numero_pedido"], "excluida", "Personalização excluída")
     return jsonify({"mensagem": "Personalização excluída"})
+
+
+@app.route("/api/personalizacoes/<int:pid>/historico", methods=["GET"])
+@login_required
+def historico_personalizacao(pid):
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT acao, detalhe, usuario, created_at
+               FROM personalizacao_historico
+               WHERE personalizacao_id = ?
+               ORDER BY id DESC""",
+            (pid,),
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
 
 
 @app.route("/api/personalizacoes/<int:pid>", methods=["PATCH"])
@@ -1759,25 +1827,42 @@ def editar_personalizacao(pid):
     data = request.json or {}
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT id FROM personalizacoes WHERE id = ?", (pid,)
+            "SELECT * FROM personalizacoes WHERE id = ?", (pid,)
         ).fetchone()
         if not row:
             return jsonify({"erro": "Personalização não encontrada"}), 404
         agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        novo_nome = data.get("nome_personalizacao") or None
+        novo_num  = data.get("numero_personalizacao") or None
+        novo_obs  = data.get("observacao") or None
+        novo_tipo = str(data.get("tipo", row["tipo"] or "varejo")).strip().lower()
+        if novo_tipo not in ("varejo", "atacado"):
+            novo_tipo = row["tipo"] or "varejo"
+
         conn.execute(
             """UPDATE personalizacoes
                SET nome_personalizacao   = ?,
                    numero_personalizacao = ?,
                    observacao            = ?,
+                   tipo                  = ?,
                    atualizado_em         = ?
                WHERE id = ?""",
-            (
-                data.get("nome_personalizacao") or None,
-                data.get("numero_personalizacao") or None,
-                data.get("observacao") or None,
-                agora, pid,
-            ),
+            (novo_nome, novo_num, novo_obs, novo_tipo, agora, pid),
         )
+
+        # Registra no histórico apenas o que de fato mudou
+        mudancas = []
+        if (row["nome_personalizacao"] or None) != novo_nome:
+            mudancas.append(f"nome: '{row['nome_personalizacao'] or '—'}' → '{novo_nome or '—'}'")
+        if (row["numero_personalizacao"] or None) != novo_num:
+            mudancas.append(f"nº: '{row['numero_personalizacao'] or '—'}' → '{novo_num or '—'}'")
+        if (row["observacao"] or None) != novo_obs:
+            mudancas.append("observação alterada")
+        if (row["tipo"] or "varejo") != novo_tipo:
+            mudancas.append(f"tipo: {row['tipo'] or 'varejo'} → {novo_tipo}")
+        if mudancas:
+            _log_pers(conn, pid, row["numero_pedido"], "editada", "; ".join(mudancas))
     return jsonify({"mensagem": "Atualizado"})
 
 
