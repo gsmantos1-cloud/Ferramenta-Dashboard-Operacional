@@ -2152,12 +2152,13 @@ def sincronizar_nuvemshop():
 
     # ── Reconciliação: verifica cada pedido ativo individualmente na NuvemShop ──
     # (shipping_status[] filter returns HTTP 500 — must query per order)
+    # Limita a 30 pedidos por sync para evitar timeout no Vercel
     reconciliados = 0
     try:
         agora_rec = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with get_conn() as conn:
             ativos_db = conn.execute(
-                "SELECT id, numero, status FROM pedidos WHERE ativo=1"
+                "SELECT id, numero, status FROM pedidos WHERE ativo=1 ORDER BY id DESC LIMIT 30"
             ).fetchall()
         for row in ativos_db:
             try:
@@ -2199,28 +2200,14 @@ def sincronizar_nuvemshop():
             "reconciliados": reconciliados, "total": salvos + ja_enviados}
 
 
-_sync_state = {"running": False, "ultimo_resultado": None}
-
-
-def _run_sincronizacao():
-    _sync_state["running"] = True
-    try:
-        resultado = sincronizar_nuvemshop()
-        _sync_state["ultimo_resultado"] = resultado
-    except Exception as e:
-        _sync_state["ultimo_resultado"] = {"erro": str(e)}
-    finally:
-        _sync_state["running"] = False
-
-
 @app.route("/api/sincronizar", methods=["POST"])
 @login_required
 def sincronizar_manual():
-    if _sync_state["running"]:
-        return jsonify({"mensagem": "Sincronização já em andamento", "running": True})
-    t = threading.Thread(target=_run_sincronizacao, daemon=True)
-    t.start()
-    return jsonify({"mensagem": "Sincronização iniciada em background", "running": True})
+    try:
+        resultado = sincronizar_nuvemshop()
+    except Exception as e:
+        resultado = {"erro": str(e)}
+    return jsonify(resultado)
 
 
 @app.route("/api/sync/status")
@@ -2232,8 +2219,8 @@ def sync_status():
     return jsonify({
         "configurado": bool(store_id),
         "ultima_sincronizacao": row["valor"] if row else None,
-        "running": _sync_state["running"],
-        "ultimo_resultado": _sync_state["ultimo_resultado"],
+        "running": False,
+        "ultimo_resultado": None,
     })
 
 
