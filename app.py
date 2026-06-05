@@ -400,7 +400,13 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_stock_variant         ON sku_stock(nv_variant_id)",
             "CREATE INDEX IF NOT EXISTS idx_stock_produto_nome    ON sku_stock(produto_nome)",
             "CREATE INDEX IF NOT EXISTS idx_costs_variant         ON sku_costs(nv_variant_id)",
+            "CREATE INDEX IF NOT EXISTS idx_costs_sku             ON sku_costs(sku)",
             "CREATE INDEX IF NOT EXISTS idx_movs_variant          ON sku_stock_movements(nv_variant_id)",
+            "CREATE INDEX IF NOT EXISTS idx_pedidos_romaneio      ON pedidos(romaneio_id)",
+            "CREATE INDEX IF NOT EXISTS idx_pedidos_status        ON pedidos(status)",
+            "CREATE INDEX IF NOT EXISTS idx_atacado_itens_pedido  ON atacado_itens(pedido_id)",
+            "CREATE INDEX IF NOT EXISTS idx_atacado_hist_pedido   ON atacado_historico(pedido_id)",
+            "CREATE INDEX IF NOT EXISTS idx_compras_tam_compra    ON compras_tamanhos(compra_id)",
         ]
         for idx in indices:
             try: conn.execute(idx)
@@ -2395,8 +2401,10 @@ def sincronizar_nuvemshop():
             com_itens.add(numero)
 
     # ── Fase 1: payment_status=paid (incremental via updated_at_min) ────────────
+    # while page <= 100: trava de segurança (máx 20 mil pedidos/fase) — impede
+    # que um eventual bug entre em loop infinito de leituras.
     page = 1
-    while True:
+    while page <= 100:
         params = f"payment_status=paid&per_page=200&page={page}"
         if iso_q:
             params += f"&updated_at_min={iso_q}"
@@ -2418,7 +2426,7 @@ def sincronizar_nuvemshop():
 
     # ── Fase 2: payment_status=authorized (incremental via updated_at_min) ──────
     page = 1
-    while True:
+    while page <= 100:
         params = f"payment_status=authorized&per_page=200&page={page}"
         if iso_q:
             params += f"&updated_at_min={iso_q}"
@@ -2455,7 +2463,7 @@ def sincronizar_nuvemshop():
         if ativos_map:
             cancelados_nv = set()
             pg = 1
-            while True:
+            while pg <= 100:
                 p_can = f"status=cancelled&per_page=200&page={pg}"
                 if iso_q:
                     p_can += f"&updated_at_min={iso_q}"
