@@ -3397,5 +3397,21 @@ try:
 except Exception:
     pass
 
+
+# ── NuvemShop LGPD webhooks ───────────────────────────────────────────────────
+
+@app.route("/nuvemshop/webhooks/store-redact", methods=["POST"])
+def lgpd_store_redact():
+    return jsonify({"ok": True}), 200
+
+@app.route("/nuvemshop/webhooks/customers-redact", methods=["POST"])
+def lgpd_customers_redact():
+    return jsonify({"ok": True}), 200
+
+@app.route("/nuvemshop/webhooks/customers-data-request", methods=["POST"])
+def lgpd_customers_data_request():
+    return jsonify({"ok": True}), 200
+
+
 if __name__ == "__main__":
     app.run(debug=False, host="0.0.0.0", port=5000)
