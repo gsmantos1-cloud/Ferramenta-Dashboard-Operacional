@@ -3,8 +3,8 @@
 pedidos.db
 *.db
 
-# ── Dumps de dados (contêm PII de clientes) ─────────────────────
-seed_dados_manuais.sql
+# ── Dumps de dados ──────────────────────────────────────────────
+# seed_dados_manuais.sql é versionado de propósito (seed para o Turso)
 seed_dados_completo.sql
 *.gitmsg.tmp
 .gitmsg.tmp
