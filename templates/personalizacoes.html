@@ -18,7 +18,27 @@
 </div>
 
 <!-- Resumo por status -->
-<div id="resumoStatus" class="d-flex flex-wrap gap-2 mb-4"></div>
+<div id="resumoStatus" class="d-flex flex-wrap gap-2 mb-3"></div>
+
+<!-- Filtros -->
+<div class="d-flex flex-wrap gap-2 mb-4 align-items-center">
+    <div style="position:relative;flex:1;min-width:220px;max-width:340px">
+        <i class="bi bi-search" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:.85rem"></i>
+        <input id="fbBusca" type="text" class="form-control form-control-sm"
+               placeholder="Buscar por nome ou número do pedido..." style="padding-left:30px"
+               oninput="aplicarFiltro()">
+    </div>
+    <div class="d-flex align-items-center gap-1">
+        <label style="font-size:.78rem;color:var(--muted)">De</label>
+        <input id="fbDe" type="date" class="form-control form-control-sm" style="width:140px" onchange="aplicarFiltro()" title="Data inicial">
+        <span style="color:var(--muted)">→</span>
+        <input id="fbAte" type="date" class="form-control form-control-sm" style="width:140px" onchange="aplicarFiltro()" title="Data final">
+    </div>
+    <button class="btn btn-outline-secondary btn-sm" onclick="limparFiltro()">
+        <i class="bi bi-x-circle me-1"></i>Limpar
+    </button>
+    <span id="fbContador" style="font-size:.78rem;color:var(--muted)"></span>
+</div>
 
 <!-- Kanban -->
 <div style="overflow-x:auto;padding-bottom:1rem">
@@ -122,10 +142,57 @@ async function carregar() {
     }
 }
 
+// ── Filtros (por nome, número e data) ──────────────────────────────────────────
+function getFiltrados() {
+    const q   = (document.getElementById('fbBusca')?.value || '').toLowerCase().trim();
+    const de  = document.getElementById('fbDe')?.value || '';
+    const ate = document.getElementById('fbAte')?.value || '';
+
+    return todos.filter(p => {
+        // Texto: número do pedido, número da camiseta, nome, observação
+        if (q) {
+            const hay = [
+                p.numero_pedido, p.numero_personalizacao,
+                p.nome_personalizacao, p.observacao,
+            ].map(x => String(x || '')).join(' ').toLowerCase();
+            if (!hay.includes(q)) return false;
+        }
+        // Data (criado_em em YYYY-MM-DD)
+        if (de || ate) {
+            const d = (p.criado_em || '').slice(0, 10);
+            if (!d) return false;
+            if (de && d < de)  return false;
+            if (ate && d > ate) return false;
+        }
+        return true;
+    });
+}
+
+function aplicarFiltro() {
+    renderResumo();
+    renderKanban();
+}
+
+function limparFiltro() {
+    document.getElementById('fbBusca').value = '';
+    document.getElementById('fbDe').value    = '';
+    document.getElementById('fbAte').value   = '';
+    aplicarFiltro();
+}
+
 function renderResumo() {
+    const lista = getFiltrados();
     const counts = {};
     COLS.forEach(c => counts[c.status] = 0);
-    todos.forEach(p => { if (counts[p.status] !== undefined) counts[p.status]++; });
+    lista.forEach(p => { if (counts[p.status] !== undefined) counts[p.status]++; });
+
+    // Contador de filtro
+    const cont = document.getElementById('fbContador');
+    if (cont) {
+        cont.textContent = lista.length === todos.length
+            ? `${todos.length} personalizações`
+            : `${lista.length} de ${todos.length}`;
+    }
 
     document.getElementById('resumoStatus').innerHTML = COLS.map(c => {
         const n = counts[c.status] || 0;
@@ -139,9 +206,10 @@ function renderResumo() {
 }
 
 function renderKanban() {
+    const lista = getFiltrados();
     const grupos = {};
     COLS.forEach(c => grupos[c.status] = []);
-    todos.forEach(p => { if (grupos[p.status] !== undefined) grupos[p.status].push(p); });
+    lista.forEach(p => { if (grupos[p.status] !== undefined) grupos[p.status].push(p); });
 
     document.getElementById('kanban').innerHTML = COLS.map(col => {
         const itens = grupos[col.status];
