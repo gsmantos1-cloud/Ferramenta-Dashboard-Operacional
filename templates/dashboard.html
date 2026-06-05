@@ -835,7 +835,7 @@ document.getElementById('formPedido').addEventListener('submit', async e => {
 });
 
 atualizar();
-setInterval(atualizar, 60000);
+setInterval(atualizar, 300000);  // 5 min — webhooks ja trazem pedidos em tempo real
 carregarAlertaUrgencia();
 carregarSyncStatus();
 
