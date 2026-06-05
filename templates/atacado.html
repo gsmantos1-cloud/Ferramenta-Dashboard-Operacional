@@ -224,6 +224,11 @@
         <button id="btnHistorico" class="btn btn-sm btn-outline-secondary" onclick="abrirHistorico()" title="Ver histórico de edições">
           <i class="bi bi-clock-history me-1"></i>Histórico
         </button>
+        <button id="btnPdf" class="btn btn-sm"
+                style="background:rgba(248,81,73,.12);border:1px solid #f8514944;color:#f85149"
+                onclick="gerarPdfPedido()" title="Gerar PDF do pedido com fotos">
+          <i class="bi bi-file-earmark-pdf me-1"></i>PDF
+        </button>
         <button id="btnEditarPedido" class="btn btn-sm"
                 style="background:rgba(88,166,255,.15);border:1px solid #58a6ff44;color:#58a6ff"
                 onclick="editarPedido()" title="Editar todas as informações do pedido">
@@ -275,7 +280,30 @@
      border:1px solid var(--border);border-radius:8px;max-height:260px;overflow-y:auto;
      box-shadow:0 8px 32px rgba(0,0,0,.4);min-width:340px"></div>
 
+<!-- ── Área de impressão do PDF (oculta na tela, visível só ao imprimir) ─── -->
+<div id="pdfArea"></div>
+
 <style>
+/* PDF / impressão */
+#pdfArea { display:none; }
+@media print {
+  body * { visibility: hidden !important; }
+  #pdfArea, #pdfArea * { visibility: visible !important; }
+  #pdfArea {
+    display: block !important;
+    position: absolute; left: 0; top: 0; width: 100%;
+    background: #fff; color: #000;
+    padding: 24px 28px; font-family: Arial, Helvetica, sans-serif;
+  }
+  @page { size: A4 portrait; margin: 12mm; }
+}
+.pdf-tbl { width:100%; border-collapse:collapse; }
+.pdf-tbl th { background:#1a3a5c; color:#fff; font-size:11px; text-transform:uppercase; letter-spacing:.04em; padding:7px 8px; text-align:left; }
+.pdf-tbl td { border-bottom:1px solid #ddd; padding:7px 8px; font-size:12px; color:#000; vertical-align:middle; }
+.pdf-img { width:48px; height:48px; object-fit:cover; border-radius:6px; border:1px solid #ccc; }
+.pdf-noimg { width:48px; height:48px; border-radius:6px; border:1px dashed #ccc; display:flex; align-items:center; justify-content:center; color:#bbb; font-size:18px; }
+
+
 .filter-atk { background:transparent;border:1px solid var(--border);color:var(--muted);font-size:.8rem;padding:4px 12px;border-radius:20px; }
 .filter-atk:hover { border-color:#8b949e;color:var(--text); }
 .filter-atk.active { background:var(--blue);border-color:var(--blue);color:#fff; }
@@ -1083,6 +1111,110 @@ function renderHistorico(hist) {
             </ul>` : ''}
         </div>`;
     }).join('');
+}
+
+// ── Gerar PDF do pedido ───────────────────────────────────────────────
+async function gerarPdfPedido() {
+    if (!pedidoAbertoId) return;
+    const btn = document.getElementById('btnPdf');
+    const txtOrig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Gerando...';
+    try {
+        await carregarCatalogo();   // garante as imagens das variantes
+        const r = await fetch(`/api/atacado/pedidos/${pedidoAbertoId}`);
+        const {pedido, itens} = await r.json();
+
+        const area = document.getElementById('pdfArea');
+        area.innerHTML = buildPdfHtml(pedido, itens);
+
+        // Espera as imagens carregarem antes de imprimir
+        const imgs = Array.from(area.querySelectorAll('img'));
+        await Promise.all(imgs.map(img => (img.complete && img.naturalWidth)
+            ? Promise.resolve()
+            : new Promise(res => { img.onload = img.onerror = res; setTimeout(res, 4000); })));
+
+        window.print();
+    } catch(e) {
+        alert('Erro ao gerar PDF.');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = txtOrig;
+    }
+}
+
+function buildPdfHtml(pedido, itens) {
+    const numFmt = String(pedido.numero || pedido.id).padStart(2, '0');
+    const totalPecas = itens.reduce((s,i) => s + (i.quantidade||0), 0);
+    const totalValor = itens.reduce((s,i) => s + (i.valor_unit||0) * (i.quantidade||0), 0);
+
+    const linhas = itens.map(it => {
+        const img = imagemDaVariante(it.nv_variant_id);
+        const imgCell = img
+            ? `<img class="pdf-img" src="${escHtml(img)}">`
+            : `<div class="pdf-noimg">&#128247;</div>`;
+        const sub = (it.valor_unit||0) * (it.quantidade||0);
+        return `<tr>
+            <td style="width:56px">${imgCell}</td>
+            <td>
+                <div style="font-weight:700">${escHtml(it.produto)}</div>
+                ${it.variante ? `<div style="color:#555;font-size:11px">${escHtml(it.variante)}</div>` : ''}
+            </td>
+            <td style="text-align:center;font-weight:700;width:55px">${it.quantidade}</td>
+            <td style="text-align:right;width:80px">${it.valor_unit ? 'R$ '+fmtMoeda(it.valor_unit) : '—'}</td>
+            <td style="text-align:right;width:90px;font-weight:700">${sub ? 'R$ '+fmtMoeda(sub) : '—'}</td>
+        </tr>`;
+    }).join('');
+
+    const infoCliente = [
+        pedido.contato  ? `WhatsApp: ${escHtml(pedido.contato)}` : '',
+        pedido.cpf      ? `CPF: ${escHtml(pedido.cpf)}` : '',
+        pedido.cep      ? `CEP: ${escHtml(pedido.cep)}` : '',
+        pedido.cidade   ? `Cidade: ${escHtml(pedido.cidade)}` : '',
+        pedido.endereco ? `Endereço: ${escHtml(pedido.endereco)}` : '',
+        pedido.frete_tipo ? `Frete: ${labelFrete(pedido.frete_tipo)}` : '',
+        pedido.prazo    ? `Prazo: ${fmtDate(pedido.prazo)}` : '',
+    ].filter(Boolean).map(x => `<span style="margin-right:16px">${x}</span>`).join('');
+
+    return `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1a3a5c;padding-bottom:10px;margin-bottom:14px">
+        <div>
+            <div style="font-size:20px;font-weight:800;color:#1a3a5c">GS MANTOS</div>
+            <div style="font-size:12px;color:#555">Pedido de Atacado</div>
+        </div>
+        <div style="text-align:right">
+            <div style="font-size:18px;font-weight:800;color:#1a3a5c">Pedido #${numFmt}</div>
+            <div style="font-size:11px;color:#555">${fmtDatetime(pedido.created_at)}</div>
+            <div style="font-size:11px;color:#555">${pedido.pago ? 'PAGO' : 'Pagamento pendente'}</div>
+        </div>
+    </div>
+
+    <div style="font-size:15px;font-weight:700;color:#000;margin-bottom:2px">${escHtml(pedido.cliente || pedido.nome || '')}</div>
+    <div style="font-size:11px;color:#444;margin-bottom:14px">${infoCliente}</div>
+
+    <table class="pdf-tbl">
+        <thead>
+            <tr>
+                <th>Foto</th><th>Produto / Variante</th>
+                <th style="text-align:center">Qtd</th>
+                <th style="text-align:right">Unit.</th>
+                <th style="text-align:right">Subtotal</th>
+            </tr>
+        </thead>
+        <tbody>${linhas}</tbody>
+        <tfoot>
+            <tr>
+                <td colspan="2" style="text-align:right;font-weight:700;border-top:2px solid #1a3a5c">TOTAL</td>
+                <td style="text-align:center;font-weight:800;border-top:2px solid #1a3a5c">${totalPecas}</td>
+                <td style="border-top:2px solid #1a3a5c"></td>
+                <td style="text-align:right;font-weight:800;border-top:2px solid #1a3a5c">R$ ${fmtMoeda(totalValor)}</td>
+            </tr>
+        </tfoot>
+    </table>
+
+    ${pedido.observacao ? `<div style="margin-top:14px;font-size:11px;color:#444"><b>Observação:</b> ${escHtml(pedido.observacao)}</div>` : ''}
+    <div style="margin-top:24px;font-size:10px;color:#999;text-align:center">Gerado pelo sistema GS Mantos · ${totalPecas} peça(s)</div>
+    `;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
