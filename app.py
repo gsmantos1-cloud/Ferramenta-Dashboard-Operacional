@@ -390,6 +390,7 @@ def init_db():
         # a quota do Turso. Com índice, cada busca lê só as linhas necessárias.
         indices = [
             "CREATE INDEX IF NOT EXISTS idx_pedidos_numero        ON pedidos(numero)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uniq_pedidos_numero ON pedidos(numero)",
             "CREATE INDEX IF NOT EXISTS idx_pedidos_ativo         ON pedidos(ativo)",
             "CREATE INDEX IF NOT EXISTS idx_pedidos_enviado_em    ON pedidos(enviado_em)",
             "CREATE INDEX IF NOT EXISTS idx_pedidos_estoque_proc  ON pedidos(estoque_processado)",
@@ -1126,7 +1127,7 @@ def add_pedido():
         if existente:
             return jsonify({"erro": f"Pedido #{numero} já existe na base de dados"}), 409
         conn.execute(
-            "INSERT INTO pedidos (numero, data_pedido, categoria, status) VALUES (?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO pedidos (numero, data_pedido, categoria, status) VALUES (?, ?, ?, ?)",
             (numero, data_str, categoria, status),
         )
     return jsonify({"mensagem": "Pedido cadastrado"}), 201
@@ -1664,7 +1665,7 @@ def importar_confirmar():
             try:
                 if is_enviada:
                     conn.execute(
-                        """INSERT INTO pedidos
+                        """INSERT OR IGNORE INTO pedidos
                            (numero, data_pedido, categoria, status, cliente, total, pagamento, transportadora,
                             ativo, enviado_em, status_ao_enviar)
                            VALUES (?,?,?,?,?,?,?,?,0,?,?)""",
@@ -1674,7 +1675,7 @@ def importar_confirmar():
                     ja_enviados += 1
                 else:
                     conn.execute(
-                        """INSERT INTO pedidos
+                        """INSERT OR IGNORE INTO pedidos
                            (numero, data_pedido, categoria, status, cliente, total, pagamento, transportadora)
                            VALUES (?,?,?,?,?,?,?,?)""",
                         (numero, data_str, categoria, status, cliente, total, pagamento, transportadora),
@@ -2266,7 +2267,7 @@ def _processar_order(conn, o):
     try:
         if c["is_env"]:
             conn.execute(
-                """INSERT INTO pedidos
+                """INSERT OR IGNORE INTO pedidos
                    (numero,data_pedido,categoria,status,cliente,total,pagamento,forma_pagamento,
                     transportadora,ativo,enviado_em,status_ao_enviar)
                    VALUES (?,?,?,?,?,?,?,?,?,0,?,?)""",
@@ -2279,7 +2280,7 @@ def _processar_order(conn, o):
             return "ja_enviado"
         else:
             conn.execute(
-                """INSERT INTO pedidos
+                """INSERT OR IGNORE INTO pedidos
                    (numero,data_pedido,categoria,status,cliente,total,pagamento,forma_pagamento,transportadora)
                    VALUES (?,?,?,?,?,?,?,?,?)""",
                 (numero, c["data_str"], "Normal", c["status"], c["cliente"], c["total"],
@@ -2359,11 +2360,11 @@ def sincronizar_nuvemshop():
                             pass
         pending.clear()
 
-    SQL_ENV = """INSERT INTO pedidos
+    SQL_ENV = """INSERT OR IGNORE INTO pedidos
                  (numero,data_pedido,categoria,status,cliente,total,pagamento,forma_pagamento,
                   transportadora,ativo,enviado_em,status_ao_enviar)
                  VALUES (?,?,?,?,?,?,?,?,?,0,?,?)"""
-    SQL_ATV = """INSERT INTO pedidos
+    SQL_ATV = """INSERT OR IGNORE INTO pedidos
                  (numero,data_pedido,categoria,status,cliente,total,pagamento,forma_pagamento,transportadora)
                  VALUES (?,?,?,?,?,?,?,?,?)"""
 
@@ -4672,6 +4673,50 @@ def admin_import():
             resumo[tabela] = ins
             total_ok += ins
     return jsonify({"importados": total_ok, "por_tabela": resumo})
+
+
+@app.route("/api/admin/dedup", methods=["POST"])
+@login_required
+def admin_dedup():
+    """Remove pedidos e itens duplicados (mantém o de menor id) e cria o índice
+    único em pedidos(numero), que impede novas duplicatas. Limpa o cursor do sync."""
+    with get_conn() as conn:
+        antes_p = conn.execute("SELECT COUNT(*) FROM pedidos").fetchone()[0]
+        conn.execute("""
+            DELETE FROM pedidos WHERE id NOT IN (
+                SELECT MIN(id) FROM pedidos GROUP BY numero
+            )
+        """)
+        depois_p = conn.execute("SELECT COUNT(*) FROM pedidos").fetchone()[0]
+
+        antes_i = conn.execute("SELECT COUNT(*) FROM pedido_itens").fetchone()[0]
+        conn.execute("""
+            DELETE FROM pedido_itens WHERE id NOT IN (
+                SELECT MIN(id) FROM pedido_itens
+                GROUP BY pedido_numero, COALESCE(produto_nome,''),
+                         COALESCE(variante,''), COALESCE(nv_variant_id,0)
+            )
+        """)
+        depois_i = conn.execute("SELECT COUNT(*) FROM pedido_itens").fetchone()[0]
+
+        # Sem duplicatas agora → cria o índice único (impede futuras)
+        criou_indice = False
+        try:
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uniq_pedidos_numero ON pedidos(numero)")
+            criou_indice = True
+        except Exception as e:
+            criou_indice = f"falhou: {e}"
+
+        # Para/zera o sync retomável
+        conn.execute("DELETE FROM config WHERE chave = 'sync_estado'")
+
+    return jsonify({
+        "pedidos_removidos": antes_p - depois_p,
+        "itens_removidos":   antes_i - depois_i,
+        "indice_unico":      criou_indice,
+        "mensagem": f"{antes_p - depois_p} pedido(s) duplicado(s) e "
+                    f"{antes_i - depois_i} item(ns) removido(s).",
+    })
 
 
 @app.route("/admin/migrar", methods=["GET"])
