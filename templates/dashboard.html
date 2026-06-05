@@ -714,6 +714,7 @@ async function sincronizarAgora(btn) {
     const el = document.getElementById('syncStatus');
     el.textContent = 'Sincronizando...';
     el.style.color = '';
+    const _ini = Date.now();
     try {
         const r = await fetch('/api/sincronizar', { method: 'POST' });
         const d = await r.json();
@@ -721,12 +722,14 @@ async function sincronizarAgora(btn) {
             el.textContent = '⚠ Erro: ' + d.erro;
             el.style.color = '#f85149';
         } else {
+            if (d.tempos) console.log('Tempos por fase (seg):', d.tempos);
+            const seg = ((Date.now() - _ini) / 1000).toFixed(1);
             const partes = [];
             if (d.salvos)        partes.push(d.salvos + ' novo(s)');
             if (d.ja_enviados)   partes.push(d.ja_enviados + ' já enviado(s)');
             if (d.reconciliados) partes.push(d.reconciliados + ' reconciliado(s)');
             const hora = new Date().toLocaleTimeString('pt-BR');
-            el.textContent = '✓ Sincronizado às ' + hora + (partes.length ? ' — ' + partes.join(', ') : ' — sem novidades');
+            el.textContent = '✓ Sincronizado às ' + hora + ' (' + seg + 's)' + (partes.length ? ' — ' + partes.join(', ') : ' — sem novidades');
             atualizar();
         }
     } catch(e) {

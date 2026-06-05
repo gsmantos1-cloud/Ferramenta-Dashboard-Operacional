@@ -2165,15 +2165,27 @@ def sincronizar_nuvemshop():
     salvos = duplicados = ja_enviados = 0
     hoje = date.today()
 
-    # Converte última sync para Unix timestamp (usado apenas para 'paid' — incremental)
-    ts_min = ""
+    # Instrumentação: mede o tempo gasto em cada fase (retornado no resultado)
+    import time
+    _ult = [time.time()]
+    tempos = {}
+    def _marco(nome):
+        agora_t = time.time()
+        tempos[nome] = round(agora_t - _ult[0], 2)
+        _ult[0] = agora_t
+
+    # Filtro incremental: a API NuvemShop usa ISO 8601 (NÃO unix timestamp — o
+    # código antigo passava timestamp unix, que a API ignorava → baixava TUDO sempre).
+    # updated_at_min pega qualquer pedido que mudou de status desde a última sync.
+    # Recua 1 dia como margem de segurança contra diferenças de fuso horário.
+    iso_q = ""
     if ultima_sync:
         try:
-            from datetime import timezone
-            dt = datetime.fromisoformat(ultima_sync).replace(tzinfo=timezone.utc)
-            ts_min = str(int(dt.timestamp()))
+            from datetime import timedelta as _td
+            dt = datetime.fromisoformat(ultima_sync) - _td(days=1)
+            iso_q = dt.strftime("%Y-%m-%d")   # data simples ISO 8601 (sem hora/timezone)
         except Exception:
-            ts_min = ""
+            iso_q = ""
 
     # ── Acumulador: todas as escritas vão para 'pending' e são gravadas em lotes ──
     pending = []
@@ -2244,12 +2256,12 @@ def sincronizar_nuvemshop():
             pending.extend(_build_item_stmts(numero, produtos))
             com_itens.add(numero)
 
-    # ── Fase 1: payment_status=paid com filtro incremental (ts_min) ─────────────
+    # ── Fase 1: payment_status=paid (incremental via updated_at_min) ────────────
     page = 1
     while True:
         params = f"payment_status=paid&per_page=200&page={page}"
-        if ts_min:
-            params += f"&created_at_min={ts_min}"
+        if iso_q:
+            params += f"&updated_at_min={iso_q}"
         url = f"https://api.nuvemshop.com.br/v1/{store_id}/orders?{params}"
         req = ureq.Request(url, headers=headers)
         try:
@@ -2264,11 +2276,14 @@ def sincronizar_nuvemshop():
         page += 1
         if len(orders) < 200:
             break
+    _marco("fase1_paid")
 
-    # ── Fase 2: payment_status=authorized (sem ts_min — pedidos podem ser antigos) ──
+    # ── Fase 2: payment_status=authorized (incremental via updated_at_min) ──────
     page = 1
     while True:
         params = f"payment_status=authorized&per_page=200&page={page}"
+        if iso_q:
+            params += f"&updated_at_min={iso_q}"
         url = f"https://api.nuvemshop.com.br/v1/{store_id}/orders?{params}"
         req = ureq.Request(url, headers=headers)
         try:
@@ -2283,9 +2298,11 @@ def sincronizar_nuvemshop():
         page += 1
         if len(orders_auth) < 200:
             break
+    _marco("fase2_authorized")
 
     # Grava tudo que foi coletado nas fases 1 e 2 (poucos lotes)
     _flush()
+    _marco("gravacao_banco")
 
     # ── Fase 3: cancelados na NuvemShop → marca como cancelado no banco ──────────
     reconciliados = 0
@@ -2301,7 +2318,10 @@ def sincronizar_nuvemshop():
             cancelados_nv = set()
             pg = 1
             while True:
-                url_can = f"https://api.nuvemshop.com.br/v1/{store_id}/orders?status=cancelled&per_page=200&page={pg}"
+                p_can = f"status=cancelled&per_page=200&page={pg}"
+                if iso_q:
+                    p_can += f"&updated_at_min={iso_q}"
+                url_can = f"https://api.nuvemshop.com.br/v1/{store_id}/orders?{p_can}"
                 req_can = ureq.Request(url_can, headers=headers)
                 try:
                     with ureq.urlopen(req_can, timeout=20) as r:
@@ -2329,12 +2349,14 @@ def sincronizar_nuvemshop():
                 reconciliados = len(updates)
     except Exception:
         pass
+    _marco("fase3_cancelados")
 
     # ── Desconto automático de estoque para pedidos novos ───────────────────
     try:
         _processar_estoque_pedidos()
     except Exception:
         pass
+    _marco("estoque")
 
     agora = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
     with get_conn() as conn:
@@ -2344,7 +2366,8 @@ def sincronizar_nuvemshop():
         )
 
     return {"salvos": salvos, "duplicados": duplicados, "ja_enviados": ja_enviados,
-            "reconciliados": reconciliados, "total": salvos + ja_enviados}
+            "reconciliados": reconciliados, "total": salvos + ja_enviados,
+            "tempos": tempos}
 
 
 @app.route("/api/sincronizar", methods=["POST"])
