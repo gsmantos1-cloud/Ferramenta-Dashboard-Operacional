@@ -248,6 +248,15 @@ def init_db():
                 separado_por TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS atacado_historico (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                pedido_id  INTEGER NOT NULL,
+                descricao  TEXT NOT NULL,
+                detalhes   TEXT,
+                usuario    TEXT,
+                created_at DATETIME DEFAULT (datetime('now','localtime'))
+            );
+
             CREATE TABLE IF NOT EXISTS compras_manual (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 nome        TEXT    NOT NULL,
@@ -4157,6 +4166,8 @@ def api_atacado_criar():
                     (pedido_id, produto, variante, qty_total,
                      qty_est, qty_forn, nv_vid, valor_unit)
                 )
+        _log_atacado(conn, pedido_id, "Pedido criado",
+                     f"Cliente: {cliente} · {len(itens)} item(ns)", session.get("usuario", ""))
         conn.commit()
     return jsonify({"ok": True, "id": pedido_id, "numero": proximo_numero}), 201
 
@@ -4172,6 +4183,148 @@ def api_atacado_detalhe(pid):
             "SELECT * FROM atacado_itens WHERE pedido_id=? ORDER BY id", (pid,)
         ).fetchall()
     return jsonify({"pedido": dict(ped), "itens": [dict(i) for i in itens]})
+
+
+def _log_atacado(conn, pid, descricao, detalhes=None, usuario=None):
+    """Registra uma entrada no histórico do pedido de atacado."""
+    conn.execute(
+        """INSERT INTO atacado_historico (pedido_id, descricao, detalhes, usuario, created_at)
+           VALUES (?,?,?,?,?)""",
+        (pid, descricao, detalhes, usuario or session.get("usuario", ""),
+         datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+    )
+
+
+@app.route("/api/atacado/pedidos/<int:pid>/historico", methods=["GET"])
+@login_required
+def api_atacado_historico(pid):
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM atacado_historico WHERE pedido_id=? ORDER BY id DESC", (pid,)
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/atacado/pedidos/<int:pid>", methods=["PUT"])
+@login_required
+def api_atacado_editar(pid):
+    """Edita todas as informações do pedido (cabeçalho + itens) e registra histórico."""
+    data    = request.get_json() or {}
+    cliente = (data.get("cliente") or "").strip()
+    contato = (data.get("contato") or "").strip()
+    if not cliente:
+        return jsonify({"erro": "Nome do cliente é obrigatório"}), 400
+    if not contato:
+        return jsonify({"erro": "Número de WhatsApp é obrigatório"}), 400
+
+    agora   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    usuario = session.get("usuario", "")
+
+    with get_conn() as conn:
+        ped = conn.execute("SELECT * FROM atacado_pedidos WHERE id=?", (pid,)).fetchone()
+        if not ped:
+            return jsonify({"erro": "Pedido não encontrado"}), 404
+
+        mudancas = []
+
+        # ── Cabeçalho ──────────────────────────────────────────────────────
+        campos = [
+            ("cliente",    "Cliente",    cliente),
+            ("nome",       "Nome",       data.get("nome", "") or ""),
+            ("contato",    "WhatsApp",   contato),
+            ("cpf",        "CPF",        data.get("cpf", "") or ""),
+            ("cep",        "CEP",        data.get("cep", "") or ""),
+            ("endereco",   "Endereço",   data.get("endereco", "") or ""),
+            ("cidade",     "Cidade",     data.get("cidade", "") or ""),
+            ("prazo",      "Prazo",      data.get("prazo", "") or ""),
+            ("observacao", "Observação", data.get("observacao", "") or ""),
+            ("frete_tipo", "Frete",      data.get("frete_tipo", "a_combinar") or "a_combinar"),
+        ]
+        chaves = ped.keys()
+        for col, label, novo in campos:
+            antigo = ped[col] if col in chaves else None
+            a = "" if antigo is None else str(antigo)
+            n = "" if novo is None else str(novo)
+            if a != n:
+                mudancas.append(f"{label}: \"{a}\" → \"{n}\"")
+
+        pago_novo = 1 if data.get("pago") else 0
+        if (ped["pago"] or 0) != pago_novo:
+            mudancas.append(f"Pago: {'Sim' if ped['pago'] else 'Não'} → {'Sim' if pago_novo else 'Não'}")
+
+        conn.execute(
+            """UPDATE atacado_pedidos SET
+                 cliente=?, nome=?, contato=?, cpf=?, cep=?, endereco=?, cidade=?,
+                 prazo=?, observacao=?, frete_tipo=?, pago=?, updated_at=?
+               WHERE id=?""",
+            (cliente, data.get("nome", "") or "", contato, data.get("cpf", "") or "",
+             data.get("cep", "") or "", data.get("endereco", "") or "", data.get("cidade", "") or "",
+             data.get("prazo", "") or "", data.get("observacao", "") or "",
+             data.get("frete_tipo", "a_combinar") or "a_combinar", pago_novo, agora, pid),
+        )
+
+        # ── Itens (diff por id) ────────────────────────────────────────────
+        itens_novos = data.get("itens") or []
+        existentes  = {r["id"]: r for r in conn.execute(
+            "SELECT * FROM atacado_itens WHERE pedido_id=?", (pid,)).fetchall()}
+        ids_mantidos = set()
+
+        for item in itens_novos:
+            produto  = (item.get("produto") or "").strip()
+            variante = (item.get("variante") or "").strip()
+            qty_est  = max(int(item.get("qty_estoque") or 0), 0)
+            qty_forn = max(int(item.get("qty_fornecedor") or 0), 0)
+            qty_tot  = qty_est + qty_forn
+            nv_vid   = item.get("nv_variant_id") or None
+            valor    = float(item.get("valor_unit") or 0)
+            if not produto or qty_tot <= 0:
+                continue
+            iid = item.get("id")
+            try:
+                iid = int(iid) if iid is not None else None
+            except (TypeError, ValueError):
+                iid = None
+
+            if iid and iid in existentes:
+                ids_mantidos.add(iid)
+                old = existentes[iid]
+                if (old["produto"] != produto or (old["variante"] or "") != variante
+                        or old["quantidade"] != qty_tot or float(old["valor_unit"] or 0) != valor):
+                    mudancas.append(
+                        f"Item \"{produto}\": {old['quantidade']}un → {qty_tot}un, "
+                        f"R${float(old['valor_unit'] or 0):.2f} → R${valor:.2f}")
+                conn.execute(
+                    """UPDATE atacado_itens SET
+                         produto=?, variante=?, quantidade=?, qty_estoque=?, qty_fornecedor=?,
+                         nv_variant_id=?, valor_unit=? WHERE id=?""",
+                    (produto, variante, qty_tot, qty_est, qty_forn, nv_vid, valor, iid))
+            else:
+                conn.execute(
+                    """INSERT INTO atacado_itens
+                         (pedido_id, produto, variante, quantidade, qty_estoque,
+                          qty_fornecedor, nv_variant_id, valor_unit)
+                       VALUES (?,?,?,?,?,?,?,?)""",
+                    (pid, produto, variante, qty_tot, qty_est, qty_forn, nv_vid, valor))
+                mudancas.append(f"Item adicionado: \"{produto}\" ({qty_tot}un)")
+
+        for iid, old in existentes.items():
+            if iid not in ids_mantidos:
+                conn.execute("DELETE FROM atacado_itens WHERE id=?", (iid,))
+                mudancas.append(f"Item removido: \"{old['produto']}\" ({old['quantidade']}un)")
+
+        # ── Recalcula status (se não enviado) ──────────────────────────────
+        total = conn.execute("SELECT COUNT(*) FROM atacado_itens WHERE pedido_id=?", (pid,)).fetchone()[0]
+        sep   = conn.execute("SELECT COUNT(*) FROM atacado_itens WHERE pedido_id=? AND separado=1", (pid,)).fetchone()[0]
+        if ped["status"] != "enviado":
+            novo_status = "separado" if (total > 0 and sep == total) else ("separando" if sep > 0 else "pendente")
+            conn.execute("UPDATE atacado_pedidos SET status=? WHERE id=?", (novo_status, pid))
+
+        # ── Registra histórico ─────────────────────────────────────────────
+        if mudancas:
+            _log_atacado(conn, pid, "Pedido editado", " | ".join(mudancas), usuario)
+
+        conn.commit()
+    return jsonify({"ok": True, "mudancas": len(mudancas)})
 
 
 @app.route("/api/atacado/pedidos/<int:pid>", methods=["DELETE"])
@@ -4222,6 +4375,7 @@ def api_atacado_marcar_enviado(pid):
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_conn() as conn:
         conn.execute("UPDATE atacado_pedidos SET status='enviado', updated_at=? WHERE id=?", (agora, pid))
+        _log_atacado(conn, pid, "Marcado como enviado", None, session.get("usuario", ""))
         conn.commit()
     return jsonify({"ok": True})
 
@@ -4234,6 +4388,8 @@ def api_atacado_pago(pid):
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_conn() as conn:
         conn.execute("UPDATE atacado_pedidos SET pago=?, updated_at=? WHERE id=?", (pago, agora, pid))
+        _log_atacado(conn, pid, "Pagamento alterado",
+                     f"Marcado como {'PAGO' if pago else 'pendente'}", session.get("usuario", ""))
         conn.commit()
     return jsonify({"ok": True})
 
@@ -4371,6 +4527,7 @@ def api_atacado_reabrir(pid):
         sep   = conn.execute("SELECT COUNT(*) FROM atacado_itens WHERE pedido_id=? AND separado=1", (pid,)).fetchone()[0]
         novo  = "separado" if sep == total and total > 0 else ("separando" if sep > 0 else "pendente")
         conn.execute("UPDATE atacado_pedidos SET status=?, updated_at=? WHERE id=?", (novo, agora, pid))
+        _log_atacado(conn, pid, "Pedido reaberto", f"Status: {novo}", session.get("usuario", ""))
         conn.commit()
     return jsonify({"ok": True})
 

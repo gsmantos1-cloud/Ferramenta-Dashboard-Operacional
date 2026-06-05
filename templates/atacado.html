@@ -59,7 +59,7 @@
   <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border)">
       <div class="modal-header" style="border-bottom:1px solid var(--border)">
-        <h5 class="modal-title fw-bold"><i class="bi bi-bag-plus me-2" style="color:var(--blue)"></i>Novo Pedido Atacado</h5>
+        <h5 class="modal-title fw-bold" id="tituloModalPedido"><i class="bi bi-bag-plus me-2" style="color:var(--blue)"></i>Novo Pedido Atacado</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
@@ -221,6 +221,14 @@
         <button id="btnDeletar" class="btn btn-sm btn-outline-danger me-auto" onclick="deletarPedido()">
           <i class="bi bi-trash me-1"></i>Excluir
         </button>
+        <button id="btnHistorico" class="btn btn-sm btn-outline-secondary" onclick="abrirHistorico()" title="Ver histórico de edições">
+          <i class="bi bi-clock-history me-1"></i>Histórico
+        </button>
+        <button id="btnEditarPedido" class="btn btn-sm"
+                style="background:rgba(88,166,255,.15);border:1px solid #58a6ff44;color:#58a6ff"
+                onclick="editarPedido()" title="Editar todas as informações do pedido">
+          <i class="bi bi-pencil-square me-1"></i>Editar
+        </button>
         <div class="form-check form-switch mb-0" id="wrapPago">
           <input class="form-check-input" type="checkbox" id="detPago" role="switch" onchange="togglePago()">
           <label class="form-check-label" for="detPago" style="font-size:.82rem;cursor:pointer">Pago</label>
@@ -236,6 +244,26 @@
         <button id="btnEnviar" class="btn btn-sm btn-success" onclick="marcarEnviado()">
           <i class="bi bi-send me-1"></i>Marcar como Enviado
         </button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Fechar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     MODAL — Histórico de edições
+     ══════════════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modalHistorico" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border)">
+      <div class="modal-header" style="border-bottom:1px solid var(--border)">
+        <h6 class="modal-title fw-bold"><i class="bi bi-clock-history me-2" style="color:#58a6ff"></i>Histórico do Pedido <span id="histNum"></span></h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="histBody">
+        <div class="text-center py-4" style="color:var(--muted)"><span class="spinner-border spinner-border-sm me-2"></span>Carregando...</div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid var(--border)">
         <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Fechar</button>
       </div>
     </div>
@@ -324,6 +352,7 @@ let pedidos = [];
 let filtroAtual = 'todos';
 let pedidoAbertoId = null;
 let itemCount = 0;
+let editandoPedidoId = null;   // null = criando; id = editando
 
 // Cache de produtos + estoque (carrega uma vez)
 let catalogoProdutos = [];   // [{id, name, imageUrl, variants:[{id, values, stock}]}]
@@ -601,6 +630,7 @@ document.addEventListener('click', e => {
 
 // ── Modal novo pedido ─────────────────────────────────────────────────
 function abrirModal() {
+    editandoPedidoId = null;
     itemCount = 0;
     ['fCliente','fCpf','fContato','fCep','fEndereco','fCidade','fPrazo','fObs'].forEach(id => {
         const el = document.getElementById(id);
@@ -612,11 +642,53 @@ function abrirModal() {
     document.getElementById('semItensMsg').style.display = 'block';
     document.getElementById('resumoItens').style.display = 'none';
     document.getElementById('erroModal').textContent = '';
+    document.getElementById('tituloModalPedido').innerHTML =
+        '<i class="bi bi-bag-plus me-2" style="color:var(--blue)"></i>Novo Pedido Atacado';
+    document.getElementById('btnSalvar').innerHTML = '<i class="bi bi-check2 me-1"></i>Criar Pedido';
 
     // Abre o modal imediatamente, carrega catálogo em paralelo
     bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPedido')).show();
     addItem();
     carregarCatalogo(); // sem await — carrega em background
+}
+
+// ── Editar pedido existente ───────────────────────────────────────────
+async function editarPedido() {
+    if (!pedidoAbertoId) return;
+    await carregarCatalogo();
+    const r = await fetch(`/api/atacado/pedidos/${pedidoAbertoId}`);
+    const {pedido, itens} = await r.json();
+
+    editandoPedidoId = pedido.id;
+    itemCount = 0;
+
+    // Pré-preenche cabeçalho
+    document.getElementById('fCliente').value  = pedido.cliente || pedido.nome || '';
+    document.getElementById('fCpf').value      = pedido.cpf || '';
+    document.getElementById('fContato').value  = pedido.contato || '';
+    document.getElementById('fCep').value      = pedido.cep || '';
+    document.getElementById('fEndereco').value = pedido.endereco || '';
+    document.getElementById('fCidade').value   = pedido.cidade || '';
+    document.getElementById('fPrazo').value    = pedido.prazo || '';
+    document.getElementById('fObs').value       = pedido.observacao || '';
+    document.getElementById('fPago').checked    = !!pedido.pago;
+    document.getElementById('fFrete').value     = pedido.frete_tipo || 'a_combinar';
+    document.getElementById('itensContainer').innerHTML = '';
+    document.getElementById('semItensMsg').style.display = 'none';
+    document.getElementById('erroModal').textContent = '';
+
+    // Pré-preenche itens
+    (itens || []).forEach(it => addItemPreenchido(it));
+    if (!itens || !itens.length) addItem();
+    atualizarResumo();
+
+    document.getElementById('tituloModalPedido').innerHTML =
+        `<i class="bi bi-pencil-square me-2" style="color:#58a6ff"></i>Editar Pedido #${String(pedido.numero||pedido.id).padStart(2,'0')}`;
+    document.getElementById('btnSalvar').innerHTML = '<i class="bi bi-check2 me-1"></i>Salvar Alterações';
+
+    // Fecha o detalhe e abre o de edição
+    bootstrap.Modal.getInstance(document.getElementById('modalDetalhe'))?.hide();
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPedido')).show();
 }
 
 function addItem() {
@@ -660,6 +732,33 @@ function removerItem(n) {
     atualizarResumo();
 }
 
+// Cria uma linha de item já preenchida (usada na edição), guardando o id do item
+function addItemPreenchido(it) {
+    addItem();                       // cria a linha padrão e incrementa itemCount
+    const n = itemCount;
+    const row = document.getElementById(`item-${n}`);
+    if (row) row.dataset.itemId = it.id;   // id do item existente
+
+    document.getElementById(`iprod-${n}`).value = it.produto || '';
+
+    // Variante atual como opção selecionada
+    const varSel = document.getElementById(`ivar-${n}`);
+    varSel.innerHTML = '';
+    const opt = document.createElement('option');
+    opt.value = it.nv_variant_id || '';
+    opt.textContent = it.variante || 'Padrão';
+    opt.dataset.label = it.variante || '';
+    opt.selected = true;
+    varSel.appendChild(opt);
+    varSel.disabled = false;
+    varSel.onchange = () => atualizarLimiteEstoque(n);
+
+    document.getElementById(`iest-${n}`).value  = it.qty_estoque || 0;
+    document.getElementById(`iforn-${n}`).value = it.qty_fornecedor || 0;
+    document.getElementById(`ivu-${n}`).value   = it.valor_unit || '';
+    atualizarTotal(`${n}`);
+}
+
 async function salvarPedido() {
     const cliente = document.getElementById('fCliente').value.trim();
     const contato = document.getElementById('fContato').value.trim();
@@ -679,7 +778,8 @@ async function salvarPedido() {
         const nvVid = opt?.value && !isNaN(opt.value) ? parseInt(opt.value) : null;
         const vLabel = opt?.dataset?.label || ivar?.value || '';
         const valorUnit = parseFloat(document.getElementById(`ivu-${i}`)?.value||0);
-        itens.push({produto:prod, variante:vLabel, qty_estoque:est, qty_fornecedor:forn, nv_variant_id:nvVid, valor_unit:valorUnit});
+        const itemId = document.getElementById(`item-${i}`)?.dataset.itemId || null;
+        itens.push({id:itemId, produto:prod, variante:vLabel, qty_estoque:est, qty_fornecedor:forn, nv_variant_id:nvVid, valor_unit:valorUnit});
     }
     if (!itens.length) { document.getElementById('erroModal').textContent='Adicione ao menos um item com quantidade.'; return; }
 
@@ -699,12 +799,18 @@ async function salvarPedido() {
         frete_tipo:document.getElementById('fFrete').value,
         itens,
     };
-    const r = await fetch('/api/atacado/pedidos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    btn.disabled=false; btn.innerHTML='<i class="bi bi-check2 me-1"></i>Criar Pedido';
+    const editando = !!editandoPedidoId;
+    const url    = editando ? `/api/atacado/pedidos/${editandoPedidoId}` : '/api/atacado/pedidos';
+    const method = editando ? 'PUT' : 'POST';
+    const r = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    btn.disabled=false;
+    btn.innerHTML = editando ? '<i class="bi bi-check2 me-1"></i>Salvar Alterações' : '<i class="bi bi-check2 me-1"></i>Criar Pedido';
     if (r.ok) {
-        const j = await r.json();
         bootstrap.Modal.getInstance(document.getElementById('modalPedido')).hide();
+        const idReabrir = editandoPedidoId;
+        editandoPedidoId = null;
         carregar();
+        if (editando && idReabrir) abrirDetalhe(idReabrir);   // reabre o detalhe atualizado
     } else {
         const j = await r.json();
         document.getElementById('erroModal').textContent = j.erro||'Erro ao salvar.';
@@ -926,6 +1032,57 @@ async function deletarPedido() {
     await fetch(`/api/atacado/pedidos/${pedidoAbertoId}`,{method:'DELETE'});
     bootstrap.Modal.getInstance(document.getElementById('modalDetalhe')).hide();
     carregar();
+}
+
+// ── Histórico de edições ──────────────────────────────────────────────
+async function abrirHistorico() {
+    if (!pedidoAbertoId) return;
+    const ped = pedidos.find(p => p.id === pedidoAbertoId);
+    document.getElementById('histNum').textContent =
+        ped ? '#' + String(ped.numero||ped.id).padStart(2,'0') : '';
+    document.getElementById('histBody').innerHTML =
+        '<div class="text-center py-4" style="color:var(--muted)"><span class="spinner-border spinner-border-sm me-2"></span>Carregando...</div>';
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalHistorico')).show();
+
+    try {
+        const r = await fetch(`/api/atacado/pedidos/${pedidoAbertoId}/historico`);
+        const hist = await r.json();
+        renderHistorico(hist);
+    } catch(e) {
+        document.getElementById('histBody').innerHTML =
+            '<div class="text-center py-4 text-danger">Erro ao carregar histórico.</div>';
+    }
+}
+
+function renderHistorico(hist) {
+    if (!hist || !hist.length) {
+        document.getElementById('histBody').innerHTML =
+            '<div class="text-center py-4" style="color:var(--muted)"><i class="bi bi-clock-history" style="font-size:2rem;opacity:.3;display:block;margin-bottom:8px"></i>Nenhuma alteração registrada ainda.</div>';
+        return;
+    }
+    const icones = {
+        'Pedido criado':       {ic:'bi-plus-circle-fill', cor:'#3fb950'},
+        'Pedido editado':      {ic:'bi-pencil-fill',      cor:'#58a6ff'},
+        'Pagamento alterado':  {ic:'bi-cash-coin',        cor:'#f0c43e'},
+        'Marcado como enviado':{ic:'bi-send-fill',        cor:'#58a6ff'},
+        'Pedido reaberto':     {ic:'bi-arrow-counterclockwise', cor:'#f0883e'},
+    };
+    document.getElementById('histBody').innerHTML = hist.map(h => {
+        const meta = icones[h.descricao] || {ic:'bi-dot', cor:'var(--muted)'};
+        const detalhes = (h.detalhes || '').split(' | ').filter(Boolean);
+        return `<div style="border-left:2px solid ${meta.cor};padding:6px 0 10px 12px;margin-bottom:4px;position:relative">
+            <div class="d-flex align-items-center justify-content-between">
+                <span style="font-weight:600;font-size:.85rem;color:var(--text)">
+                    <i class="bi ${meta.ic} me-1" style="color:${meta.cor}"></i>${escHtml(h.descricao)}
+                </span>
+                <span style="font-size:.7rem;color:var(--muted)">${fmtDatetime(h.created_at)}</span>
+            </div>
+            ${h.usuario ? `<div style="font-size:.7rem;color:var(--muted);margin-top:1px"><i class="bi bi-person me-1"></i>${escHtml(h.usuario)}</div>` : ''}
+            ${detalhes.length ? `<ul style="margin:5px 0 0;padding-left:16px;font-size:.76rem;color:var(--muted)">
+                ${detalhes.map(d => `<li>${escHtml(d)}</li>`).join('')}
+            </ul>` : ''}
+        </div>`;
+    }).join('');
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
