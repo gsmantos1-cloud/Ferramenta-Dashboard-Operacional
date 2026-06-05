@@ -729,11 +729,7 @@ async function sincronizarAgora(btn) {
             if (d.ja_enviados)   partes.push(d.ja_enviados + ' já enviado(s)');
             if (d.reconciliados) partes.push(d.reconciliados + ' reconciliado(s)');
             const hora = new Date().toLocaleTimeString('pt-BR');
-            let txt = '✓ Sincronizado às ' + hora + ' (' + seg + 's)' + (partes.length ? ' — ' + partes.join(', ') : ' — sem novidades');
-            if (d.tempos) {
-                txt += ' | ' + Object.entries(d.tempos).map(([k, v]) => k + '=' + v + 's').join(' · ');
-            }
-            el.textContent = txt;
+            el.textContent = '✓ Sincronizado às ' + hora + ' (' + seg + 's)' + (partes.length ? ' — ' + partes.join(', ') : ' — sem novidades');
             atualizar();
         }
     } catch(e) {
