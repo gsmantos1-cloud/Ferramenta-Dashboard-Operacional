@@ -1,214 +1,191 @@
 {% extends "base.html" %}
-{% block title %}Compras do Dia — GS Mantos{% endblock %}
+{% block title %}Compras — GS Mantos{% endblock %}
 
 {% block content %}
-<div class="container-fluid px-3 py-3">
+<div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+  <div>
+    <h5 class="mb-0 fw-bold"><i class="bi bi-cart-fill me-2" style="color:#f0883e"></i>Registro de Compras</h5>
+    <small class="text-muted">Registre todas as compras de mercadoria — histórico e relatórios automáticos</small>
+  </div>
+  <button class="btn btn-sm btn-primary" onclick="abrirModalCompra()">
+    <i class="bi bi-plus-lg me-1"></i>Registrar Compra
+  </button>
+</div>
 
-  <!-- Cabeçalho -->
-  <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
-    <div>
-      <h5 class="mb-0 fw-bold"><i class="bi bi-cart-fill me-2" style="color:#f0883e"></i>Compras do Dia</h5>
-      <small class="text-muted">Produtos com estoque baixo ou zerado que precisam ser repostos</small>
-    </div>
-    <div class="d-flex gap-2 align-items-center">
-      <span id="ultimaAtt" class="text-muted" style="font-size:.75rem"></span>
-      <button class="btn btn-sm btn-outline-secondary" onclick="carregarDados()">
-        <i class="bi bi-arrow-clockwise me-1"></i>Atualizar
-      </button>
-    </div>
+<!-- Abas -->
+<ul class="nav nav-tabs mb-3" style="border-bottom:1px solid var(--border)">
+  <li class="nav-item">
+    <button class="nav-link active" id="tab-historico" onclick="mudarAba('historico')" style="font-size:.83rem">
+      <i class="bi bi-clock-history me-1"></i>Histórico
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" id="tab-relatorio" onclick="mudarAba('relatorio')" style="font-size:.83rem">
+      <i class="bi bi-bar-chart-fill me-1"></i>Relatórios
+    </button>
+  </li>
+  <li class="nav-item">
+    <button class="nav-link" id="tab-alertas" onclick="mudarAba('alertas')" style="font-size:.83rem">
+      <i class="bi bi-bell-fill me-1"></i>Alertas de Estoque
+    </button>
+  </li>
+</ul>
+
+<!-- ── ABA: HISTÓRICO ─────────────────────────────────────────────────── -->
+<div id="aba-historico">
+
+  <!-- KPIs do período -->
+  <div class="d-flex flex-wrap gap-3 mb-3" id="kpisHistorico"></div>
+
+  <!-- Filtros de data -->
+  <div class="d-flex align-items-center gap-2 flex-wrap mb-3">
+    <label style="font-size:.8rem;color:var(--muted)">Período:</label>
+    <input type="date" id="filtroInicio" class="form-control form-control-sm" style="width:140px" onchange="carregarHistorico()">
+    <span style="color:var(--muted)">→</span>
+    <input type="date" id="filtroFim" class="form-control form-control-sm" style="width:140px" onchange="carregarHistorico()">
+    <button class="btn btn-sm btn-outline-secondary" onclick="setPeriodo('semana')">Esta semana</button>
+    <button class="btn btn-sm btn-outline-secondary" onclick="setPeriodo('mes')">Este mês</button>
+    <button class="btn btn-sm btn-outline-secondary" onclick="setPeriodo('tudo')">Tudo</button>
   </div>
 
-  <!-- KPI Cards -->
-  <div class="row g-3 mb-3">
-    <div class="col-6 col-md-3">
-      <div class="card p-3 h-100" style="border-left:3px solid #f85149">
-        <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Sem Estoque</div>
-        <div id="kpi-sem" class="fw-bold mt-1" style="font-size:1.8rem;color:#f85149">—</div>
-        <div style="font-size:.72rem;color:var(--muted)">produtos esgotados</div>
-      </div>
-    </div>
-    <div class="col-6 col-md-3">
-      <div class="card p-3 h-100" style="border-left:3px solid #f0883e">
-        <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Estoque Baixo</div>
-        <div id="kpi-baixo" class="fw-bold mt-1" style="font-size:1.8rem;color:#f0883e">—</div>
-        <div style="font-size:.72rem;color:var(--muted)">abaixo do mínimo</div>
-      </div>
-    </div>
-    <div class="col-6 col-md-3">
-      <div class="card p-3 h-100" style="border-left:3px solid #58a6ff">
-        <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Total de SKUs</div>
-        <div id="kpi-total" class="fw-bold mt-1" style="font-size:1.8rem;color:var(--blue)">—</div>
-        <div style="font-size:.72rem;color:var(--muted)">itens para comprar</div>
-      </div>
-    </div>
-    <div class="col-6 col-md-3">
-      <div class="card p-3 h-100" style="border-left:3px solid #3fb950">
-        <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Gasto Estimado</div>
-        <div id="kpi-gasto" class="fw-bold mt-1" style="font-size:1.5rem;color:#3fb950">—</div>
-        <div style="font-size:.72rem;color:var(--muted)">custo total da reposição</div>
-      </div>
-    </div>
-  </div>
-
-  <div class="row g-3">
-
-    <!-- Tabela principal -->
-    <div class="col-lg-8">
-      <div class="card">
-        <div class="card-header d-flex align-items-center justify-content-between">
-          <small class="fw-bold text-uppercase" style="letter-spacing:.05em">
-            <i class="bi bi-box-seam me-1"></i>Lista de Compras
-          </small>
-          <div class="d-flex gap-2 align-items-center flex-wrap">
-            <!-- Filtro -->
-            <div class="btn-group btn-group-sm" role="group">
-              <button type="button" class="btn btn-outline-secondary active" id="filtro-todos" onclick="filtrar('todos')">Todos</button>
-              <button type="button" class="btn btn-outline-danger"           id="filtro-sem"   onclick="filtrar('sem_estoque')">Sem estoque</button>
-              <button type="button" class="btn btn-outline-warning"          id="filtro-baixo" onclick="filtrar('estoque_baixo')">Baixo</button>
-            </div>
-            <button class="btn btn-sm btn-primary" onclick="abrirModalManual()">
-              <i class="bi bi-plus-lg me-1"></i>Adicionar produto
-            </button>
-          </div>
-        </div>
-        <div class="table-responsive" style="max-height:520px;overflow-y:auto">
-          <table class="table mb-0" style="font-size:.84rem">
-            <thead style="position:sticky;top:0;background:var(--card-bg);z-index:2">
-              <tr style="font-size:.71rem;color:var(--muted)">
-                <th style="padding:8px 12px">SKU</th>
-                <th style="padding:8px 12px">Produto / Variante</th>
-                <th style="padding:8px 12px;text-align:center">Atual</th>
-                <th style="padding:8px 12px;text-align:center">Mín.</th>
-                <th style="padding:8px 12px;text-align:center">A comprar</th>
-                <th style="padding:8px 12px;text-align:right">Custo unit.</th>
-                <th style="padding:8px 12px;text-align:right">Total</th>
-                <th style="padding:8px 12px;text-align:center">Status</th>
-              </tr>
-            </thead>
-            <tbody id="tabela-body">
-              <tr><td colspan="8" class="text-center text-muted py-4">
-                <div class="spinner-border spinner-border-sm me-2"></div>Carregando...
-              </td></tr>
-            </tbody>
-            <tfoot id="tabela-footer" style="display:none;position:sticky;bottom:0;background:var(--card-bg)">
-              <tr style="font-size:.8rem;font-weight:700;border-top:2px solid var(--border)">
-                <td colspan="6" style="padding:8px 12px;text-align:right">Total estimado:</td>
-                <td id="total-footer" style="padding:8px 12px;text-align:right;color:#3fb950"></td>
-                <td></td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <!-- Itens manuais -->
-    <div class="col-12" id="manual-section" style="display:none">
-      <div class="card">
-        <div class="card-header d-flex align-items-center justify-content-between">
-          <small class="fw-bold text-uppercase" style="letter-spacing:.05em">
-            <i class="bi bi-pencil-square me-1" style="color:#8b5cf6"></i>Adicionados Manualmente
-          </small>
-          <span id="manual-count" class="badge rounded-pill" style="background:#8b5cf6;font-size:.68rem">0</span>
-        </div>
-        <div class="table-responsive">
-          <table class="table mb-0" style="font-size:.84rem">
-            <thead style="position:sticky;top:0;background:var(--card-bg);z-index:2">
-              <tr style="font-size:.71rem;color:var(--muted)">
-                <th style="padding:8px 12px">SKU</th>
-                <th style="padding:8px 12px">Produto / Obs.</th>
-                <th style="padding:8px 12px;text-align:center">Qtd</th>
-                <th style="padding:8px 12px;text-align:right">Custo unit.</th>
-                <th style="padding:8px 12px;text-align:right">Total</th>
-                <th style="padding:8px 12px;text-align:center">Ações</th>
-              </tr>
-            </thead>
-            <tbody id="manual-body"></tbody>
-            <tfoot id="manual-footer" style="display:none;position:sticky;bottom:0;background:var(--card-bg)">
-              <tr style="font-size:.8rem;font-weight:700;border-top:2px solid var(--border)">
-                <td colspan="4" style="padding:8px 12px;text-align:right">Total manual:</td>
-                <td id="manual-total-footer" style="padding:8px 12px;text-align:right;color:#8b5cf6"></td>
-                <td></td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <!-- Alertas em tempo real -->
-    <div class="col-lg-4">
-      <div class="card h-100">
-        <div class="card-header d-flex align-items-center justify-content-between">
-          <small class="fw-bold text-uppercase" style="letter-spacing:.05em">
-            <i class="bi bi-bell-fill me-1" style="color:#f0883e"></i>Alertas de Venda
-          </small>
-          <div class="d-flex align-items-center gap-2">
-            <span id="sse-status" title="Status da conexão"
-                  style="width:8px;height:8px;border-radius:50%;background:#8b949e;display:inline-block"></span>
-            <button class="btn btn-sm py-0 px-1" style="font-size:.7rem;border:1px solid var(--border);background:none;color:var(--muted)" onclick="limparAlertas()">
-              Limpar
-            </button>
-          </div>
-        </div>
-        <div id="alertas-container" style="height:490px;overflow-y:auto;padding:10px">
-          <div id="alertas-vazio" class="text-center text-muted py-5" style="font-size:.82rem">
-            <i class="bi bi-bell" style="font-size:1.8rem;opacity:.3;display:block;margin-bottom:8px"></i>
-            Aguardando vendas...<br>
-            <small>Quando entrar um pedido com estoque baixo,<br>o alerta aparece aqui automaticamente.</small>
-          </div>
-        </div>
-      </div>
-    </div>
-
+  <!-- Lista de compras -->
+  <div id="listaCompras">
+    <div class="text-center text-muted py-5"><div class="spinner-border spinner-border-sm me-2"></div>Carregando...</div>
   </div>
 </div>
 
-<!-- Modal — Adicionar/Editar produto manual -->
-<div class="modal fade" id="modalManual" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered">
+<!-- ── ABA: RELATÓRIOS ────────────────────────────────────────────────── -->
+<div id="aba-relatorio" style="display:none">
+  <div id="relatorioConteudo">
+    <div class="text-center text-muted py-5"><div class="spinner-border spinner-border-sm me-2"></div>Carregando...</div>
+  </div>
+</div>
+
+<!-- ── ABA: ALERTAS ───────────────────────────────────────────────────── -->
+<div id="aba-alertas" style="display:none">
+  <div class="card">
+    <div class="card-header d-flex align-items-center justify-content-between">
+      <small class="fw-bold text-uppercase" style="letter-spacing:.05em">
+        <i class="bi bi-bell-fill me-1" style="color:#f0883e"></i>Alertas em Tempo Real
+      </small>
+      <div class="d-flex align-items-center gap-2">
+        <span id="sse-status" style="width:8px;height:8px;border-radius:50%;background:#8b949e;display:inline-block"></span>
+        <button class="btn btn-sm py-0 px-2" style="font-size:.75rem;border:1px solid var(--border);background:none;color:var(--muted)" onclick="limparAlertas()">Limpar</button>
+      </div>
+    </div>
+    <div id="alertas-container" style="min-height:300px;padding:12px">
+      <div id="alertas-vazio" class="text-center text-muted py-5">
+        <i class="bi bi-bell" style="font-size:2rem;opacity:.3;display:block;margin-bottom:8px"></i>
+        Aguardando vendas com estoque baixo...
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     MODAL — Registrar Compra
+     ══════════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modalCompra" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border)">
       <div class="modal-header" style="border-bottom:1px solid var(--border)">
-        <h6 class="modal-title fw-bold" id="modalManualTitulo">
-          <i class="bi bi-plus-circle me-2" style="color:#8b5cf6"></i>Adicionar Produto
+        <h6 class="modal-title fw-bold">
+          <i class="bi bi-cart-plus me-2" style="color:#f0883e"></i>Registrar Compra
         </h6>
-        <button type="button" class="btn-close" style="filter:var(--btn-close-filter)" data-bs-dismiss="modal"></button>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
-        <input type="hidden" id="m-id">
-        <div class="row g-3">
-          <div class="col-12">
-            <label class="form-label" style="font-size:.78rem;color:var(--muted)">Nome do Produto <span class="text-danger">*</span></label>
-            <input id="m-nome" type="text" class="form-control form-control-sm" placeholder="Ex: Camiseta Flamengo M">
+
+        <!-- Data + Produto + Fornecedor -->
+        <div class="row g-2 mb-3">
+          <div class="col-md-3">
+            <label class="flabel">DATA DA COMPRA *</label>
+            <input id="cData" type="date" class="form-control form-control-sm">
           </div>
-          <div class="col-6">
-            <label class="form-label" style="font-size:.78rem;color:var(--muted)">SKU <span style="color:var(--muted)">(opcional)</span></label>
-            <input id="m-sku" type="text" class="form-control form-control-sm" placeholder="Ex: fla-m-branco">
+          <div class="col-md-6" style="position:relative">
+            <label class="flabel">PRODUTO *</label>
+            <input id="cProduto" type="text" class="form-control form-control-sm" placeholder="Buscar ou digitar produto..."
+                   autocomplete="off" oninput="buscarProduto(this)">
+            <div id="produtosDropdown" style="display:none;position:absolute;left:0;right:0;top:100%;margin-top:4px;
+                 z-index:9999;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;
+                 max-height:320px;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.5)"></div>
           </div>
-          <div class="col-6">
-            <label class="form-label" style="font-size:.78rem;color:var(--muted)">Qtd a Comprar</label>
-            <input id="m-qty" type="number" min="1" value="1" class="form-control form-control-sm">
-          </div>
-          <div class="col-6">
-            <label class="form-label" style="font-size:.78rem;color:var(--muted)">Custo Unitário (R$)</label>
-            <input id="m-custo" type="number" min="0" step="0.01" value="0" class="form-control form-control-sm" placeholder="0,00" oninput="calcularPreviewManual()">
-          </div>
-          <div class="col-6 d-flex align-items-end">
-            <div class="w-100 text-center p-2 rounded" style="background:rgba(139,92,246,.1);border:1px solid rgba(139,92,246,.25)">
-              <div style="font-size:.68rem;color:var(--muted)">Total estimado</div>
-              <div id="m-preview" class="fw-bold" style="color:#8b5cf6;font-size:1.1rem">R$ 0,00</div>
-            </div>
-          </div>
-          <div class="col-12">
-            <label class="form-label" style="font-size:.78rem;color:var(--muted)">Observação <span style="color:var(--muted)">(opcional)</span></label>
-            <input id="m-obs" type="text" class="form-control form-control-sm" placeholder="Ex: comprar na fornecedora X">
+          <div class="col-md-3">
+            <label class="flabel">FORNECEDOR</label>
+            <input id="cFornecedor" type="text" class="form-control form-control-sm" placeholder="Nome do fornecedor">
           </div>
         </div>
+
+        <!-- Tamanhos -->
+        <div class="mb-3">
+          <div class="d-flex align-items-center justify-content-between mb-2">
+            <label class="flabel mb-0">QUANTIDADE POR TAMANHO *</label>
+            <button type="button" class="btn btn-sm py-0 px-2" onclick="adicionarTamanhoCustom()"
+                    style="font-size:.72rem;background:none;border:1px solid var(--border);color:var(--muted)">
+              <i class="bi bi-plus me-1"></i>Tamanho extra
+            </button>
+          </div>
+
+          <!-- Grid de tamanhos padrão -->
+          <div class="d-flex flex-wrap gap-2 mb-2" id="gridTamanhos">
+            <!-- renderizado pelo JS -->
+          </div>
+
+          <!-- Tamanhos customizados -->
+          <div id="tamanhosExtras"></div>
+
+          <!-- Total automático -->
+          <div style="background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-top:10px">
+            <div class="d-flex gap-4 align-items-center flex-wrap">
+              <span style="font-size:.8rem">Total de peças: <b id="totalPecas" style="color:var(--blue);font-size:1rem">0</b></span>
+              <span style="font-size:.8rem">Valor total: <b id="totalValor" style="color:#3fb950;font-size:1rem">R$ 0,00</b></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Preço + Observação -->
+        <div class="row g-2 mb-3">
+          <div class="col-md-4">
+            <label class="flabel">PREÇO POR UNIDADE (R$) *</label>
+            <input id="cPreco" type="number" min="0" step="0.01" class="form-control form-control-sm"
+                   placeholder="0,00" oninput="calcularTotal()">
+          </div>
+          <div class="col-md-8">
+            <label class="flabel">OBSERVAÇÃO</label>
+            <input id="cObs" type="text" class="form-control form-control-sm" placeholder="Ex: Comprado no fornecedor X, lote Y...">
+          </div>
+        </div>
+
+        <!-- Toggle: Adicionar ao estoque -->
+        <div id="wrapAtualizarEstoque"
+             style="background:rgba(63,185,80,.07);border:1px solid #3fb95033;border-radius:8px;padding:12px 14px">
+          <div class="d-flex align-items-center justify-content-between">
+            <div>
+              <div style="font-size:.85rem;font-weight:600;color:var(--text)">
+                <i class="bi bi-box-seam me-2" style="color:#3fb950"></i>Atualizar estoque e custo automaticamente
+              </div>
+              <div id="descAtualizarEstoque" style="font-size:.72rem;color:var(--muted);margin-top:3px">
+                As quantidades serão adicionadas ao estoque e o Custo Médio Ponderado será recalculado.
+              </div>
+            </div>
+            <div class="form-check form-switch ms-3 mb-0">
+              <input class="form-check-input" type="checkbox" id="cAtualizarEstoque" role="switch"
+                     onchange="onToggleEstoque()" style="width:2.5em;height:1.3em;cursor:pointer">
+            </div>
+          </div>
+          <!-- Aviso quando produto não vem do catálogo -->
+          <div id="avisoSemVariants" style="display:none;margin-top:8px;font-size:.73rem;color:#f0883e">
+            <i class="bi bi-exclamation-triangle me-1"></i>
+            Selecione o produto pelo campo de busca (do catálogo) para vincular ao estoque automaticamente.
+          </div>
+        </div>
+
       </div>
       <div class="modal-footer" style="border-top:1px solid var(--border)">
-        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
-        <button type="button" class="btn btn-sm btn-primary px-4" onclick="salvarManual()">
-          <i class="bi bi-check2 me-1"></i>Salvar
+        <span id="erroCompra" style="color:var(--red);font-size:.8rem;flex:1"></span>
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-warning btn-sm fw-bold" id="btnSalvarCompra" onclick="salvarCompra()" style="color:#0d1117">
+          <i class="bi bi-check2 me-1"></i>Salvar Compra
         </button>
       </div>
     </div>
@@ -225,380 +202,588 @@
   </div>
 </div>
 
+<style>
+.flabel { font-size:.72rem;color:var(--muted);font-weight:600;letter-spacing:.04em;margin-bottom:3px;display:block;text-transform:uppercase; }
+.tam-box { display:flex;flex-direction:column;align-items:center;gap:4px;min-width:60px; }
+.tam-label { font-size:.72rem;font-weight:700;color:var(--muted);text-transform:uppercase; }
+.tam-input { width:60px;text-align:center;background:var(--card-bg);border:1px solid var(--border);
+             border-radius:6px;color:var(--text);padding:5px 4px;font-size:.9rem;font-weight:700 }
+.tam-input:focus { outline:none;border-color:var(--blue); }
+.tam-input.has-value { border-color:#f0883e;background:rgba(240,136,62,.08); }
+.compra-card { background:var(--card-bg);border:1px solid var(--border);border-radius:10px;
+               padding:14px 16px;margin-bottom:10px; }
+.compra-card:hover { border-color:#484f58; }
+.tam-chip { font-size:.72rem;background:rgba(88,166,255,.1);border:1px solid #58a6ff33;
+            color:var(--blue);border-radius:6px;padding:2px 8px;font-weight:600 }
+.nav-link { background:none;border:none;color:var(--muted);border-bottom:2px solid transparent;
+            border-radius:0;padding:8px 16px;cursor:pointer; }
+.nav-link.active { color:var(--text);border-bottom-color:var(--blue);font-weight:600; }
+.nav-link:hover { color:var(--text); }
+.rel-card { background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:8px; }
+</style>
+
 <script>
-// ─── Estado ──────────────────────────────────────────────────────────────────
-let todosItens  = [];
-let filtroAtivo = 'todos';
-let alertCount  = 0;
-// Mapa nv_variant_id → { productName, variantLabel, imageUrl }
-let variantMap  = new Map();
+// ── Estado ────────────────────────────────────────────────────────────────────
+let catalogoProdutos = [];
+let abaAtiva = 'historico';
+let produtoSelecionado = null; // { id, name, variants, sizeMap: { "P": {nv_variant_id, sku, label} } }
+
+const TAMANHOS_PADRAO = ['PP','P','M','G','GG','XGG'];
+
+function toast(msg, ok=true) {
+  const el = document.getElementById('toast');
+  el.className = `toast align-items-center border-0 text-bg-${ok?'success':'danger'}`;
+  document.getElementById('toastMsg').textContent = msg;
+  bootstrap.Toast.getOrCreateInstance(el, {delay:4000}).show();
+}
 
 function fmtBRL(v) {
-  return 'R$ ' + Number(v || 0).toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2});
+  return 'R$ ' + (v||0).toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2});
 }
 
-function toast(msg, ok = true) {
-  const el = document.getElementById('toast');
-  el.className = `toast align-items-center border-0 text-bg-${ok ? 'success' : 'danger'}`;
-  document.getElementById('toastMsg').textContent = msg;
-  bootstrap.Toast.getOrCreateInstance(el, {delay: 4000}).show();
+function fmtData(s) {
+  if (!s) return '';
+  try { return new Date(s + 'T12:00:00').toLocaleDateString('pt-BR'); } catch { return s; }
 }
 
-// ─── Carregar dados da API ────────────────────────────────────────────────────
-async function carregarDados() {
+function fmtMes(s) {
+  if (!s) return '';
+  const [y,m] = s.split('-');
+  const nomes = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  return `${nomes[parseInt(m)-1]}/${y}`;
+}
+
+// ── Abas ──────────────────────────────────────────────────────────────────────
+function mudarAba(nome) {
+  ['historico','relatorio','alertas'].forEach(a => {
+    document.getElementById(`aba-${a}`).style.display = a===nome ? '' : 'none';
+    document.getElementById(`tab-${a}`).classList.toggle('active', a===nome);
+  });
+  abaAtiva = nome;
+  if (nome === 'relatorio') carregarRelatorio();
+  if (nome === 'alertas')   conectarSSE();
+}
+
+// ── Período ───────────────────────────────────────────────────────────────────
+function setPeriodo(p) {
+  const hoje = new Date();
+  const fmt = d => d.toISOString().slice(0,10);
+  const ini = document.getElementById('filtroInicio');
+  const fim = document.getElementById('filtroFim');
+
+  if (p === 'semana') {
+    const dom = new Date(hoje); dom.setDate(hoje.getDate() - hoje.getDay());
+    ini.value = fmt(dom); fim.value = fmt(hoje);
+  } else if (p === 'mes') {
+    ini.value = `${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}-01`;
+    fim.value = fmt(hoje);
+  } else {
+    ini.value = ''; fim.value = '';
+  }
+  carregarHistorico();
+}
+
+// ── Histórico ─────────────────────────────────────────────────────────────────
+async function carregarHistorico() {
+  const ini = document.getElementById('filtroInicio').value;
+  const fim = document.getElementById('filtroFim').value;
+  let url = '/api/compras/registros';
+  const params = [];
+  if (ini) params.push(`inicio=${ini}`);
+  if (fim) params.push(`fim=${fim}`);
+  if (params.length) url += '?' + params.join('&');
+
+  document.getElementById('listaCompras').innerHTML =
+    '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2"></div>Carregando...</div>';
+
   try {
-    // Busca estoque+custo e produtos NuvemShop em paralelo
-    const [rComp, rProd] = await Promise.all([
-      fetch('/api/compras/dia'),
-      fetch('/api/nuvemshop/produtos'),
-    ]);
-    const data  = await rComp.json();
-    const prods = rProd.ok ? await rProd.json() : [];
-
-    // Monta mapa de variantes: id → { productName, variantLabel, imageUrl }
-    variantMap.clear();
-    for (const p of (prods.products || prods || [])) {
-      const nomeProd = p.name || '';
-      const imgProd  = p.imageUrl || p.image_url || '';
-      for (const v of (p.variants || [])) {
-        const varLabel  = (v.values || []).join(', ');
-        const imgVar    = v.imageUrl || imgProd;
-        variantMap.set(v.id, {
-          productName:  nomeProd,
-          variantLabel: varLabel,
-          imageUrl:     imgVar,
-        });
-      }
-    }
-
-    todosItens = data.items || [];
-
-    // KPIs
-    document.getElementById('kpi-sem').textContent   = data.sem_estoque   || 0;
-    document.getElementById('kpi-baixo').textContent = data.estoque_baixo || 0;
-    document.getElementById('kpi-total').textContent = data.total_itens   || 0;
-    document.getElementById('kpi-gasto').textContent = fmtBRL(data.total_estimado);
-
-    document.getElementById('ultimaAtt').textContent =
-      'Atualizado às ' + new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
-
-    renderTabela();
+    const r = await fetch(url);
+    const compras = await r.json();
+    renderHistorico(compras);
   } catch(e) {
-    document.getElementById('tabela-body').innerHTML =
-      '<tr><td colspan="8" class="text-center text-danger py-4">Erro ao carregar dados</td></tr>';
+    document.getElementById('listaCompras').innerHTML =
+      '<div class="text-center text-danger py-4">Erro ao carregar histórico</div>';
   }
 }
 
-// ─── Renderizar tabela ────────────────────────────────────────────────────────
-function renderTabela() {
-  const itens = filtroAtivo === 'todos'
-    ? todosItens
-    : todosItens.filter(i => i.status === filtroAtivo);
+function renderHistorico(compras) {
+  // KPIs
+  const totalPecas = compras.reduce((s,c) => s + (c.total_qty||0), 0);
+  const totalValor = compras.reduce((s,c) => s + (c.total_valor||0), 0);
+  const fornecedores = new Set(compras.map(c => c.fornecedor).filter(Boolean));
+  document.getElementById('kpisHistorico').innerHTML = [
+    {label:'Compras',    val: compras.length,    cor:'#58a6ff', icon:'bi-receipt'},
+    {label:'Total peças',val: totalPecas,         cor:'#f0883e', icon:'bi-box-seam-fill'},
+    {label:'Total gasto',val: fmtBRL(totalValor), cor:'#3fb950', icon:'bi-currency-dollar'},
+    {label:'Fornecedores',val: fornecedores.size, cor:'#8b5cf6', icon:'bi-truck'},
+  ].map(k => `
+    <div style="background:var(--card-bg);border:1px solid var(--border);border-left:3px solid ${k.cor};
+                border-radius:8px;padding:10px 18px;min-width:130px">
+      <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">
+        <i class="bi ${k.icon} me-1" style="color:${k.cor}"></i>${k.label}
+      </div>
+      <div style="font-size:1.4rem;font-weight:700;color:${k.cor};margin-top:2px">${k.val}</div>
+    </div>`).join('');
 
-  const tbody  = document.getElementById('tabela-body');
-  const footer = document.getElementById('tabela-footer');
-
-  if (!itens.length) {
-    tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-5">
-      <i class="bi bi-check-circle" style="font-size:1.6rem;color:var(--green);display:block;margin-bottom:6px"></i>
-      Nenhum produto para repor${filtroAtivo !== 'todos' ? ' neste filtro' : ''}!
-    </td></tr>`;
-    footer.style.display = 'none';
+  if (!compras.length) {
+    document.getElementById('listaCompras').innerHTML = `
+      <div class="text-center text-muted py-5">
+        <i class="bi bi-inbox" style="font-size:2.5rem;display:block;margin-bottom:8px;opacity:.3"></i>
+        Nenhuma compra registrada neste período.<br>
+        <small>Clique em <b>Registrar Compra</b> para começar.</small>
+      </div>`;
     return;
   }
 
-  const totalFiltrado = itens.reduce((s, i) => s + (i.total_item || 0), 0);
+  // Agrupa por data
+  const porData = {};
+  compras.forEach(c => { (porData[c.data] = porData[c.data]||[]).push(c); });
 
-  tbody.innerHTML = itens.map(item => {
-    const isSem  = item.status === 'sem_estoque';
-    const corQty = isSem ? '#f85149' : '#f0883e';
-    const badge  = isSem
-      ? `<span class="badge" style="background:rgba(248,81,73,.15);color:#f85149;font-size:.68rem">Sem estoque</span>`
-      : `<span class="badge" style="background:rgba(240,136,62,.15);color:#f0883e;font-size:.68rem">Estoque baixo</span>`;
-
-    // Dados do produto via variantMap
-    const vInfo      = variantMap.get(item.nv_variant_id) || {};
-    const imgUrl     = vInfo.imageUrl || '';
-    const nomeProd   = vInfo.productName  || item.nome || '—';
-    const varLabel   = vInfo.variantLabel || '';
-    const nomeCompl  = varLabel ? `${nomeProd} — ${varLabel}` : nomeProd;
-
-    const imgHtml = imgUrl
-      ? `<img src="${imgUrl}" alt="" style="width:38px;height:38px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0">`
-      : `<div style="width:38px;height:38px;background:var(--border);border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
-           <i class="bi bi-image" style="font-size:.75rem;color:var(--muted)"></i>
-         </div>`;
-
-    return `<tr style="transition:background .15s" onmouseover="this.style.background='var(--hover-row)'" onmouseout="this.style.background=''">
-      <td style="padding:8px 12px;font-family:monospace;font-size:.75rem;color:var(--muted);white-space:nowrap">${item.sku !== '—' ? item.sku : ''}</td>
-      <td style="padding:8px 12px">
-        <div style="display:flex;align-items:center;gap:10px">
-          ${imgHtml}
-          <div style="min-width:0">
-            <div style="font-weight:600;font-size:.83rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px" title="${nomeCompl}">${nomeProd}</div>
-            ${varLabel ? `<div style="font-size:.72rem;color:var(--muted)">${varLabel}</div>` : ''}
+  document.getElementById('listaCompras').innerHTML = Object.entries(porData)
+    .sort(([a],[b]) => b.localeCompare(a))
+    .map(([data, items]) => {
+      const totalDia = items.reduce((s,c) => s+(c.total_valor||0), 0);
+      const pecasDia = items.reduce((s,c) => s+(c.total_qty||0), 0);
+      return `
+      <div style="margin-bottom:16px">
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <div style="font-size:.78rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">
+            <i class="bi bi-calendar3 me-1"></i>${fmtData(data)}
+          </div>
+          <div style="font-size:.75rem;color:var(--muted)">
+            ${pecasDia} peças · <span style="color:#3fb950;font-weight:600">${fmtBRL(totalDia)}</span>
           </div>
         </div>
-      </td>
-      <td style="padding:8px 12px;text-align:center;font-weight:700;color:${corQty}">${item.qty_atual}</td>
-      <td style="padding:8px 12px;text-align:center;color:var(--muted)">${item.min_qty}</td>
-      <td style="padding:8px 12px;text-align:center">
-        <span style="background:rgba(88,166,255,.12);color:var(--blue);border-radius:4px;padding:2px 8px;font-weight:600">${item.qty_comprar}</span>
-      </td>
-      <td style="padding:8px 12px;text-align:right;color:var(--muted)">${item.custo_unit > 0 ? fmtBRL(item.custo_unit) : '—'}</td>
-      <td style="padding:8px 12px;text-align:right;font-weight:600;color:#3fb950">${item.total_item > 0 ? fmtBRL(item.total_item) : '—'}</td>
-      <td style="padding:8px 12px;text-align:center">${badge}</td>
-    </tr>`;
-  }).join('');
-
-  document.getElementById('total-footer').textContent = fmtBRL(totalFiltrado);
-  footer.style.display = '';
+        ${items.map(c => renderCardCompra(c)).join('')}
+      </div>`;
+    }).join('');
 }
 
-// ─── Filtros ──────────────────────────────────────────────────────────────────
-function filtrar(tipo) {
-  filtroAtivo = tipo;
-  ['todos','sem_estoque','estoque_baixo'].forEach(f => {
-    const btn = document.getElementById(`filtro-${f === 'sem_estoque' ? 'sem' : f === 'estoque_baixo' ? 'baixo' : 'todos'}`);
-    if (btn) btn.classList.toggle('active', f === tipo);
-  });
-  renderTabela();
-}
+function renderCardCompra(c) {
+  const tams = (c.tamanhos||[]).filter(t => t.quantidade>0)
+    .map(t => `<span class="tam-chip">${t.tamanho}×${t.quantidade}</span>`).join(' ');
 
-// ─── Alertas em tempo real (SSE) ──────────────────────────────────────────────
-let sseSource = null;
-
-function conectarSSE() {
-  if (sseSource) sseSource.close();
-  sseSource = new EventSource('/api/stream/alertas');
-
-  sseSource.onopen = () => {
-    document.getElementById('sse-status').style.background = '#3fb950';
-    document.getElementById('sse-status').title = 'Conectado — recebendo alertas em tempo real';
-  };
-
-  sseSource.onerror = () => {
-    document.getElementById('sse-status').style.background = '#f85149';
-    document.getElementById('sse-status').title = 'Desconectado — reconectando...';
-    setTimeout(conectarSSE, 5000);
-  };
-
-  sseSource.onmessage = (e) => {
-    const data = JSON.parse(e.data);
-    if (data.type === 'ping') return;
-    if (data.type === 'alerta_venda') receberAlerta(data);
-  };
-}
-
-function receberAlerta(alerta) {
-  alertCount++;
-
-  const vazio = document.getElementById('alertas-vazio');
-  if (vazio) vazio.style.display = 'none';
-
-  const isSem   = alerta.status === 'sem_estoque';
-  const cor     = isSem ? '#f85149' : '#f0883e';
-  const icone   = isSem ? 'bi-exclamation-triangle-fill' : 'bi-exclamation-circle-fill';
-  const label   = isSem ? 'SEM ESTOQUE' : 'ESTOQUE BAIXO';
-  const produto = alerta.variante ? `${alerta.produto} — ${alerta.variante}` : alerta.produto;
-
-  const card = document.createElement('div');
-  card.style.cssText = `
-    background:rgba(${isSem ? '248,81,73' : '240,136,62'},.08);
-    border:1px solid rgba(${isSem ? '248,81,73' : '240,136,62'},.3);
-    border-radius:8px;padding:10px 12px;margin-bottom:8px;
-    animation:slideIn .25s ease;
-  `;
-  card.innerHTML = `
-    <div class="d-flex justify-content-between align-items-start mb-1">
-      <span style="font-size:.68rem;font-weight:700;color:${cor};letter-spacing:.04em">
-        <i class="bi ${icone} me-1"></i>${label}
-      </span>
-      <span style="font-size:.65rem;color:var(--muted)">${alerta.timestamp}</span>
+  return `<div class="compra-card">
+    <div class="d-flex align-items-start justify-content-between gap-3">
+      <div class="flex-grow-1">
+        <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+          <span class="fw-bold" style="font-size:.9rem">${escHtml(c.produto_nome)}</span>
+          ${c.fornecedor ? `<span style="font-size:.72rem;color:var(--muted);background:var(--border);border-radius:6px;padding:1px 7px">
+            <i class="bi bi-truck me-1"></i>${escHtml(c.fornecedor)}</span>` : ''}
+        </div>
+        <div class="d-flex flex-wrap gap-1 mb-1">${tams || '<span style="font-size:.72rem;color:var(--muted)">—</span>'}</div>
+        ${c.observacao ? `<div style="font-size:.74rem;color:var(--muted)"><i class="bi bi-chat-left-text me-1"></i>${escHtml(c.observacao)}</div>` : ''}
+      </div>
+      <div style="text-align:right;min-width:110px">
+        <div style="font-size:.72rem;color:var(--muted)">${c.total_qty} peças</div>
+        <div style="font-size:.8rem;color:var(--muted)">× ${fmtBRL(c.preco_unit)}</div>
+        <div style="font-size:1rem;font-weight:700;color:#3fb950">${fmtBRL(c.total_valor)}</div>
+        <button onclick="deletarCompra(${c.id})"
+                style="background:none;border:1px solid #f8514944;color:#f85149;border-radius:4px;
+                       padding:1px 7px;font-size:.68rem;cursor:pointer;margin-top:4px">
+          <i class="bi bi-trash"></i>
+        </button>
+      </div>
     </div>
-    <div style="font-size:.8rem;font-weight:600;color:var(--text);margin-bottom:3px">${produto}</div>
-    <div style="font-size:.73rem;color:var(--muted)">
-      Pedido <strong style="color:var(--text)">#${alerta.numero_pedido}</strong>
-      · Cliente: ${alerta.cliente || '—'}
-    </div>
-    <div style="font-size:.73rem;margin-top:4px">
-      <span style="color:${cor}">Estoque: <strong>${alerta.qty_atual}</strong></span>
-      <span style="color:var(--muted);margin:0 4px">·</span>
-      <span style="color:var(--muted)">Pedido: ${alerta.qty_pedida} un</span>
-      <span style="color:var(--muted);margin:0 4px">·</span>
-      <span style="color:var(--muted)">Mín: ${alerta.min_qty}</span>
-    </div>
-  `;
-
-  const container = document.getElementById('alertas-container');
-  container.insertBefore(card, container.firstChild);
-
-  // Atualiza tabela principal pois o estoque pode ter mudado
-  carregarDados();
-
-  // Toast de notificação
-  toast(`⚠️ ${label}: ${produto}`, false);
-}
-
-function limparAlertas() {
-  alertCount = 0;
-  const c = document.getElementById('alertas-container');
-  c.innerHTML = `<div id="alertas-vazio" class="text-center text-muted py-5" style="font-size:.82rem">
-    <i class="bi bi-bell" style="font-size:1.8rem;opacity:.3;display:block;margin-bottom:8px"></i>
-    Aguardando vendas...<br>
-    <small>Quando entrar um pedido com estoque baixo,<br>o alerta aparece aqui automaticamente.</small>
   </div>`;
 }
 
-// ─── Animação ─────────────────────────────────────────────────────────────────
-const style = document.createElement('style');
-style.textContent = `
-  @keyframes slideIn {
-    from { opacity:0; transform:translateY(-8px); }
-    to   { opacity:1; transform:translateY(0); }
-  }
-`;
-document.head.appendChild(style);
+async function deletarCompra(id) {
+  if (!confirm('Excluir esta compra?')) return;
+  await fetch(`/api/compras/registros/${id}`, {method:'DELETE'});
+  toast('Compra removida');
+  carregarHistorico();
+}
 
-// ─── Itens Manuais ───────────────────────────────────────────────────────────
-let itensManual = [];
-
-async function carregarManual() {
+// ── Relatórios ────────────────────────────────────────────────────────────────
+async function carregarRelatorio() {
+  document.getElementById('relatorioConteudo').innerHTML =
+    '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2"></div>Carregando...</div>';
   try {
-    const r = await fetch('/api/compras/manual');
-    itensManual = await r.json();
-    renderManual();
-  } catch(e) { /* silencioso */ }
-}
-
-function renderManual() {
-  const section = document.getElementById('manual-section');
-  const tbody   = document.getElementById('manual-body');
-  const footer  = document.getElementById('manual-footer');
-  const count   = document.getElementById('manual-count');
-
-  count.textContent = itensManual.length;
-
-  if (!itensManual.length) {
-    section.style.display = 'none';
-    footer.style.display  = 'none';
-    return;
+    const r = await fetch('/api/compras/relatorio');
+    const d = await r.json();
+    renderRelatorio(d);
+  } catch(e) {
+    document.getElementById('relatorioConteudo').innerHTML =
+      '<div class="text-center text-danger py-4">Erro ao carregar relatório</div>';
   }
-  section.style.display = '';
-
-  const totalManual = itensManual.reduce((s, i) => s + (i.qty_comprar * i.custo_unit), 0);
-
-  tbody.innerHTML = itensManual.map(item => {
-    const total = item.qty_comprar * item.custo_unit;
-    return `<tr style="transition:background .15s" onmouseover="this.style.background='var(--hover-row)'" onmouseout="this.style.background=''">
-      <td style="padding:8px 12px;font-family:monospace;font-size:.75rem;color:var(--muted)">${item.sku || '—'}</td>
-      <td style="padding:8px 12px">
-        <div style="font-weight:600;font-size:.83rem">${item.nome}</div>
-        ${item.observacao ? `<div style="font-size:.72rem;color:var(--muted)">${item.observacao}</div>` : ''}
-      </td>
-      <td style="padding:8px 12px;text-align:center">
-        <span style="background:rgba(139,92,246,.12);color:#8b5cf6;border-radius:4px;padding:2px 8px;font-weight:600">${item.qty_comprar}</span>
-      </td>
-      <td style="padding:8px 12px;text-align:right;color:var(--muted)">${item.custo_unit > 0 ? fmtBRL(item.custo_unit) : '—'}</td>
-      <td style="padding:8px 12px;text-align:right;font-weight:600;color:#8b5cf6">${total > 0 ? fmtBRL(total) : '—'}</td>
-      <td style="padding:8px 12px;text-align:center;white-space:nowrap">
-        <button onclick="editarManual(${item.id})" title="Editar"
-                style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:2px 7px;font-size:.75rem;cursor:pointer;margin-right:4px">
-          <i class="bi bi-pencil"></i>
-        </button>
-        <button onclick="deletarManual(${item.id})" title="Remover"
-                style="background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.3);color:#f85149;border-radius:4px;padding:2px 7px;font-size:.75rem;cursor:pointer">
-          <i class="bi bi-trash"></i>
-        </button>
-      </td>
-    </tr>`;
-  }).join('');
-
-  document.getElementById('manual-total-footer').textContent = fmtBRL(totalManual);
-  footer.style.display = '';
 }
 
-function abrirModalManual() {
-  document.getElementById('m-id').value    = '';
-  document.getElementById('m-nome').value  = '';
-  document.getElementById('m-sku').value   = '';
-  document.getElementById('m-qty').value   = '1';
-  document.getElementById('m-custo').value = '0';
-  document.getElementById('m-obs').value   = '';
-  document.getElementById('m-preview').textContent = 'R$ 0,00';
-  document.getElementById('modalManualTitulo').innerHTML =
-    '<i class="bi bi-plus-circle me-2" style="color:#8b5cf6"></i>Adicionar Produto';
-  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalManual')).show();
-  setTimeout(() => document.getElementById('m-nome').focus(), 300);
+function renderRelatorio(d) {
+  const maxMensal = Math.max(...d.mensal.map(m => m.total_valor||0), 1);
+  const maxSemanal = Math.max(...d.semanal.map(m => m.total_valor||0), 1);
+
+  document.getElementById('relatorioConteudo').innerHTML = `
+    <div class="row g-3">
+
+      <!-- Mensal -->
+      <div class="col-lg-6">
+        <div class="card">
+          <div class="card-header"><small class="fw-bold text-uppercase" style="letter-spacing:.05em">
+            <i class="bi bi-calendar-month me-1" style="color:#58a6ff"></i>Gastos Mensais
+          </small></div>
+          <div style="padding:12px">
+            ${d.mensal.length ? d.mensal.map(m => {
+              const pct = ((m.total_valor||0)/maxMensal*100).toFixed(1);
+              return `<div class="rel-card">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                  <span style="font-weight:600;font-size:.85rem">${fmtMes(m.mes)}</span>
+                  <span style="font-size:.85rem;color:#3fb950;font-weight:700">${fmtBRL(m.total_valor)}</span>
+                </div>
+                <div style="height:5px;background:var(--border);border-radius:3px;overflow:hidden">
+                  <div style="height:100%;width:${pct}%;background:#3fb950;border-radius:3px"></div>
+                </div>
+                <div style="font-size:.7rem;color:var(--muted);margin-top:3px">
+                  ${m.num_compras} compra${m.num_compras!==1?'s':''} · ${m.total_pecas||0} peças
+                </div>
+              </div>`;
+            }).join('') : '<div class="text-center text-muted py-3" style="font-size:.82rem">Sem dados</div>'}
+          </div>
+        </div>
+      </div>
+
+      <!-- Semanal -->
+      <div class="col-lg-6">
+        <div class="card">
+          <div class="card-header"><small class="fw-bold text-uppercase" style="letter-spacing:.05em">
+            <i class="bi bi-calendar-week me-1" style="color:#f0883e"></i>Gastos Semanais (últimas 8 sem.)
+          </small></div>
+          <div style="padding:12px">
+            ${d.semanal.length ? d.semanal.map(s => {
+              const pct = ((s.total_valor||0)/maxSemanal*100).toFixed(1);
+              return `<div class="rel-card">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                  <span style="font-weight:600;font-size:.85rem">${s.semana}</span>
+                  <span style="font-size:.85rem;color:#f0883e;font-weight:700">${fmtBRL(s.total_valor)}</span>
+                </div>
+                <div style="height:5px;background:var(--border);border-radius:3px;overflow:hidden">
+                  <div style="height:100%;width:${pct}%;background:#f0883e;border-radius:3px"></div>
+                </div>
+                <div style="font-size:.7rem;color:var(--muted);margin-top:3px">
+                  ${s.num_compras} compra${s.num_compras!==1?'s':''} · ${s.total_pecas||0} peças
+                </div>
+              </div>`;
+            }).join('') : '<div class="text-center text-muted py-3" style="font-size:.82rem">Sem dados</div>'}
+          </div>
+        </div>
+      </div>
+
+      <!-- Por Produto -->
+      <div class="col-lg-6">
+        <div class="card">
+          <div class="card-header"><small class="fw-bold text-uppercase" style="letter-spacing:.05em">
+            <i class="bi bi-box-seam me-1" style="color:#8b5cf6"></i>Top Produtos Comprados
+          </small></div>
+          <div style="padding:12px">
+            ${d.por_produto.length ? d.por_produto.map((p,i) => `
+              <div class="d-flex align-items-center gap-3 py-2" style="border-bottom:1px solid var(--border)">
+                <span style="font-size:.7rem;font-weight:700;color:var(--muted);min-width:18px">#${i+1}</span>
+                <div style="flex:1">
+                  <div style="font-size:.83rem;font-weight:600">${escHtml(p.produto_nome)}</div>
+                  <div style="font-size:.7rem;color:var(--muted)">${p.num_compras} compras · ${p.total_pecas||0} peças</div>
+                </div>
+                <span style="font-weight:700;color:#8b5cf6;font-size:.88rem">${fmtBRL(p.total_valor)}</span>
+              </div>`).join('') : '<div class="text-center text-muted py-3" style="font-size:.82rem">Sem dados</div>'}
+          </div>
+        </div>
+      </div>
+
+      <!-- Por Fornecedor -->
+      <div class="col-lg-6">
+        <div class="card">
+          <div class="card-header"><small class="fw-bold text-uppercase" style="letter-spacing:.05em">
+            <i class="bi bi-truck me-1" style="color:#f0c43e"></i>Por Fornecedor
+          </small></div>
+          <div style="padding:12px">
+            ${d.por_fornecedor.length ? d.por_fornecedor.map(f => `
+              <div class="d-flex align-items-center justify-content-between py-2" style="border-bottom:1px solid var(--border)">
+                <div>
+                  <div style="font-size:.83rem;font-weight:600">${escHtml(f.fornecedor)}</div>
+                  <div style="font-size:.7rem;color:var(--muted)">${f.num_compras} compra${f.num_compras!==1?'s':''}</div>
+                </div>
+                <span style="font-weight:700;color:#f0c43e;font-size:.88rem">${fmtBRL(f.total_valor)}</span>
+              </div>`).join('') : '<div class="text-center text-muted py-3" style="font-size:.82rem">Sem dados</div>'}
+          </div>
+        </div>
+      </div>
+
+    </div>`;
 }
 
-function editarManual(id) {
-  const item = itensManual.find(i => i.id === id);
-  if (!item) return;
-  document.getElementById('m-id').value    = id;
-  document.getElementById('m-nome').value  = item.nome;
-  document.getElementById('m-sku').value   = item.sku || '';
-  document.getElementById('m-qty').value   = item.qty_comprar;
-  document.getElementById('m-custo').value = item.custo_unit;
-  document.getElementById('m-obs').value   = item.observacao || '';
-  document.getElementById('modalManualTitulo').innerHTML =
-    '<i class="bi bi-pencil-square me-2" style="color:#8b5cf6"></i>Editar Produto';
-  calcularPreviewManual();
-  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalManual')).show();
+// ── Modal Registrar Compra ─────────────────────────────────────────────────────
+function abrirModalCompra() {
+  // Data padrão: hoje
+  const hoje = new Date().toISOString().slice(0,10);
+  document.getElementById('cData').value       = hoje;
+  document.getElementById('cProduto').value    = '';
+  document.getElementById('cFornecedor').value = '';
+  document.getElementById('cPreco').value      = '';
+  document.getElementById('cObs').value        = '';
+  document.getElementById('erroCompra').textContent = '';
+  document.getElementById('totalPecas').textContent = '0';
+  document.getElementById('totalValor').textContent = 'R$ 0,00';
+  document.getElementById('cAtualizarEstoque').checked = false;
+  produtoSelecionado = null;
+  onToggleEstoque();
+
+  renderGridTamanhos();
+  document.getElementById('tamanhosExtras').innerHTML = '';
+
+  carregarCatalogo();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('modalCompra')).show();
+  setTimeout(() => document.getElementById('cProduto').focus(), 300);
 }
 
-function calcularPreviewManual() {
-  const qty   = parseInt(document.getElementById('m-qty').value)   || 0;
-  const custo = parseFloat(document.getElementById('m-custo').value) || 0;
-  document.getElementById('m-preview').textContent = fmtBRL(qty * custo);
+function renderGridTamanhos() {
+  document.getElementById('gridTamanhos').innerHTML = TAMANHOS_PADRAO.map(t => `
+    <div class="tam-box">
+      <label class="tam-label">${t}</label>
+      <input type="number" class="tam-input" id="tam-${t}" min="0" value=""
+             placeholder="0" oninput="calcularTotal();this.classList.toggle('has-value',!!(+this.value))">
+    </div>`).join('');
 }
 
-async function salvarManual() {
-  const nome = document.getElementById('m-nome').value.trim();
-  if (!nome) { document.getElementById('m-nome').focus(); return; }
+function adicionarTamanhoCustom() {
+  const nome = prompt('Nome do tamanho (ex: 36, XGG, Único):');
+  if (!nome || !nome.trim()) return;
+  const id = 'tam-custom-' + Date.now();
+  const div = document.createElement('div');
+  div.className = 'tam-box'; div.id = id + '-box';
+  div.innerHTML = `
+    <label class="tam-label">${nome.trim().toUpperCase()}
+      <button onclick="document.getElementById('${id}-box').remove();calcularTotal()"
+              style="background:none;border:none;color:var(--red);cursor:pointer;font-size:.8rem;padding:0;margin-left:3px">×</button>
+    </label>
+    <input type="number" class="tam-input" id="${id}" min="0" value="" placeholder="0"
+           data-tamanho="${nome.trim().toUpperCase()}"
+           oninput="calcularTotal();this.classList.toggle('has-value',!!(+this.value))">`;
+  document.getElementById('tamanhosExtras').appendChild(div);
+}
 
-  const id      = document.getElementById('m-id').value;
-  const payload = {
-    nome,
-    sku:        document.getElementById('m-sku').value.trim() || null,
-    qty_comprar: parseInt(document.getElementById('m-qty').value)    || 1,
-    custo_unit:  parseFloat(document.getElementById('m-custo').value) || 0,
-    observacao:  document.getElementById('m-obs').value.trim() || null,
-  };
+function getTamanhos() {
+  const resultado = [];
+  // Padrões
+  TAMANHOS_PADRAO.forEach(t => {
+    const el = document.getElementById(`tam-${t}`);
+    const qty = parseInt(el?.value) || 0;
+    if (qty > 0) resultado.push({tamanho: t, quantidade: qty});
+  });
+  // Customizados
+  document.querySelectorAll('[data-tamanho]').forEach(el => {
+    const qty = parseInt(el.value) || 0;
+    if (qty > 0) resultado.push({tamanho: el.dataset.tamanho, quantidade: qty});
+  });
+  return resultado;
+}
 
+function calcularTotal() {
+  const tams   = getTamanhos();
+  const total  = tams.reduce((s,t) => s + t.quantidade, 0);
+  const preco  = parseFloat(document.getElementById('cPreco').value) || 0;
+  document.getElementById('totalPecas').textContent = total;
+  document.getElementById('totalValor').textContent = fmtBRL(total * preco);
+}
+
+// ── Busca de produto no catálogo ──────────────────────────────────────────────
+async function carregarCatalogo() {
+  if (catalogoProdutos.length) return;
   try {
-    const url    = id ? `/api/compras/manual/${id}` : '/api/compras/manual';
-    const method = id ? 'PUT' : 'POST';
-    const res    = await fetch(url, {
-      method,
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload),
+    const r = await fetch('/api/nuvemshop/produtos');
+    catalogoProdutos = (await r.json()) || [];
+  } catch(e) {}
+}
+
+function buscarProduto(input) {
+  const q   = input.value.toLowerCase().trim();
+  const dd  = document.getElementById('produtosDropdown');
+  if (q.length < 1) { dd.style.display='none'; return; }
+
+  // Filtra todos que contêm a busca, ordena: começa com > contém no início do nome > contém em qualquer lugar
+  const matches = catalogoProdutos
+    .filter(p => p.name && p.name.toLowerCase().includes(q))
+    .sort((a, b) => {
+      const an = a.name.toLowerCase(), bn = b.name.toLowerCase();
+      const aStarts = an.startsWith(q) ? 0 : an.includes(' ' + q) ? 1 : 2;
+      const bStarts = bn.startsWith(q) ? 0 : bn.includes(' ' + q) ? 1 : 2;
+      if (aStarts !== bStarts) return aStarts - bStarts;
+      return an.localeCompare(bn);
     });
-    const data = await res.json();
-    if (data.ok) {
-      bootstrap.Modal.getOrCreateInstance(document.getElementById('modalManual')).hide();
-      toast(id ? 'Item atualizado!' : 'Produto adicionado à lista!');
-      await carregarManual();
-    } else {
-      toast(data.erro || 'Erro ao salvar', false);
-    }
-  } catch(e) { toast('Erro de conexão', false); }
+
+  if (!matches.length) { dd.style.display = 'none'; return; }
+  dd.style.display = 'block';
+
+  const header = matches.length > 1
+    ? `<div style="padding:6px 14px;font-size:.68rem;color:var(--muted);border-bottom:1px solid var(--border);
+                   background:#0d1117;border-radius:10px 10px 0 0;letter-spacing:.04em">
+         ${matches.length} produto${matches.length!==1?'s':''} encontrado${matches.length!==1?'s':''}
+       </div>` : '';
+
+  dd.innerHTML = header + matches.map(p => {
+    const img = p.imageUrl || '';
+    const imgHtml = img
+      ? `<img src="${escHtml(img)}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid var(--border);flex-shrink:0">`
+      : `<div style="width:56px;height:56px;background:#21262d;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+           <i class="bi bi-image" style="font-size:1.2rem;color:var(--muted)"></i></div>`;
+    return `<div onclick="selecionarProduto('${escHtml(p.name)}',${p.id||'null'})"
+         style="padding:10px 14px;cursor:pointer;border-bottom:1px solid #21262d;display:flex;align-items:center;gap:12px"
+         onmouseover="this.style.background='rgba(88,166,255,.08)'" onmouseout="this.style.background=''">
+      ${imgHtml}
+      <span style="font-size:.88rem;font-weight:600;line-height:1.3">${escHtml(p.name)}</span>
+    </div>`;
+  }).join('') + (matches.length === 0 ? `<div style="padding:12px;text-align:center;color:var(--muted);font-size:.82rem">Nenhum produto encontrado</div>` : '');
 }
 
-async function deletarManual(id) {
-  if (!confirm('Remover este item da lista?')) return;
+function selecionarProduto(nome, id) {
+  document.getElementById('cProduto').value = nome;
+  document.getElementById('cProduto').dataset.prodId = id || '';
+  document.getElementById('produtosDropdown').style.display = 'none';
+
+  // Monta sizeMap: tamanho → variante "Sem Personalização" (preferencial)
+  produtoSelecionado = null;
+  const prod = catalogoProdutos.find(p => p.id === id);
+  if (prod) {
+    const sizeMap = {};
+    (prod.variants || []).forEach(v => {
+      const label = (v.values || []).join(', ');
+      const isCom = label.toLowerCase().includes('com personaliz');
+      if (isCom) return; // pula Com Personalização — usa Sem
+      const size = (v.values || [])[0]?.trim().toUpperCase();
+      if (size) sizeMap[size] = { nv_variant_id: v.id, sku: v.sku || null, label };
+    });
+    produtoSelecionado = { id: prod.id, name: prod.name, sizeMap };
+  }
+  onToggleEstoque();
+}
+
+function onToggleEstoque() {
+  const ativo  = document.getElementById('cAtualizarEstoque').checked;
+  const aviso  = document.getElementById('avisoSemVariants');
+  const desc   = document.getElementById('descAtualizarEstoque');
+  const temProd = !!produtoSelecionado;
+
+  if (ativo && !temProd) {
+    aviso.style.display = '';
+    desc.textContent = 'Selecione o produto pelo campo de busca para vincular ao estoque.';
+  } else if (ativo && temProd) {
+    aviso.style.display = 'none';
+    const sizes = Object.keys(produtoSelecionado.sizeMap).join(', ');
+    desc.textContent = `Tamanhos vinculados: ${sizes || '(nenhum cadastrado no estoque)'}`;
+  } else {
+    aviso.style.display = 'none';
+    desc.textContent = 'As quantidades serão adicionadas ao estoque e o Custo Médio Ponderado será recalculado.';
+  }
+}
+
+document.addEventListener('click', e => {
+  const dd = document.getElementById('produtosDropdown');
+  if (dd && !dd.contains(e.target) && e.target.id !== 'cProduto') dd.style.display = 'none';
+});
+
+// ── Salvar compra ─────────────────────────────────────────────────────────────
+async function salvarCompra() {
+  const produto = document.getElementById('cProduto').value.trim();
+  const preco   = parseFloat(document.getElementById('cPreco').value) || 0;
+  const tams    = getTamanhos();
+  const erroEl  = document.getElementById('erroCompra');
+
+  if (!produto)         { erroEl.textContent = 'Informe o nome do produto.'; return; }
+  if (!tams.length)     { erroEl.textContent = 'Informe ao menos um tamanho com quantidade.'; return; }
+  if (preco <= 0)       { erroEl.textContent = 'Informe o preço por unidade.'; return; }
+  erroEl.textContent = '';
+
+  const btn = document.getElementById('btnSalvarCompra');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Salvando...';
+
+  const atualizarEst = document.getElementById('cAtualizarEstoque').checked;
+
+  // Monta tamanhos com variant_id quando disponível
+  const tamsComVariant = tams.map(t => {
+    const v = produtoSelecionado?.sizeMap?.[t.tamanho.toUpperCase()] || null;
+    return {
+      tamanho:      t.tamanho,
+      quantidade:   t.quantidade,
+      nv_variant_id: v?.nv_variant_id || null,
+      sku:           v?.sku || null,
+      variante_label: v?.label || t.tamanho,
+    };
+  });
+
   try {
-    await fetch(`/api/compras/manual/${id}`, {method: 'DELETE'});
-    toast('Item removido');
-    await carregarManual();
-  } catch(e) { toast('Erro ao remover', false); }
+    const r = await fetch('/api/compras/registros', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        data:              document.getElementById('cData').value,
+        produto_nome:      produto,
+        nv_product_id:     produtoSelecionado?.id || document.getElementById('cProduto').dataset.prodId || null,
+        fornecedor:        document.getElementById('cFornecedor').value.trim() || null,
+        preco_unit:        preco,
+        observacao:        document.getElementById('cObs').value.trim() || null,
+        tamanhos:          tamsComVariant,
+        atualizar_estoque: atualizarEst,
+      }),
+    });
+    const j = await r.json();
+    if (r.ok) {
+      bootstrap.Modal.getInstance(document.getElementById('modalCompra')).hide();
+      const total = tams.reduce((s,t)=>s+t.quantidade, 0);
+      let msg = `✓ Compra registrada! ${total} peças × ${fmtBRL(preco)} = ${fmtBRL(total*preco)}`;
+      if (atualizarEst && j.estoque_atualizado) msg += ` · ${j.estoque_atualizado} variante(s) atualizadas no estoque`;
+      toast(msg);
+      if (abaAtiva === 'historico') carregarHistorico();
+    } else {
+      erroEl.textContent = j.erro || 'Erro ao salvar.';
+    }
+  } catch(e) {
+    erroEl.textContent = 'Erro de conexão.';
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-check2 me-1"></i>Salvar Compra';
+  }
 }
 
-// ─── Init ─────────────────────────────────────────────────────────────────────
-carregarDados();
-carregarManual();
-conectarSSE();
-setInterval(carregarDados,  60000); // atualiza tabela a cada 1 min
-setInterval(carregarManual, 60000); // atualiza manuais a cada 1 min
+// ── Alertas SSE ───────────────────────────────────────────────────────────────
+let sseSource = null;
+function conectarSSE() {
+  if (sseSource && sseSource.readyState !== 2) return;
+  sseSource = new EventSource('/api/stream/alertas');
+  sseSource.onopen = () => { document.getElementById('sse-status').style.background = '#3fb950'; };
+  sseSource.onerror = () => { document.getElementById('sse-status').style.background = '#f85149'; setTimeout(conectarSSE,5000); };
+  sseSource.onmessage = (e) => {
+    const d = JSON.parse(e.data);
+    if (d.type === 'alerta_venda') receberAlerta(d);
+  };
+}
+
+function receberAlerta(a) {
+  document.getElementById('alertas-vazio')?.remove();
+  const isSem = a.status === 'sem_estoque';
+  const cor   = isSem ? '#f85149' : '#f0883e';
+  const div   = document.createElement('div');
+  div.style.cssText = `background:rgba(${isSem?'248,81,73':'240,136,62'},.08);border:1px solid rgba(${isSem?'248,81,73':'240,136,62'},.3);border-radius:8px;padding:10px 12px;margin-bottom:8px`;
+  div.innerHTML = `
+    <div class="d-flex justify-content-between mb-1">
+      <span style="font-size:.68rem;font-weight:700;color:${cor}">${isSem?'SEM ESTOQUE':'ESTOQUE BAIXO'}</span>
+      <span style="font-size:.65rem;color:var(--muted)">${a.timestamp}</span>
+    </div>
+    <div style="font-size:.82rem;font-weight:600">${a.produto}${a.variante?' — '+a.variante:''}</div>
+    <div style="font-size:.73rem;color:var(--muted)">Pedido #${a.numero_pedido} · ${a.cliente||'—'}</div>
+    <div style="font-size:.73rem;margin-top:3px"><span style="color:${cor}">Estoque: ${a.qty_atual}</span> · Pedido: ${a.qty_pedida}un</div>`;
+  document.getElementById('alertas-container').prepend(div);
+}
+
+function limparAlertas() {
+  document.getElementById('alertas-container').innerHTML =
+    '<div id="alertas-vazio" class="text-center text-muted py-5"><i class="bi bi-bell" style="font-size:2rem;opacity:.3;display:block;margin-bottom:8px"></i>Aguardando vendas com estoque baixo...</div>';
+}
+
+function escHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+setPeriodo('mes');  // começa com o mês atual
 </script>
 {% endblock %}

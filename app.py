@@ -268,6 +268,25 @@ def init_db():
                 data        TEXT    NOT NULL DEFAULT (date('now','localtime')),
                 created_at  DATETIME DEFAULT (datetime('now','localtime'))
             );
+
+            CREATE TABLE IF NOT EXISTS compras_registros (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                data         TEXT    NOT NULL DEFAULT (date('now','localtime')),
+                produto_nome TEXT    NOT NULL,
+                nv_product_id INTEGER,
+                fornecedor   TEXT,
+                preco_unit   REAL    NOT NULL DEFAULT 0,
+                observacao   TEXT,
+                criado_por   TEXT,
+                created_at   DATETIME DEFAULT (datetime('now','localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS compras_tamanhos (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                compra_id  INTEGER NOT NULL REFERENCES compras_registros(id) ON DELETE CASCADE,
+                tamanho    TEXT    NOT NULL,
+                quantidade INTEGER NOT NULL DEFAULT 0
+            );
         """)
         for col, coltype in [
             ("cliente", "TEXT"), ("total", "TEXT"), ("pagamento", "TEXT"),
@@ -297,9 +316,25 @@ def init_db():
             try: conn.execute(f"ALTER TABLE atacado_itens ADD COLUMN {col}")
             except Exception: pass
 
-        for col in ["frete_tipo TEXT DEFAULT 'a_combinar'"]:
+        for col in ["frete_tipo TEXT DEFAULT 'a_combinar'", "numero INTEGER"]:
             try: conn.execute(f"ALTER TABLE atacado_pedidos ADD COLUMN {col}")
             except Exception: pass
+
+        # Backfill: numera pedidos antigos sem número (ordem por id)
+        try:
+            sem_numero = conn.execute(
+                "SELECT id FROM atacado_pedidos WHERE numero IS NULL ORDER BY id"
+            ).fetchall()
+            if sem_numero:
+                maxn = conn.execute(
+                    "SELECT COALESCE(MAX(numero), 0) FROM atacado_pedidos"
+                ).fetchone()[0] or 0
+                n = maxn
+                for row in sem_numero:
+                    n += 1
+                    conn.execute("UPDATE atacado_pedidos SET numero=? WHERE id=?", (n, row[0]))
+        except Exception:
+            pass
 
         # sku_stock — nomes para sync
         for col in ["produto_nome TEXT", "variante_label TEXT"]:
@@ -314,6 +349,10 @@ def init_db():
                 conn.execute(f'ALTER TABLE sku_costs ADD COLUMN {col}')
             except Exception:
                 pass
+
+        # sku_stock_movements — preço de compra por lote (para CMP)
+        try: conn.execute("ALTER TABLE sku_stock_movements ADD COLUMN preco_compra REAL")
+        except Exception: pass
 
         # pedido_itens migrations (idempotent)
         for col in ["imagem_url TEXT", "nv_variant_id INTEGER"]:
@@ -2747,6 +2786,167 @@ def api_sku_costs_post():
     return jsonify({"ok": True})
 
 
+@app.route("/api/estoque/entrada-lote", methods=["POST"])
+@login_required
+def api_estoque_entrada_lote():
+    """Entrada de estoque com preço de compra — calcula Custo Médio Ponderado (CMP).
+
+    Body JSON:
+        nv_variant_id  int
+        nv_product_id  int  (opcional)
+        sku            str
+        quantidade     int   — quantidade do novo lote
+        preco_compra   float — preço pago por unidade neste lote
+        produto_nome   str  (opcional — para sync por nome)
+        variante_label str  (opcional)
+    """
+    data          = request.get_json() or {}
+    nv_variant_id = data.get("nv_variant_id")
+    nv_product_id = data.get("nv_product_id")
+    sku           = (data.get("sku") or "").strip() or None
+    quantidade    = data.get("quantidade", 0)
+    preco_compra  = data.get("preco_compra", 0)
+    produto_nome  = (data.get("produto_nome") or "").strip() or None
+    variante_label= (data.get("variante_label") or "").strip() or None
+
+    if not nv_variant_id and not sku:
+        return jsonify({"erro": "nv_variant_id ou sku obrigatório"}), 400
+
+    # sku_costs.sku é NOT NULL — usa nv_variant_id como fallback se não tiver SKU
+    sku_custo = sku or (f"VID-{nv_variant_id}" if nv_variant_id else None)
+    if not sku_custo:
+        return jsonify({"erro": "SKU não encontrado para esta variante"}), 400
+    try:
+        quantidade   = int(quantidade)
+        preco_compra = float(preco_compra)
+        if quantidade <= 0:
+            raise ValueError("quantidade deve ser positiva")
+        if preco_compra < 0:
+            raise ValueError("preço não pode ser negativo")
+    except (TypeError, ValueError) as e:
+        return jsonify({"erro": str(e)}), 400
+
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    hoje  = date.today().isoformat()
+
+    with get_conn() as conn:
+        # ── Estoque atual ────────────────────────────────────────────
+        if nv_variant_id:
+            stock = conn.execute(
+                "SELECT id, quantity, produto_nome, variante_label FROM sku_stock WHERE nv_variant_id=?",
+                (nv_variant_id,)
+            ).fetchone()
+        else:
+            stock = conn.execute(
+                "SELECT id, quantity, produto_nome, variante_label FROM sku_stock WHERE sku=? AND nv_variant_id IS NULL",
+                (sku,)
+            ).fetchone()
+
+        qty_atual = int(stock["quantity"]) if stock and stock["quantity"] else 0
+
+        # ── Custo atual (vigente) ────────────────────────────────────
+        if nv_variant_id:
+            custo_row = conn.execute(
+                """SELECT cost FROM sku_costs
+                   WHERE nv_variant_id=? AND effective_to IS NULL
+                   ORDER BY effective_from DESC LIMIT 1""",
+                (nv_variant_id,)
+            ).fetchone()
+        else:
+            custo_row = conn.execute(
+                """SELECT cost FROM sku_costs
+                   WHERE sku=? AND nv_variant_id IS NULL AND effective_to IS NULL
+                   ORDER BY effective_from DESC LIMIT 1""",
+                (sku,)
+            ).fetchone()
+
+        custo_atual = float(custo_row["cost"]) if custo_row else 0.0
+
+        # ── Calcula CMP ──────────────────────────────────────────────
+        # Se não tem estoque ou custo, o CMP é o preço do lote atual
+        if qty_atual <= 0 or custo_atual == 0:
+            novo_cmp = preco_compra
+        else:
+            total_valor = (qty_atual * custo_atual) + (quantidade * preco_compra)
+            nova_qty_total = qty_atual + quantidade
+            novo_cmp = round(total_valor / nova_qty_total, 4)
+
+        nova_qty = qty_atual + quantidade
+
+        # ── Atualiza estoque ─────────────────────────────────────────
+        if stock:
+            upd = "UPDATE sku_stock SET quantity=?, updated_at=?"
+            params = [nova_qty, agora]
+            if produto_nome:
+                upd += ", produto_nome=?"; params.append(produto_nome)
+            if variante_label:
+                upd += ", variante_label=?"; params.append(variante_label)
+            upd += " WHERE id=?"; params.append(stock["id"])
+            conn.execute(upd, params)
+        else:
+            min_q = 3
+            conn.execute(
+                """INSERT INTO sku_stock
+                   (nv_variant_id, nv_product_id, sku, quantity, min_quantity,
+                    produto_nome, variante_label, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (nv_variant_id, nv_product_id, sku, nova_qty, min_q,
+                 produto_nome, variante_label, agora)
+            )
+
+        # ── Registra movimento com preço de compra ───────────────────
+        conn.execute(
+            """INSERT INTO sku_stock_movements
+               (nv_variant_id, sku, tipo, quantidade, preco_compra, observacao, created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (nv_variant_id, sku, "entrada", quantidade, preco_compra,
+             f"Lote: {quantidade}un × R${preco_compra:.2f} | CMP: R${novo_cmp:.2f}", agora)
+        )
+
+        # ── Atualiza custo com o novo CMP ────────────────────────────
+        # Fecha registro anterior
+        if nv_variant_id:
+            conn.execute(
+                """UPDATE sku_costs SET effective_to=date(?, '-1 day')
+                   WHERE nv_variant_id=? AND effective_to IS NULL AND effective_from < ?""",
+                (hoje, nv_variant_id, hoje)
+            )
+        conn.execute(
+            """UPDATE sku_costs SET effective_to=date(?, '-1 day')
+               WHERE sku=? AND effective_to IS NULL AND effective_from < ?""",
+            (hoje, sku_custo, hoje)
+        )
+        # Insere novo registro com CMP calculado
+        nome_custo = produto_nome or (stock["produto_nome"] if stock else None)
+        conn.execute(
+            """INSERT INTO sku_costs
+               (sku, name, type, cost, effective_from, notes, nv_variant_id, nv_product_id)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (sku_custo, nome_custo, "product", novo_cmp, hoje,
+             f"CMP: {qty_atual}un×R${custo_atual:.2f} + {quantidade}un×R${preco_compra:.2f} = {nova_qty}un×R${novo_cmp:.2f}",
+             nv_variant_id, nv_product_id)
+        )
+
+        # ── Sync por nome + SKU ──────────────────────────────────────
+        _sync_estoque_por_nome(
+            conn, produto_nome or (stock["produto_nome"] if stock else None),
+            variante_label or (stock["variante_label"] if stock else None),
+            nova_qty, agora, skip_vid=nv_variant_id, sku_origem=sku
+        )
+
+        conn.commit()
+
+    return jsonify({
+        "ok": True,
+        "qty_anterior": qty_atual,
+        "custo_anterior": custo_atual,
+        "nova_quantidade": nova_qty,
+        "novo_cmp": novo_cmp,
+        "preco_lote": preco_compra,
+        "quantidade_lote": quantidade,
+    })
+
+
 @app.route("/api/nuvemshop/produtos", methods=["GET"])
 @login_required
 def api_nuvemshop_produtos():
@@ -3201,6 +3401,262 @@ def api_compras_manual_delete(item_id):
     return jsonify({"ok": True})
 
 
+# ── Routes — Compras Registros ────────────────────────────────────────────────
+
+@app.route("/api/compras/registros", methods=["GET"])
+@login_required
+def api_compras_registros_list():
+    """Lista compras registradas. Filtros: inicio, fim."""
+    inicio = request.args.get("inicio") or ""
+    fim    = request.args.get("fim")    or ""
+    with get_conn() as conn:
+        q = """
+            SELECT r.*,
+                   COALESCE(SUM(t.quantidade), 0) AS total_qty,
+                   COALESCE(SUM(t.quantidade), 0) * r.preco_unit AS total_valor
+            FROM compras_registros r
+            LEFT JOIN compras_tamanhos t ON t.compra_id = r.id
+        """
+        params = []
+        conds = []
+        if inicio: conds.append("r.data >= ?"); params.append(inicio)
+        if fim:    conds.append("r.data <= ?"); params.append(fim)
+        if conds: q += " WHERE " + " AND ".join(conds)
+        q += " GROUP BY r.id ORDER BY r.data DESC, r.created_at DESC"
+        compras = [dict(r) for r in conn.execute(q, params).fetchall()]
+
+        # Tamanhos de cada compra
+        ids = [c["id"] for c in compras]
+        tam_map = {}
+        if ids:
+            marks = ",".join("?" * len(ids))
+            for t in conn.execute(
+                f"SELECT * FROM compras_tamanhos WHERE compra_id IN ({marks}) ORDER BY tamanho",
+                ids
+            ).fetchall():
+                tam_map.setdefault(t["compra_id"], []).append(dict(t))
+        for c in compras:
+            c["tamanhos"] = tam_map.get(c["id"], [])
+
+    return jsonify(compras)
+
+
+@app.route("/api/compras/registros", methods=["POST"])
+@login_required
+def api_compras_registros_add():
+    """Registra uma nova compra com tamanhos."""
+    data    = request.get_json() or {}
+    produto = (data.get("produto_nome") or "").strip()
+    if not produto:
+        return jsonify({"erro": "Nome do produto obrigatório"}), 400
+
+    tamanhos = [t for t in (data.get("tamanhos") or []) if int(t.get("quantidade") or 0) > 0]
+    if not tamanhos:
+        return jsonify({"erro": "Informe ao menos um tamanho com quantidade > 0"}), 400
+
+    preco_unit       = float(data.get("preco_unit") or 0)
+    atualizar_estoque= bool(data.get("atualizar_estoque"))
+    agora            = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    hoje             = date.today().isoformat()
+    data_compra      = data.get("data") or hoje
+    estoque_atualizados = 0
+
+    with get_conn() as conn:
+        cur = conn.execute(
+            """INSERT INTO compras_registros
+               (data, produto_nome, nv_product_id, fornecedor, preco_unit, observacao, criado_por)
+               VALUES (?,?,?,?,?,?,?)""",
+            (data_compra, produto,
+             data.get("nv_product_id") or None,
+             (data.get("fornecedor") or "").strip() or None,
+             preco_unit,
+             (data.get("observacao") or "").strip() or None,
+             session.get("usuario", ""))
+        )
+        cid = cur.lastrowid
+        for t in tamanhos:
+            conn.execute(
+                "INSERT INTO compras_tamanhos (compra_id, tamanho, quantidade) VALUES (?,?,?)",
+                (cid, str(t["tamanho"]).strip().upper(), int(t["quantidade"]))
+            )
+
+        # ── Atualiza estoque + CMP se solicitado ──────────────────────────
+        if atualizar_estoque and preco_unit > 0:
+            for t in tamanhos:
+                nv_vid   = t.get("nv_variant_id") or None
+                sku_tam  = t.get("sku") or None
+                qty      = int(t["quantidade"])
+                var_label= t.get("variante_label") or t["tamanho"]
+
+                if not nv_vid and not sku_tam:
+                    continue  # sem vínculo ao estoque
+
+                # sku_custo = sku ou fallback VID
+                sku_custo = sku_tam or (f"VID-{nv_vid}" if nv_vid else None)
+                if not sku_custo:
+                    continue
+
+                # Estoque atual
+                if nv_vid:
+                    stock = conn.execute(
+                        "SELECT id, quantity, produto_nome, variante_label FROM sku_stock WHERE nv_variant_id=?",
+                        (nv_vid,)
+                    ).fetchone()
+                else:
+                    stock = conn.execute(
+                        "SELECT id, quantity, produto_nome, variante_label FROM sku_stock WHERE sku=? AND nv_variant_id IS NULL",
+                        (sku_tam,)
+                    ).fetchone()
+
+                qty_atual = int(stock["quantity"]) if stock and stock["quantity"] else 0
+
+                # Custo atual
+                if nv_vid:
+                    cr = conn.execute(
+                        "SELECT cost FROM sku_costs WHERE nv_variant_id=? AND effective_to IS NULL ORDER BY effective_from DESC LIMIT 1",
+                        (nv_vid,)
+                    ).fetchone()
+                else:
+                    cr = conn.execute(
+                        "SELECT cost FROM sku_costs WHERE sku=? AND nv_variant_id IS NULL AND effective_to IS NULL ORDER BY effective_from DESC LIMIT 1",
+                        (sku_custo,)
+                    ).fetchone()
+
+                custo_atual = float(cr["cost"]) if cr else 0.0
+
+                # CMP
+                if qty_atual <= 0 or custo_atual == 0:
+                    novo_cmp = preco_unit
+                else:
+                    novo_cmp = round((qty_atual * custo_atual + qty * preco_unit) / (qty_atual + qty), 4)
+
+                nova_qty = qty_atual + qty
+
+                # Atualiza sku_stock
+                if stock:
+                    conn.execute(
+                        "UPDATE sku_stock SET quantity=?, updated_at=? WHERE id=?",
+                        (nova_qty, agora, stock["id"])
+                    )
+                else:
+                    conn.execute(
+                        """INSERT INTO sku_stock (nv_variant_id, sku, quantity, produto_nome, variante_label, updated_at)
+                           VALUES (?,?,?,?,?,?)""",
+                        (nv_vid, sku_tam, nova_qty, produto, var_label, agora)
+                    )
+
+                # Movimento
+                conn.execute(
+                    """INSERT INTO sku_stock_movements
+                       (nv_variant_id, sku, tipo, quantidade, preco_compra, observacao, created_at)
+                       VALUES (?,?,?,?,?,?,?)""",
+                    (nv_vid, sku_custo, "entrada", qty, preco_unit,
+                     f"Compra registrada #{cid} — CMP: R${novo_cmp:.2f}", agora)
+                )
+
+                # Fecha custo anterior e insere CMP
+                if nv_vid:
+                    conn.execute(
+                        "UPDATE sku_costs SET effective_to=date(?,' -1 day') WHERE nv_variant_id=? AND effective_to IS NULL AND effective_from < ?",
+                        (hoje, nv_vid, hoje)
+                    )
+                conn.execute(
+                    "UPDATE sku_costs SET effective_to=date(?,' -1 day') WHERE sku=? AND effective_to IS NULL AND effective_from < ?",
+                    (hoje, sku_custo, hoje)
+                )
+                conn.execute(
+                    """INSERT INTO sku_costs (sku, name, type, cost, effective_from, notes, nv_variant_id)
+                       VALUES (?,?,?,?,?,?,?)""",
+                    (sku_custo, produto, "product", novo_cmp, hoje,
+                     f"CMP via compra #{cid}: {qty_atual}un×R${custo_atual:.2f} + {qty}un×R${preco_unit:.2f}",
+                     nv_vid)
+                )
+
+                # Sync por nome+SKU
+                _sync_estoque_por_nome(
+                    conn, produto, var_label, nova_qty, agora,
+                    skip_vid=nv_vid, sku_origem=sku_tam
+                )
+
+                estoque_atualizados += 1
+
+        conn.commit()
+    return jsonify({"ok": True, "id": cid, "estoque_atualizado": estoque_atualizados}), 201
+
+
+@app.route("/api/compras/registros/<int:cid>", methods=["DELETE"])
+@login_required
+def api_compras_registros_delete(cid):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM compras_tamanhos  WHERE compra_id=?", (cid,))
+        conn.execute("DELETE FROM compras_registros WHERE id=?", (cid,))
+        conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/compras/relatorio", methods=["GET"])
+@login_required
+def api_compras_relatorio():
+    """Relatório de compras: semanal e mensal."""
+    with get_conn() as conn:
+        # Por semana (últimas 8 semanas)
+        semanal = conn.execute("""
+            SELECT strftime('%Y-W%W', r.data) AS semana,
+                   COUNT(DISTINCT r.id)       AS num_compras,
+                   SUM(t.quantidade)          AS total_pecas,
+                   SUM(t.quantidade * r.preco_unit) AS total_valor
+            FROM compras_registros r
+            LEFT JOIN compras_tamanhos t ON t.compra_id = r.id
+            WHERE r.data >= date('now', '-56 days')
+            GROUP BY semana
+            ORDER BY semana DESC
+        """).fetchall()
+
+        # Por mês (últimos 12 meses)
+        mensal = conn.execute("""
+            SELECT strftime('%Y-%m', r.data)  AS mes,
+                   COUNT(DISTINCT r.id)       AS num_compras,
+                   SUM(t.quantidade)          AS total_pecas,
+                   SUM(t.quantidade * r.preco_unit) AS total_valor
+            FROM compras_registros r
+            LEFT JOIN compras_tamanhos t ON t.compra_id = r.id
+            WHERE r.data >= date('now', '-365 days')
+            GROUP BY mes
+            ORDER BY mes DESC
+        """).fetchall()
+
+        # Por produto (top 10)
+        por_produto = conn.execute("""
+            SELECT r.produto_nome,
+                   COUNT(DISTINCT r.id)       AS num_compras,
+                   SUM(t.quantidade)          AS total_pecas,
+                   SUM(t.quantidade * r.preco_unit) AS total_valor
+            FROM compras_registros r
+            LEFT JOIN compras_tamanhos t ON t.compra_id = r.id
+            GROUP BY UPPER(TRIM(r.produto_nome))
+            ORDER BY total_valor DESC
+            LIMIT 10
+        """).fetchall()
+
+        # Por fornecedor
+        por_fornecedor = conn.execute("""
+            SELECT COALESCE(r.fornecedor, 'Sem fornecedor') AS fornecedor,
+                   COUNT(DISTINCT r.id) AS num_compras,
+                   SUM(t.quantidade * r.preco_unit) AS total_valor
+            FROM compras_registros r
+            LEFT JOIN compras_tamanhos t ON t.compra_id = r.id
+            GROUP BY UPPER(TRIM(COALESCE(r.fornecedor,'')))
+            ORDER BY total_valor DESC
+        """).fetchall()
+
+    return jsonify({
+        "semanal":       [dict(r) for r in semanal],
+        "mensal":        [dict(r) for r in mensal],
+        "por_produto":   [dict(r) for r in por_produto],
+        "por_fornecedor":[dict(r) for r in por_fornecedor],
+    })
+
+
 # ── Routes — Atacado ──────────────────────────────────────────────────────────
 
 @app.route("/atacado")
@@ -3213,6 +3669,10 @@ def atacado_page():
 @login_required
 def api_atacado_list():
     status_f = request.args.get("status", "")
+    busca    = (request.args.get("q") or "").strip()
+    pago_f   = request.args.get("pago", "")        # "1", "0" ou ""
+    inicio   = (request.args.get("inicio") or "").strip()
+    fim      = (request.args.get("fim") or "").strip()
     with get_conn() as conn:
         sql = """
             SELECT ap.*,
@@ -3223,11 +3683,22 @@ def api_atacado_list():
             FROM atacado_pedidos ap
             LEFT JOIN atacado_itens ai ON ai.pedido_id = ap.id
         """
-        params = []
+        conds, params = [], []
         if status_f and status_f != "todos":
-            sql += " WHERE ap.status = ?"
-            params.append(status_f)
-        sql += " GROUP BY ap.id ORDER BY ap.created_at DESC"
+            conds.append("ap.status = ?"); params.append(status_f)
+        if busca:
+            conds.append("(ap.cliente LIKE ? OR ap.nome LIKE ? OR ap.contato LIKE ? OR CAST(ap.numero AS TEXT) LIKE ?)")
+            like = f"%{busca}%"
+            params += [like, like, like, like]
+        if pago_f in ("0", "1"):
+            conds.append("ap.pago = ?"); params.append(int(pago_f))
+        if inicio:
+            conds.append("date(ap.created_at) >= ?"); params.append(inicio)
+        if fim:
+            conds.append("date(ap.created_at) <= ?"); params.append(fim)
+        if conds:
+            sql += " WHERE " + " AND ".join(conds)
+        sql += " GROUP BY ap.id ORDER BY ap.numero DESC, ap.created_at DESC"
         rows = conn.execute(sql, params).fetchall()
     return jsonify([dict(r) for r in rows])
 
@@ -3237,20 +3708,28 @@ def api_atacado_list():
 def api_atacado_criar():
     data    = request.get_json() or {}
     cliente = (data.get("cliente") or "").strip()
+    contato = (data.get("contato") or "").strip()
     if not cliente:
-        return jsonify({"erro": "Cliente obrigatório"}), 400
+        return jsonify({"erro": "Nome do cliente é obrigatório"}), 400
+    if not contato:
+        return jsonify({"erro": "Número de WhatsApp é obrigatório"}), 400
     itens = data.get("itens") or []
     if not itens:
         return jsonify({"erro": "Adicione ao menos um item"}), 400
 
     with get_conn() as conn:
+        # Número sequencial — começa em 1
+        proximo_numero = (conn.execute(
+            "SELECT COALESCE(MAX(numero), 0) FROM atacado_pedidos"
+        ).fetchone()[0] or 0) + 1
+
         cur = conn.execute(
             """INSERT INTO atacado_pedidos
-               (cliente, nome, contato, cep, endereco, cidade, cpf,
+               (numero, cliente, nome, contato, cep, endereco, cidade, cpf,
                 observacao, prazo, pago, frete_tipo, criado_por)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (cliente,
-             data.get("nome",""), data.get("contato",""),
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (proximo_numero, cliente,
+             data.get("nome",""), contato,
              data.get("cep",""),  data.get("endereco",""),
              data.get("cidade",""), data.get("cpf",""),
              data.get("observacao",""), data.get("prazo",""),
@@ -3277,7 +3756,7 @@ def api_atacado_criar():
                      qty_est, qty_forn, nv_vid, valor_unit)
                 )
         conn.commit()
-    return jsonify({"ok": True, "id": pedido_id}), 201
+    return jsonify({"ok": True, "id": pedido_id, "numero": proximo_numero}), 201
 
 
 @app.route("/api/atacado/pedidos/<int:pid>", methods=["GET"])
@@ -3357,6 +3836,56 @@ def api_atacado_pago(pid):
     return jsonify({"ok": True})
 
 
+def _descontar_item_estoque(conn, item, agora):
+    """Tenta descontar um item do estoque. Retorna (sucesso, motivo).
+    NÃO desconta se faltar estoque — só desconta o que existe de verdade."""
+    if item["estoque_descontado"]:
+        return False, "ja_descontado"
+
+    qty_est = item["qty_estoque"] or 0
+    nv_vid  = item["nv_variant_id"]
+
+    # Item sem quantidade do estoque (tudo do fornecedor) → marca como ok, nada a descontar
+    if qty_est <= 0:
+        conn.execute("UPDATE atacado_itens SET estoque_descontado=1 WHERE id=?", (item["id"],))
+        return True, "sem_qty_estoque"
+
+    # Item sem vínculo de estoque (não está no catálogo de estoque)
+    if not nv_vid:
+        return False, "sem_vinculo"
+
+    stock = conn.execute(
+        "SELECT id, quantity, produto_nome, variante_label, sku FROM sku_stock WHERE nv_variant_id=?",
+        (nv_vid,)
+    ).fetchone()
+
+    if not stock:
+        return False, "sem_cadastro"
+
+    disponivel = stock["quantity"] or 0
+    if disponivel < qty_est:
+        # Estoque insuficiente — NÃO desconta, avisa
+        return False, f"insuficiente:{disponivel}:{qty_est}"
+
+    # OK — desconta
+    nova_qty = disponivel - qty_est
+    conn.execute("UPDATE sku_stock SET quantity=?, updated_at=? WHERE id=?",
+                 (nova_qty, agora, stock["id"]))
+    conn.execute("""INSERT INTO sku_stock_movements
+        (nv_variant_id, sku, tipo, quantidade, pedido_numero, observacao, created_at)
+        VALUES (?,?,?,?,?,?,?)""",
+        (nv_vid, item["variante"] or "", "saida_venda",
+         qty_est, f"ATK-{item['pedido_id']}", "Saída por pedido de atacado", agora))
+    _deducao_sync_por_nome(
+        conn, stock["produto_nome"], stock["variante_label"],
+        qty_est, agora, skip_vid=nv_vid,
+        pedido_nr=f"ATK-{item['pedido_id']}",
+        sku_origem=stock["sku"]
+    )
+    conn.execute("UPDATE atacado_itens SET estoque_descontado=1 WHERE id=?", (item["id"],))
+    return True, "descontado"
+
+
 @app.route("/api/atacado/itens/<int:iid>/descontar-estoque", methods=["PUT"])
 @login_required
 def api_atacado_descontar_estoque(iid):
@@ -3367,31 +3896,68 @@ def api_atacado_descontar_estoque(iid):
             return jsonify({"erro": "Item não encontrado"}), 404
         if item["estoque_descontado"]:
             return jsonify({"erro": "Estoque já foi descontado"}), 400
-        qty_est = item["qty_estoque"] or 0
-        nv_vid  = item["nv_variant_id"]
-        if qty_est > 0 and nv_vid:
-            stock = conn.execute(
-                "SELECT id, quantity, produto_nome, variante_label FROM sku_stock WHERE nv_variant_id=?", (nv_vid,)
-            ).fetchone()
-            if stock:
-                nova_qty = max(stock["quantity"] - qty_est, 0)
-                conn.execute("UPDATE sku_stock SET quantity=?, updated_at=? WHERE id=?",
-                             (nova_qty, agora, stock["id"]))
-                conn.execute("""INSERT INTO sku_stock_movements
-                    (nv_variant_id, sku, tipo, quantidade, pedido_numero, created_at)
-                    VALUES (?,?,?,?,?,?)""",
-                    (nv_vid, item["variante"] or "", "saida_atacado",
-                     qty_est, f"ATK-{item['pedido_id']}", agora))
-                # Sync produtos com mesmo nome + mesma SKU
-                _deducao_sync_por_nome(
-                    conn, stock["produto_nome"], stock["variante_label"],
-                    qty_est, agora, skip_vid=nv_vid,
-                    pedido_nr=f"ATK-{item['pedido_id']}",
-                    sku_origem=stock["sku"]
-                )
-        conn.execute("UPDATE atacado_itens SET estoque_descontado=1 WHERE id=?", (iid,))
+
+        ok, motivo = _descontar_item_estoque(conn, item, agora)
+        if not ok:
+            if motivo.startswith("insuficiente:"):
+                _, disp, prec = motivo.split(":")
+                return jsonify({"erro": f"Estoque insuficiente: há {disp} em estoque, mas o pedido precisa de {prec}."}), 400
+            if motivo == "sem_cadastro":
+                return jsonify({"erro": "Este produto não tem estoque cadastrado."}), 400
+            if motivo == "sem_vinculo":
+                return jsonify({"erro": "Item sem vínculo com o catálogo de estoque."}), 400
+            return jsonify({"erro": "Não foi possível descontar."}), 400
+
         conn.commit()
     return jsonify({"ok": True})
+
+
+@app.route("/api/atacado/pedidos/<int:pid>/descontar-tudo", methods=["PUT"])
+@login_required
+def api_atacado_descontar_tudo(pid):
+    """Desconta TODOS os itens do pedido do estoque de uma vez.
+    Itens sem estoque suficiente são pulados e reportados — não bloqueiam os outros."""
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        ped = conn.execute("SELECT id FROM atacado_pedidos WHERE id=?", (pid,)).fetchone()
+        if not ped:
+            return jsonify({"erro": "Pedido não encontrado"}), 404
+
+        itens = conn.execute(
+            "SELECT * FROM atacado_itens WHERE pedido_id=? ORDER BY id", (pid,)
+        ).fetchall()
+
+        descontados = 0
+        problemas   = []   # itens que não puderam ser descontados
+
+        for item in itens:
+            if item["estoque_descontado"]:
+                continue
+            if (item["qty_estoque"] or 0) <= 0:
+                # nada do estoque — marca como tratado, sem descontar
+                conn.execute("UPDATE atacado_itens SET estoque_descontado=1 WHERE id=?", (item["id"],))
+                continue
+
+            ok, motivo = _descontar_item_estoque(conn, item, agora)
+            nome_item = item["produto"] + (f" — {item['variante']}" if item["variante"] else "")
+            if ok:
+                descontados += 1
+            else:
+                if motivo.startswith("insuficiente:"):
+                    _, disp, prec = motivo.split(":")
+                    problemas.append({"produto": nome_item, "motivo": f"Só há {disp} em estoque (precisa {prec})"})
+                elif motivo == "sem_cadastro":
+                    problemas.append({"produto": nome_item, "motivo": "Sem estoque cadastrado"})
+                elif motivo == "sem_vinculo":
+                    problemas.append({"produto": nome_item, "motivo": "Sem vínculo com o estoque"})
+
+        conn.commit()
+
+    return jsonify({
+        "ok": True,
+        "descontados": descontados,
+        "problemas": problemas,
+    })
 
 
 @app.route("/api/atacado/pedidos/<int:pid>/reabrir", methods=["PUT"])

@@ -12,13 +12,35 @@
     </button>
 </div>
 
-<!-- Filtros -->
+<!-- Filtros de status -->
 <div class="d-flex flex-wrap gap-2 mb-3" id="filtros">
     <button class="btn btn-sm filter-atk active" data-s="todos"     onclick="filtrar('todos')">Todos</button>
     <button class="btn btn-sm filter-atk" data-s="pendente"  onclick="filtrar('pendente')"><span class="dot" style="background:#8b949e"></span>Pendente</button>
     <button class="btn btn-sm filter-atk" data-s="separando" onclick="filtrar('separando')"><span class="dot" style="background:#f0883e"></span>Separando</button>
     <button class="btn btn-sm filter-atk" data-s="separado"  onclick="filtrar('separado')"><span class="dot" style="background:#3fb950"></span>Separado</button>
     <button class="btn btn-sm filter-atk" data-s="enviado"   onclick="filtrar('enviado')"><span class="dot" style="background:#58a6ff"></span>Enviado</button>
+</div>
+
+<!-- Busca + filtros avançados -->
+<div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
+    <div style="position:relative;flex:1;min-width:220px;max-width:360px">
+        <i class="bi bi-search" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:.85rem"></i>
+        <input id="buscaInput" type="text" class="form-control form-control-sm" placeholder="Buscar por nome, nº ou WhatsApp..."
+               style="padding-left:30px" oninput="onBuscar()">
+    </div>
+    <select id="filtroPago" class="form-select form-select-sm" style="width:auto" onchange="carregar()">
+        <option value="">Pagamento: todos</option>
+        <option value="1">✅ Pagos</option>
+        <option value="0">⏳ Pendente pgto</option>
+    </select>
+    <div class="d-flex align-items-center gap-1">
+        <input type="date" id="filtroInicio" class="form-control form-control-sm" style="width:140px" onchange="carregar()" title="Data inicial">
+        <span style="color:var(--muted)">→</span>
+        <input type="date" id="filtroFim" class="form-control form-control-sm" style="width:140px" onchange="carregar()" title="Data final">
+    </div>
+    <button class="btn btn-sm btn-outline-secondary" onclick="limparFiltros()" title="Limpar filtros">
+        <i class="bi bi-x-circle me-1"></i>Limpar
+    </button>
 </div>
 
 <div class="d-flex flex-wrap gap-3 mb-4" id="counters"></div>
@@ -54,7 +76,7 @@
             <input id="fCpf" type="text" class="form-control form-control-sm" placeholder="000.000.000-00" oninput="maskCpf(this)">
           </div>
           <div class="col-md-3">
-            <label class="flabel">CONTATO (WhatsApp)</label>
+            <label class="flabel">CONTATO (WhatsApp) *</label>
             <input id="fContato" type="text" class="form-control form-control-sm" placeholder="(00) 00000-0000">
           </div>
           <div class="col-md-2">
@@ -203,6 +225,11 @@
           <input class="form-check-input" type="checkbox" id="detPago" role="switch" onchange="togglePago()">
           <label class="form-check-label" for="detPago" style="font-size:.82rem;cursor:pointer">Pago</label>
         </div>
+        <button id="btnDescontarTudo" class="btn btn-sm"
+                style="background:rgba(63,185,80,.15);border:1px solid #3fb95044;color:#3fb950"
+                onclick="descontarTudo()" title="Desconta todos os itens do estoque de uma vez">
+          <i class="bi bi-box-arrow-down me-1"></i>Descontar tudo do estoque
+        </button>
         <button id="btnReabrir" class="btn btn-sm btn-outline-secondary" onclick="reabrirPedido()" style="display:none">
           <i class="bi bi-arrow-counterclockwise me-1"></i>Reabrir
         </button>
@@ -234,6 +261,8 @@
 .atk-card.status-separado  { border-left:3px solid #3fb950; }
 .atk-card.status-enviado   { border-left:3px solid #58a6ff;opacity:.8; }
 .status-pill { font-size:.7rem;font-weight:700;border-radius:20px;padding:2px 10px;border:1px solid; }
+.pedido-num { font-size:.8rem;font-weight:800;color:#58a6ff;background:rgba(88,166,255,.12);
+              border:1px solid #58a6ff44;border-radius:6px;padding:1px 8px;letter-spacing:.02em; }
 .sp-pendente  { background:rgba(139,148,158,.12);color:#8b949e;border-color:#8b949e44; }
 .sp-separando { background:rgba(240,136,62,.12); color:#f0883e;border-color:#f0883e44; }
 .sp-separado  { background:rgba(63,185,80,.12);  color:#3fb950;border-color:#3fb95044; }
@@ -306,12 +335,38 @@ async function carregar() {
     document.getElementById('lista').innerHTML = '';
     document.getElementById('emptyMsg').style.display = 'none';
     try {
-        const r = await fetch('/api/atacado/pedidos');
+        const params = new URLSearchParams();
+        const q      = document.getElementById('buscaInput')?.value.trim();
+        const pago   = document.getElementById('filtroPago')?.value;
+        const inicio = document.getElementById('filtroInicio')?.value;
+        const fim    = document.getElementById('filtroFim')?.value;
+        if (q)      params.append('q', q);
+        if (pago)   params.append('pago', pago);
+        if (inicio) params.append('inicio', inicio);
+        if (fim)    params.append('fim', fim);
+
+        const r = await fetch('/api/atacado/pedidos?' + params.toString());
         pedidos = await r.json();
         renderContadores();
         renderLista();
     } catch(e) { console.error(e); }
     document.getElementById('loadingMsg').style.display = 'none';
+}
+
+let _buscaTimer = null;
+function onBuscar() {
+    clearTimeout(_buscaTimer);
+    _buscaTimer = setTimeout(carregar, 350);
+}
+
+function limparFiltros() {
+    document.getElementById('buscaInput').value   = '';
+    document.getElementById('filtroPago').value   = '';
+    document.getElementById('filtroInicio').value = '';
+    document.getElementById('filtroFim').value    = '';
+    filtroAtual = 'todos';
+    document.querySelectorAll('.filter-atk').forEach(b => b.classList.toggle('active', b.dataset.s === 'todos'));
+    carregar();
 }
 
 function filtrar(s) {
@@ -362,6 +417,7 @@ function renderLista() {
             <div class="d-flex align-items-start justify-content-between gap-3">
                 <div class="flex-grow-1" style="min-width:0">
                     <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+                        <span class="pedido-num">#${String(p.numero||p.id).padStart(2,'0')}</span>
                         <span class="fw-bold" style="font-size:.95rem">${escHtml(p.cliente)}</span>
                         <span class="status-pill sp-${p.status}">${labelStatus(p.status)}</span>
                         ${pagoBadge}
@@ -400,6 +456,7 @@ async function carregarCatalogo() {
                 values: v.values||[],
                 label: (v.values||[]).join(', '),
                 stock: stockMap.get(v.id) || null,
+                imageUrl: v.imageUrl || p.imageUrl,
             }))
         }));
     } catch(e) { console.error('Catálogo:', e); }
@@ -411,23 +468,45 @@ function mostrarDropdown(inputEl, rowId) {
     const q = inputEl.value.toLowerCase().trim();
     const dd = document.getElementById('prodDropdown');
 
-    const matches = q.length < 1 ? [] :
-        catalogoProdutos.filter(p => p.name.toLowerCase().includes(q)).slice(0, 20);
+    if (q.length < 1) { dd.style.display='none'; return; }
+
+    // Filtra e ordena por relevância: começa com > tem palavra > contém
+    const matches = catalogoProdutos
+        .filter(p => p.name.toLowerCase().includes(q))
+        .sort((a, b) => {
+            const an = a.name.toLowerCase(), bn = b.name.toLowerCase();
+            const ar = an.startsWith(q) ? 0 : an.includes(' ' + q) ? 1 : 2;
+            const br = bn.startsWith(q) ? 0 : bn.includes(' ' + q) ? 1 : 2;
+            if (ar !== br) return ar - br;
+            return an.localeCompare(bn);
+        });
 
     if (!matches.length) { dd.style.display='none'; return; }
 
     const rect = inputEl.getBoundingClientRect();
     dd.style.left   = rect.left + 'px';
     dd.style.top    = (rect.bottom + 4) + 'px';
-    dd.style.width  = Math.max(rect.width, 360) + 'px';
+    dd.style.width  = Math.max(rect.width, 420) + 'px';
     dd.style.display = 'block';
 
-    dd.innerHTML = matches.map(p => {
+    const header = `<div style="padding:6px 14px;font-size:.68rem;color:var(--muted);
+        border-bottom:1px solid var(--border);background:#0d1117;letter-spacing:.04em;position:sticky;top:0">
+        ${matches.length} produto${matches.length!==1?'s':''} encontrado${matches.length!==1?'s':''}</div>`;
+
+    dd.innerHTML = header + matches.map(p => {
         const totalStock = p.variants.reduce((s,v) => s+(v.stock?.quantity||0), 0);
         const sc = totalStock > 5 ? 'sc-ok' : totalStock > 0 ? 'sc-low' : 'sc-zero';
-        return `<div class="prod-drop-item" onclick="selecionarProduto(${p.id})">
-            <div class="fw-semibold" style="font-size:.83rem">${escHtml(p.name)}</div>
-            <span class="stock-chip ${sc}">${totalStock} em estoque</span>
+        const img = p.imageUrl
+            ? `<img src="${escHtml(p.imageUrl)}" style="width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid var(--border);flex-shrink:0">`
+            : `<div style="width:52px;height:52px;background:#21262d;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                 <i class="bi bi-image" style="font-size:1.1rem;color:var(--muted)"></i></div>`;
+        return `<div class="prod-drop-item" onclick="selecionarProduto(${p.id})"
+            style="display:flex;align-items:center;gap:12px;padding:10px 14px">
+            ${img}
+            <div style="flex:1;min-width:0">
+                <div class="fw-semibold" style="font-size:.85rem;line-height:1.3">${escHtml(p.name)}</div>
+                <span class="stock-chip ${sc}" style="margin-top:4px;display:inline-block">${totalStock} em estoque</span>
+            </div>
         </div>`;
     }).join('');
 }
@@ -583,7 +662,9 @@ function removerItem(n) {
 
 async function salvarPedido() {
     const cliente = document.getElementById('fCliente').value.trim();
-    if (!cliente) { document.getElementById('erroModal').textContent='Informe o nome do cliente.'; return; }
+    const contato = document.getElementById('fContato').value.trim();
+    if (!cliente) { document.getElementById('erroModal').textContent='Informe o nome do cliente.'; document.getElementById('fCliente').focus(); return; }
+    if (!contato) { document.getElementById('erroModal').textContent='Informe o número de WhatsApp.'; document.getElementById('fContato').focus(); return; }
 
     const itens = [];
     for (let i=1; i<=itemCount; i++) {
@@ -621,6 +702,7 @@ async function salvarPedido() {
     const r = await fetch('/api/atacado/pedidos',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     btn.disabled=false; btn.innerHTML='<i class="bi bi-check2 me-1"></i>Criar Pedido';
     if (r.ok) {
+        const j = await r.json();
         bootstrap.Modal.getInstance(document.getElementById('modalPedido')).hide();
         carregar();
     } else {
@@ -639,9 +721,11 @@ async function abrirDetalhe(id) {
 }
 
 function renderDetalhe(pedido, itens) {
-    document.getElementById('detCliente').textContent = pedido.cliente;
+    const numFmt = String(pedido.numero || pedido.id).padStart(2,'0');
+    document.getElementById('detCliente').innerHTML =
+        `<span class="pedido-num me-2">#${numFmt}</span>${escHtml(pedido.cliente)}`;
     document.getElementById('detMeta').textContent =
-        `Pedido #${pedido.id} · ${fmtDatetime(pedido.created_at)}${pedido.criado_por?' · '+pedido.criado_por:''}`;
+        `Pedido #${numFmt} · ${fmtDatetime(pedido.created_at)}${pedido.criado_por?' · '+pedido.criado_por:''}`;
 
     const pagoBadge = pedido.pago
         ? `<span class="pago-badge"><i class="bi bi-check2 me-1"></i>Pago</span>`
@@ -731,7 +815,37 @@ async function descontarEstoque(itemId) {
         // Atualiza a célula
         document.getElementById(`desc-${itemId}`).innerHTML =
             `<span style="font-size:.72rem;color:var(--green)"><i class="bi bi-check2-circle me-1"></i>Descontado</span>`;
-    } else { alert(j.erro||'Erro'); }
+    } else { alert(j.erro || 'Erro ao descontar'); }
+}
+
+async function descontarTudo() {
+    if (!pedidoAbertoId) return;
+    if (!confirm('Descontar TODOS os itens deste pedido do estoque?\n\nItens sem estoque suficiente serão pulados e avisados.')) return;
+
+    const btn = document.getElementById('btnDescontarTudo');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Descontando...';
+
+    try {
+        const r = await fetch(`/api/atacado/pedidos/${pedidoAbertoId}/descontar-tudo`, {method:'PUT'});
+        const j = await r.json();
+        if (!r.ok) { alert(j.erro || 'Erro ao descontar'); return; }
+
+        let msg = `✓ ${j.descontados} item(ns) descontado(s) do estoque.`;
+        if (j.problemas && j.problemas.length) {
+            msg += `\n\n⚠️ ${j.problemas.length} item(ns) NÃO descontados (estoque insuficiente):\n`;
+            msg += j.problemas.map(p => `• ${p.produto} — ${p.motivo}`).join('\n');
+        }
+        alert(msg);
+
+        await abrirDetalhe(pedidoAbertoId);
+        carregar();
+    } catch(e) {
+        alert('Erro de conexão.');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-box-arrow-down me-1"></i>Descontar tudo do estoque';
+    }
 }
 
 async function toggleSeparado(itemId, novoVal) {

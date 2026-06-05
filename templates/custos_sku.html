@@ -370,6 +370,91 @@
 </div>
 
 <!-- ─── Modal: Movimentos de Estoque ─────────────────────────────────────── -->
+<!-- ══════════════════════════════════════════════════════════
+     MODAL — Entrada com Custo Médio Ponderado (CMP)
+     ══════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modalCMP" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered" style="max-width:480px">
+    <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border)">
+      <div class="modal-header" style="border-bottom:1px solid var(--border)">
+        <div>
+          <h6 class="modal-title fw-bold mb-0">
+            <i class="bi bi-calculator me-2" style="color:#f0c43e"></i>Entrada com Preço — Custo Médio Ponderado
+          </h6>
+          <small id="cmpVarianteLabel" style="color:var(--muted)"></small>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+
+        <!-- Estoque atual -->
+        <div style="background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:14px">
+          <div style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Estoque atual</div>
+          <div class="d-flex gap-4">
+            <div>
+              <div style="font-size:.72rem;color:var(--muted)">Quantidade</div>
+              <div id="cmpQtyAtual" style="font-size:1.2rem;font-weight:700;color:var(--blue)">—</div>
+            </div>
+            <div>
+              <div style="font-size:.72rem;color:var(--muted)">Custo atual (R$/un)</div>
+              <div id="cmpCustoAtual" style="font-size:1.2rem;font-weight:700;color:var(--text)">—</div>
+            </div>
+            <div>
+              <div style="font-size:.72rem;color:var(--muted)">Total investido</div>
+              <div id="cmpTotalAtual" style="font-size:1.2rem;font-weight:700;color:var(--muted)">—</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Novo lote -->
+        <div style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Novo lote</div>
+        <div class="row g-2 mb-3">
+          <div class="col-6">
+            <label style="font-size:.72rem;color:var(--muted);display:block;margin-bottom:3px">Quantidade</label>
+            <input id="cmpNovaQty" type="number" min="1" step="1" placeholder="ex: 10"
+                   class="form-control form-control-sm" oninput="calcCMP()">
+          </div>
+          <div class="col-6">
+            <label style="font-size:.72rem;color:var(--muted);display:block;margin-bottom:3px">Preço por unidade (R$)</label>
+            <input id="cmpNovoPreco" type="number" min="0" step="0.01" placeholder="ex: 80.00"
+                   class="form-control form-control-sm" oninput="calcCMP()">
+          </div>
+        </div>
+
+        <!-- Resultado CMP -->
+        <div id="cmpResultado" style="display:none;background:rgba(240,196,62,.07);border:1px solid #f0c43e44;border-radius:8px;padding:14px">
+          <div style="font-size:.7rem;font-weight:700;color:#f0c43e;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px">
+            <i class="bi bi-calculator me-1"></i>Resultado — Custo Médio Ponderado
+          </div>
+          <div style="font-size:.78rem;color:var(--muted);margin-bottom:8px" id="cmpFormula"></div>
+          <div class="d-flex gap-4 align-items-center">
+            <div>
+              <div style="font-size:.7rem;color:var(--muted)">Nova quantidade total</div>
+              <div id="cmpNovaQtyTotal" style="font-size:1.3rem;font-weight:700;color:var(--blue)">—</div>
+            </div>
+            <div style="font-size:1.5rem;color:var(--muted)">=</div>
+            <div>
+              <div style="font-size:.7rem;color:var(--muted)">Novo custo médio</div>
+              <div id="cmpNovoCusto" style="font-size:1.5rem;font-weight:700;color:#f0c43e">R$ —</div>
+            </div>
+          </div>
+          <div id="cmpVariacao" style="font-size:.72rem;margin-top:6px"></div>
+        </div>
+
+      </div>
+      <div class="modal-footer" style="border-top:1px solid var(--border)">
+        <span id="cmpErro" style="color:var(--red);font-size:.8rem;flex:1"></span>
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-sm fw-bold" id="btnConfirmarCMP"
+                onclick="confirmarCMP()"
+                style="background:#f0c43e;color:#0d1117;border:none">
+          <i class="bi bi-check2 me-1"></i>Confirmar Entrada
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="modalMov" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
         <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border)">
@@ -686,10 +771,16 @@ function getFiltered() {
 // ══════════════════════════════════════════════════════════════════════════════
 //  RESUMO DE ESTOQUE
 // ══════════════════════════════════════════════════════════════════════════════
+// Helper: retorna true se a variante é "Com Personalização" (não conta estoque próprio)
+function isComPers(variant) {
+    return (variant.values || []).join(', ').toLowerCase().includes('com personaliz');
+}
+
 function renderStockSummary() {
     let comEstoque = 0, baixo = 0, zerado = 0, semCadastro = 0, totalPecas = 0;
     for (const p of products) {
         for (const v of p.variants) {
+            if (isComPers(v)) continue; // ignora — conta via "Sem Personalização"
             const s = stockMap.get(v.id);
             if (!s)                                          semCadastro++;
             else if (s.quantity <= 0)                        zerado++;
@@ -757,8 +848,10 @@ function renderAll() {
 
 // ── Badges ─────────────────────────────────────────────────────────────────
 function stockBadgeHtml(product) {
-    const vv = product.variants;
+    // Ignora variantes "Com Personalização" — elas compartilham estoque com "Sem Personalização"
+    const vv = product.variants.filter(v => !isComPers(v));
     if (!vv.length) return '';
+    const total = product.variants.length;
     const com   = vv.filter(v => { const s = stockMap.get(v.id); return s && s.quantity > 0 && s.quantity > s.min_quantity; }).length;
     const baixo = vv.filter(v => { const s = stockMap.get(v.id); return s && s.quantity > 0 && s.quantity <= s.min_quantity; }).length;
     const zero  = vv.filter(v => { const s = stockMap.get(v.id); return s && s.quantity <= 0; }).length;
@@ -770,11 +863,14 @@ function stockBadgeHtml(product) {
 }
 
 function totalStockBadgeHtml(product) {
-    const total = product.variants.reduce((sum, v) => {
-        const s = stockMap.get(v.id);
-        return sum + (s && s.quantity > 0 ? s.quantity : 0);
-    }, 0);
-    const temCadastro = product.variants.some(v => stockMap.has(v.id));
+    // Ignora variantes "Com Personalização" para não contar em dobro
+    const total = product.variants
+        .filter(v => !isComPers(v))
+        .reduce((sum, v) => {
+            const s = stockMap.get(v.id);
+            return sum + (s && s.quantity > 0 ? s.quantity : 0);
+        }, 0);
+    const temCadastro = product.variants.filter(v => !isComPers(v)).some(v => stockMap.has(v.id));
     if (!temCadastro) return '';
     const color = total > 0 ? '#58a6ff' : '#8b949e';
     const bg    = total > 0 ? 'rgba(88,166,255,.1)' : 'rgba(139,148,158,.1)';
@@ -791,6 +887,41 @@ function costBadgeHtml(product) {
     const color = com === vv.length ? '#3fb950' : com > 0 ? '#f0883e' : '#8b949e';
     const bg    = com === vv.length ? 'rgba(63,185,80,.1)' : com > 0 ? 'rgba(240,136,62,.1)' : 'rgba(139,148,158,.1)';
     return `<span style="background:${bg};border:1px solid ${color}44;color:${color};border-radius:12px;padding:2px 9px;font-size:.73rem;font-weight:600">${com}/${vv.length} custo${vv.length!==1?'s':''}</span>`;
+}
+
+function custoMedioBadgeHtml(product) {
+    // Ignora "Com Personalização" para não distorcer a média
+    const vv = product.variants.filter(v => !isComPers(v));
+    if (!vv.length) return '';
+
+    let somaValorPonderado = 0, somaQtyComCusto = 0;
+    let somaCustoSimples = 0, countCusto = 0;
+
+    vv.forEach(v => {
+        const c = costMap.get(v.id);
+        const s = stockMap.get(v.id);
+        if (!c || !(c.cost > 0)) return;
+        somaCustoSimples += c.cost;
+        countCusto++;
+        const qty = s ? Math.max(s.quantity || 0, 0) : 0;
+        if (qty > 0) { somaValorPonderado += qty * c.cost; somaQtyComCusto += qty; }
+    });
+
+    if (countCusto === 0) return '';
+
+    // Prefere média ponderada pelo estoque; cai para média simples se não há estoque
+    const media    = somaQtyComCusto > 0 ? somaValorPonderado / somaQtyComCusto : somaCustoSimples / countCusto;
+    const tipo     = somaQtyComCusto > 0 ? 'Custo médio ponderado pelo estoque' : 'Custo médio simples';
+    const fmtR     = v => `R$ ${v.toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
+    const totalEst = somaQtyComCusto > 0
+        ? ` · Total estoque: ${fmtR(somaValorPonderado)}`
+        : '';
+
+    return `<span title="${tipo}${totalEst}"
+                  style="background:rgba(240,196,62,.1);border:1px solid #f0c43e44;color:#f0c43e;
+                         border-radius:12px;padding:2px 9px;font-size:.73rem;font-weight:600;cursor:default">
+        <i class="bi bi-currency-dollar"></i> ${fmtR(media)}
+    </span>`;
 }
 
 // ── Card colapsado ─────────────────────────────────────────────────────────
@@ -824,6 +955,7 @@ function renderCard(p) {
                         <div class="d-flex align-items-center gap-2 mt-1 flex-wrap">
                             <div id="sbadge-${p.id}">${stockBadgeHtml(p)}</div>
                             <div id="tbadge-${p.id}">${totalStockBadgeHtml(p)}</div>
+                            <div id="vbadge-${p.id}">${custoMedioBadgeHtml(p)}</div>
                             <div id="cbadge-${p.id}">${costBadgeHtml(p)}</div>
                             ${teamBadge}
                             <span style="color:var(--muted);font-size:.73rem">${nv} var.</span>
@@ -1046,6 +1178,17 @@ function buildExpandedHtml(product) {
     // Collect "Com Personalização" variant IDs for fetching saved pricing after render
     const persVariantIds = [];
 
+    // Monta mapa: SKU → variante "Sem Personalização" correspondente
+    // Usado para indicar qual variante é a base de estoque para "Com Personalização"
+    const skuToSemPers = new Map();
+    product.variants.forEach(v => {
+        const lbl = (v.values || []).join(', ');
+        if (lbl.toLowerCase().includes('sem personaliz')) {
+            const sku = v.sku || (costMap.get(v.id) ? costMap.get(v.id).sku : '');
+            if (sku) skuToSemPers.set(sku.trim().toUpperCase(), { id: v.id, label: lbl });
+        }
+    });
+
     const rows = product.variants.map(v => {
         const cost   = costMap.get(v.id);
         const stock  = stockMap.get(v.id);
@@ -1055,13 +1198,37 @@ function buildExpandedHtml(product) {
         const typeVal= cost ? cost.type : 'product';
         const nvSkuLbl = v.sku ? `<span style="font-size:.65rem;color:var(--muted);margin-left:3px">(${escHtml(v.sku)})</span>` : '';
 
+        // Detecta se esta variante é "Com Personalização"
+        const isComPers = label.toLowerCase().includes('com personaliz');
+        // Busca a variante "Sem Personalização" de mesmo SKU
+        const varSku = (v.sku || (cost ? cost.sku : '') || '').trim().toUpperCase();
+        const semPersRef = isComPers ? (skuToSemPers.get(varSku) || null) : null;
+
         const imgHtml = v.imageUrl
             ? `<img src="${escHtml(v.imageUrl)}" style="width:36px;height:36px;object-fit:cover;border-radius:4px">`
             : `<div style="width:36px;height:36px;background:var(--border);border-radius:4px;display:flex;align-items:center;justify-content:center"><i class="bi bi-image" style="font-size:.7rem;color:var(--muted)"></i></div>`;
 
         // Célula de estoque
         let stockCell;
-        if (stock) {
+        if (isComPers) {
+            // "Com Personalização" não tem estoque próprio — compartilha com "Sem Personalização"
+            const baseLbl = semPersRef ? escHtml(semPersRef.label) : 'Sem Personalização';
+            const baseId  = semPersRef ? semPersRef.id : null;
+            const baseStock = baseId ? stockMap.get(baseId) : null;
+            const baseQty = baseStock ? fmtQty(baseStock.quantity) : '—';
+            const baseMin = baseStock ? fmtQty(baseStock.min_quantity) : 3;
+            const qColor  = baseStock
+                ? (baseStock.quantity <= 0 ? '#f85149' : baseStock.quantity <= baseMin ? '#f0883e' : '#3fb950')
+                : '#8b949e';
+            stockCell = `<div style="display:flex;align-items:center;gap:6px">
+                <span style="font-size:.7rem;color:var(--muted);display:flex;align-items:center;gap:4px">
+                    <i class="bi bi-arrow-return-right" style="color:#8b5cf6"></i>
+                    <span style="color:#8b5cf6;font-weight:600">Usa estoque de</span>
+                    <span style="color:var(--text)">${baseLbl}</span>
+                </span>
+                <span style="font-size:.82rem;font-weight:700;color:${qColor};margin-left:4px">${baseQty}</span>
+            </div>`;
+        } else if (stock) {
             const qty   = fmtQty(stock.quantity);
             const min   = fmtQty(stock.min_quantity);
             const qColor = qty <= 0 ? '#f85149' : qty <= min ? '#f0883e' : '#3fb950';
@@ -1071,6 +1238,9 @@ function buildExpandedHtml(product) {
                 <span id="qty-${v.id}" style="font-size:.88rem;font-weight:700;color:${qColor};min-width:32px;text-align:center">${qty}</span>
                 <button onclick="quickStock(${v.id},${product.id},'${escHtml(v.sku||'')}','entrada');event.stopPropagation()"
                         style="background:rgba(63,185,80,.15);border:1px solid #3fb95044;color:#3fb950;border-radius:4px;width:26px;height:26px;font-size:.9rem;cursor:pointer;display:flex;align-items:center;justify-content:center">+</button>
+                <button onclick="abrirCMP(${v.id},${product.id},'${escHtml(v.sku||'')}');event.stopPropagation()"
+                        title="Entrada com preço — Custo Médio Ponderado"
+                        style="background:rgba(240,196,62,.12);border:1px solid #f0c43e44;color:#f0c43e;border-radius:4px;width:26px;height:26px;font-size:.72rem;cursor:pointer;display:flex;align-items:center;justify-content:center;font-weight:700">R$</button>
                 <button onclick="openMov(${v.id},'${escHtml(label)}');event.stopPropagation()"
                         title="Movimentos" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:2px 5px;font-size:.68rem;cursor:pointer;margin-left:2px">
                     <i class="bi bi-clock-history"></i></button>
@@ -1313,6 +1483,7 @@ async function saveCard(productId) {
         else toast(`${ok} custo${ok!==1?'s':''} salvo${ok!==1?'s':''} com sucesso.`);
         await loadCosts();
         document.getElementById(`cbadge-${productId}`).innerHTML = costBadgeHtml(p);
+        const vb = document.getElementById(`vbadge-${productId}`); if (vb) vb.innerHTML = custoMedioBadgeHtml(p);
     } catch { toast('Erro de conexão.', false); }
     finally { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check2 me-1"></i>Salvar SKU/Custo'; } }
 }
@@ -1374,6 +1545,7 @@ async function _ajustarEstoque(variantId, productId, sku, tipo, quantidade, obse
         if (product) {
             const sb = document.getElementById(`sbadge-${productId}`); if (sb) sb.innerHTML = stockBadgeHtml(product);
             const tb = document.getElementById(`tbadge-${productId}`); if (tb) tb.innerHTML = totalStockBadgeHtml(product);
+            const vb = document.getElementById(`vbadge-${productId}`); if (vb) vb.innerHTML = custoMedioBadgeHtml(product);
         }
         renderStockSummary();
         toast(tipo === 'entrada' ? `+${quantidade} adicionado${quantidade!==1?'s':''}` : `-${quantidade} removido${quantidade!==1?'s':''}`, true);
@@ -1486,6 +1658,167 @@ async function refresh() {
     clearAllCaches(); expandedId = null; clearSelection(); loading = true; renderAll();
     await Promise.all([loadProducts(true), loadCosts(), loadStock()]);
     loading = false; renderAll();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  CUSTO MÉDIO PONDERADO (CMP)
+// ══════════════════════════════════════════════════════════════════════════════
+let _cmpVariantId = null, _cmpProductId = null, _cmpSku = null;
+
+function abrirCMP(variantId, productId, sku) {
+    _cmpVariantId = variantId;
+    _cmpProductId = productId;
+    _cmpSku       = sku;
+
+    // Preenche dados atuais
+    const stock = stockMap.get(variantId);
+    const cost  = costMap.get(variantId);
+    const prod  = products.find(p => p.id === productId);
+    const vari  = prod ? (prod.variants || []).find(v => v.id === variantId) : null;
+    const label = vari ? (vari.values || []).join(', ') : `Variante #${variantId}`;
+
+    document.getElementById('cmpVarianteLabel').textContent = label + (sku ? ` — SKU: ${sku}` : '');
+
+    const qtyAtual   = stock ? (stock.quantity || 0) : 0;
+    const custoAtual = cost  ? (cost.cost || 0) : 0;
+    const totalAtual = qtyAtual * custoAtual;
+
+    document.getElementById('cmpQtyAtual').textContent   = qtyAtual.toLocaleString('pt-BR');
+    document.getElementById('cmpCustoAtual').textContent = custoAtual > 0
+        ? `R$ ${custoAtual.toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2})}`
+        : '—';
+    document.getElementById('cmpTotalAtual').textContent = totalAtual > 0
+        ? `R$ ${totalAtual.toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2})}`
+        : '—';
+
+    // Limpa inputs
+    document.getElementById('cmpNovaQty').value   = '';
+    document.getElementById('cmpNovoPreco').value  = '';
+    document.getElementById('cmpResultado').style.display = 'none';
+    document.getElementById('cmpErro').textContent = '';
+
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalCMP')).show();
+}
+
+function calcCMP() {
+    const stock = stockMap.get(_cmpVariantId);
+    const cost  = costMap.get(_cmpVariantId);
+
+    const qtyAtual   = stock ? (stock.quantity || 0) : 0;
+    const custoAtual = cost  ? (cost.cost || 0) : 0;
+    const novaQty    = parseInt(document.getElementById('cmpNovaQty').value)   || 0;
+    const novoPreco  = parseFloat(document.getElementById('cmpNovoPreco').value) || 0;
+
+    if (novaQty <= 0 || novoPreco <= 0) {
+        document.getElementById('cmpResultado').style.display = 'none';
+        return;
+    }
+
+    const totalAnterior = qtyAtual  * custoAtual;
+    const totalNovo     = novaQty   * novoPreco;
+    const qtyFinal      = qtyAtual  + novaQty;
+    const novoCMP       = qtyFinal  > 0 ? (totalAnterior + totalNovo) / qtyFinal : novoPreco;
+
+    // Fórmula
+    const fmtR = v => `R$ ${v.toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
+    let formula = '';
+    if (qtyAtual > 0 && custoAtual > 0) {
+        formula = `(${qtyAtual} × ${fmtR(custoAtual)} + ${novaQty} × ${fmtR(novoPreco)}) ÷ ${qtyFinal} unidades`;
+    } else {
+        formula = `Primeiro lote: ${novaQty} × ${fmtR(novoPreco)}`;
+    }
+
+    document.getElementById('cmpFormula').textContent      = formula;
+    document.getElementById('cmpNovaQtyTotal').textContent = qtyFinal.toLocaleString('pt-BR') + ' un';
+    document.getElementById('cmpNovoCusto').textContent    = fmtR(novoCMP);
+
+    // Variação do custo
+    const varEl = document.getElementById('cmpVariacao');
+    if (custoAtual > 0) {
+        const diff = novoCMP - custoAtual;
+        const pct  = (diff / custoAtual * 100).toFixed(1);
+        const cor  = diff > 0 ? '#f85149' : diff < 0 ? '#3fb950' : '#8b949e';
+        const seta = diff > 0 ? '↑' : diff < 0 ? '↓' : '=';
+        varEl.innerHTML = `<span style="color:${cor}">${seta} ${diff >= 0 ? '+' : ''}${fmtR(diff)} (${diff >= 0 ? '+' : ''}${pct}%) em relação ao custo anterior</span>`;
+    } else {
+        varEl.textContent = '';
+    }
+
+    document.getElementById('cmpResultado').style.display = 'block';
+}
+
+async function confirmarCMP() {
+    const novaQty   = parseInt(document.getElementById('cmpNovaQty').value)    || 0;
+    const novoPreco = parseFloat(document.getElementById('cmpNovoPreco').value) || 0;
+    const erroEl    = document.getElementById('cmpErro');
+
+    if (novaQty <= 0)   { erroEl.textContent = 'Informe a quantidade.'; return; }
+    if (novoPreco <= 0) { erroEl.textContent = 'Informe o preço por unidade.'; return; }
+    erroEl.textContent = '';
+
+    // Resolve nome/variante para sync
+    let prodNome = null, varLabel = null;
+    const prod = products.find(p => p.id === _cmpProductId);
+    if (prod) {
+        prodNome = prod.name || null;
+        const vari = (prod.variants || []).find(v => v.id === _cmpVariantId);
+        if (vari) varLabel = (vari.values || []).join(', ') || null;
+    }
+
+    const btn = document.getElementById('btnConfirmarCMP');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Salvando...';
+
+    try {
+        const r = await fetch('/api/estoque/entrada-lote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                nv_variant_id:  _cmpVariantId,
+                nv_product_id:  _cmpProductId,
+                sku:            _cmpSku || null,
+                quantidade:     novaQty,
+                preco_compra:   novoPreco,
+                produto_nome:   prodNome,
+                variante_label: varLabel,
+            }),
+        });
+
+        let j = {};
+        try { j = await r.json(); } catch(_) {}
+
+        if (!r.ok) {
+            erroEl.textContent = j.erro || `Erro ${r.status} — tente recarregar a página.`;
+            return;
+        }
+
+        // Fecha modal com segurança
+        const modalEl = document.getElementById('modalCMP');
+        const modalInst = bootstrap.Modal.getInstance(modalEl) || bootstrap.Modal.getOrCreateInstance(modalEl);
+        modalInst.hide();
+
+        const fmtR = v => `R$ ${(v||0).toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
+        toast(`✓ Entrada registrada! Novo CMP: ${fmtR(j.novo_cmp)}`, true);
+
+        // Atualiza tela
+        await Promise.all([loadStock(), loadCosts()]);
+        const product = products.find(p => p.id === _cmpProductId);
+        if (product) {
+            const exp = document.getElementById(`card-exp-${_cmpProductId}`);
+            if (exp && exp.style.display !== 'none') exp.innerHTML = buildExpandedHtml(product);
+            const sb = document.getElementById(`sbadge-${_cmpProductId}`); if (sb) sb.innerHTML = stockBadgeHtml(product);
+            const tb = document.getElementById(`tbadge-${_cmpProductId}`); if (tb) tb.innerHTML = totalStockBadgeHtml(product);
+            const vb = document.getElementById(`vbadge-${_cmpProductId}`); if (vb) vb.innerHTML = custoMedioBadgeHtml(product);
+        }
+        renderStockSummary();
+
+    } catch(e) {
+        erroEl.textContent = `Erro: ${e.message || 'verifique a conexão.'}`;
+        console.error('CMP error:', e);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check2 me-1"></i>Confirmar Entrada';
+    }
 }
 
 async function sincronizarPorNome() {
