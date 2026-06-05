@@ -3,6 +3,12 @@
 pedidos.db
 *.db
 
+# ── Dumps de dados (contêm PII de clientes) ─────────────────────
+seed_dados_manuais.sql
+seed_dados_completo.sql
+*.gitmsg.tmp
+.gitmsg.tmp
+
 # ── Backups (arquivos binários grandes) ─────────────────────────
 backups/
 
