@@ -1,21 +1,34 @@
 -- Seed de dados manuais GS Mantos -> Turso
--- Gerado a partir do pedidos.db local.
--- INSERT OR IGNORE = seguro re-executar; nao duplica registros.
+-- Gerado a partir do pedidos.db local (somente leitura).
+-- INSERT OR IGNORE = seguro re-executar; nao duplica.
 PRAGMA foreign_keys=OFF;
 
+-- config (5 registros)
+INSERT OR IGNORE INTO config (chave,valor) VALUES ('pers_custo_nome','10.0');
+INSERT OR IGNORE INTO config (chave,valor) VALUES ('pers_custo_numero','20.0');
+INSERT OR IGNORE INTO config (chave,valor) VALUES ('pers_custo_escudo','0.0');
+INSERT OR IGNORE INTO config (chave,valor) VALUES ('pers_ativo','1');
+INSERT OR IGNORE INTO config (chave,valor) VALUES ('ultima_sincronizacao','2026-06-06T15:28:52');
+
+-- romaneios (4 registros)
+INSERT OR IGNORE INTO romaneios (id,criado_em,total,observacao) VALUES (2,'2026-05-08 16:03:20',10,NULL);
+INSERT OR IGNORE INTO romaneios (id,criado_em,total,observacao) VALUES (3,'2026-05-08 21:38:04',1,NULL);
+INSERT OR IGNORE INTO romaneios (id,criado_em,total,observacao) VALUES (4,'2026-05-13 16:14:10',3,NULL);
+INSERT OR IGNORE INTO romaneios (id,criado_em,total,observacao) VALUES (5,'2026-05-14 11:32:26',17,NULL);
+
 -- sku_stock (99 registros)
-INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (1,1523881254,343862100,NULL,-21,3,'2026-06-05 11:08:50','chaveiro - copa','');
+INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (1,1523881254,343862100,NULL,-22,3,'2026-06-05 20:47:22','chaveiro - copa','');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (2,1516965788,341632128,NULL,8,3,'2026-05-27 14:27:14','Camisa da Seleção Brasileira Azul Retrô Lisa - Ronaldinho','P');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (3,1513786409,340704956,NULL,-3,3,'2026-05-27 14:02:28','Seleção Brasileira Copa do Mundo Amarela 26/27 FEMININA','P, Sem Personalização');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (4,1513781475,340703494,NULL,26,3,'2026-06-05 10:20:12','Camisa Seleção Brasileira 2026','P, Sem Personalização');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (5,1523882174,343862746,NULL,22,3,'2026-06-05 10:20:12','Figurinha copa do mundo','');
-INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (6,1516965792,341632128,NULL,42,3,'2026-05-29 11:46:28','Camisa da Seleção Brasileira Azul Retrô Lisa - Ronaldinho','G');
+INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (6,1516965792,341632128,NULL,41,3,'2026-06-06 10:50:35','Camisa da Seleção Brasileira Azul Retrô Lisa - Ronaldinho','G');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (7,1516965790,341632128,NULL,3,3,'2026-05-27 14:27:14','Camisa da Seleção Brasileira Azul Retrô Lisa - Ronaldinho','M');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (8,1516965793,341632128,NULL,25,3,'2026-06-05 10:20:12','Camisa da Seleção Brasileira Azul Retrô Lisa - Ronaldinho','GG');
-INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (9,1513786416,340704956,NULL,45,3,'2026-06-04 11:24:01','Seleção Brasileira Copa do Mundo Amarela 26/27 FEMININA','M, Sem Personalização');
+INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (9,1513786416,340704956,NULL,44,3,'2026-06-05 14:08:09','Seleção Brasileira Copa do Mundo Amarela 26/27 FEMININA','M, Sem Personalização');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (10,1513786424,340704956,NULL,69,3,'2026-06-03 18:08:51','Seleção Brasileira Copa do Mundo Amarela 26/27 FEMININA','G, Sem Personalização');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (11,1513786430,340704956,NULL,91,3,'2026-06-03 18:08:37','Seleção Brasileira Copa do Mundo Amarela 26/27 FEMININA','GG, Sem Personalização');
-INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (12,1513781482,340703494,NULL,125,3,'2026-05-28 10:53:16','Camisa Seleção Brasileira 2026','M, Sem Personalização');
+INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (12,1513781482,340703494,NULL,124,3,'2026-06-05 18:01:51','Camisa Seleção Brasileira 2026','M, Sem Personalização');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (13,1513781489,340703494,NULL,124,3,'2026-06-01 18:04:25','Camisa Seleção Brasileira 2026','G, Sem Personalização');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (14,1513781498,340703494,NULL,159,3,'2026-06-02 16:02:17','Camisa Seleção Brasileira 2026','GG, Sem Personalização');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (15,1510587841,339879644,NULL,58,3,'2026-05-27 14:27:14','Seleção Brasileira Amarela Retrô 1998','P, Ronaldo 9');
@@ -34,7 +47,7 @@ INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (28,1495971726,336399481,'SP I 26 - P',12,3,'2026-05-18 17:38:23','Camisa São Paulo l 26/27 - Branca','P, Sem Personalização');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (29,1495971733,336399481,'SP I 26 - G',12,3,'2026-05-18 17:38:32','Camisa São Paulo l 26/27 - Branca','G, Sem Personalização');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (30,1495971738,336399481,'SP I 26 - GG',6,3,'2026-05-18 17:38:34','Camisa São Paulo l 26/27 - Branca','GG, Sem Personalização');
-INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (31,1507397996,335131811,NULL,2,3,'2026-06-03 18:02:18','Camisa de Time Brasil Copa do Mundo Azul 26/27 FEMININA','P, Sem Personalização');
+INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (31,1507397996,335131811,NULL,1,3,'2026-06-06 10:50:35','Camisa de Time Brasil Copa do Mundo Azul 26/27 FEMININA','P, Sem Personalização');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (32,1507398009,335131811,NULL,6,3,'2026-06-05 10:20:12','Camisa de Time Brasil Copa do Mundo Azul 26/27 FEMININA','M, Sem Personalização');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (33,1507398030,335131811,NULL,1,3,'2026-06-03 18:02:34','Camisa de Time Brasil Copa do Mundo Azul 26/27 FEMININA','GG, Sem Personalização');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (34,1507398018,335131811,NULL,0,3,'2026-06-03 18:02:30','Camisa de Time Brasil Copa do Mundo Azul 26/27 FEMININA','G, Sem Personalização');
@@ -43,7 +56,7 @@ INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (37,1482636500,333359448,NULL,5,3,'2026-05-18 17:39:15','Camisa da Seleção Brasileira Amarela Retrô - Ronaldo 9','M');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (38,1482636499,333359448,NULL,8,3,'2026-05-18 17:39:15','Camisa da Seleção Brasileira Amarela Retrô - Ronaldo 9','P');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (39,1481705376,333153094,NULL,25,3,'2026-06-05 10:20:12','Camisa da Seleção Brasileira Azul Retrô Lisa - Ronaldinho','GG');
-INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (40,1481705373,333153094,NULL,42,3,'2026-05-29 11:46:28','Camisa da Seleção Brasileira Azul Retrô Lisa - Ronaldinho','G');
+INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (40,1481705373,333153094,NULL,41,3,'2026-06-06 10:50:35','Camisa da Seleção Brasileira Azul Retrô Lisa - Ronaldinho','G');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (41,1481705372,333153094,NULL,3,3,'2026-05-27 14:27:14','Camisa da Seleção Brasileira Azul Retrô Lisa - Ronaldinho','M');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (42,1481705368,333153094,NULL,8,3,'2026-05-27 14:27:14','Camisa da Seleção Brasileira Azul Retrô Lisa - Ronaldinho','P');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (43,1528571378,345570970,NULL,126,3,'2026-05-22 11:26:46','Camisa Seleção Brasileira 2026','M');
@@ -71,9 +84,9 @@ INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (65,1507399179,335133796,NULL,0,3,'2026-06-03 18:17:29','Camisa de Time Seleção Brasileira Copa do Mundo Amarela 26/27 FEMININA','G, Sem Personalização');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (66,1507399198,335133796,NULL,0,3,'2026-06-03 18:17:46','Camisa de Time Seleção Brasileira Copa do Mundo Amarela 26/27 FEMININA','GG, Sem Personalização');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (67,1470277694,326478729,NULL,156,3,'2026-06-04 11:24:01','Camisa de Time Seleção Brasileira 2026','P, Sem Personalização');
-INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (68,1470277745,326478729,NULL,174,3,'2026-06-05 10:20:12','Camisa de Time Seleção Brasileira 2026','M, Sem Personalização');
-INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (69,1470277775,326478729,NULL,184,3,'2026-06-04 11:24:01','Camisa de Time Seleção Brasileira 2026','G, Sem Personalização');
-INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (70,1470277794,326478729,NULL,472,3,'2026-06-03 13:54:47','Camisa de Time Seleção Brasileira 2026','GG, Sem Personalização');
+INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (68,1470277745,326478729,NULL,173,3,'2026-06-05 21:47:54','Camisa de Time Seleção Brasileira 2026','M, Sem Personalização');
+INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (69,1470277775,326478729,NULL,182,3,'2026-06-05 14:08:09','Camisa de Time Seleção Brasileira 2026','G, Sem Personalização');
+INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (70,1470277794,326478729,NULL,471,3,'2026-06-05 14:08:09','Camisa de Time Seleção Brasileira 2026','GG, Sem Personalização');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (71,1457824884,326433179,NULL,-1,3,'2026-05-30 13:04:44','Camisa de Time Seleção Brasileira Amarela Retrô Lisa','P, Sem Personalização');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (72,1457824895,326433179,NULL,11,3,'2026-06-02 09:24:49','Camisa de Time Seleção Brasileira Amarela Retrô Lisa','M, Sem Personalização');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (73,1457824901,326433179,NULL,8,3,'2026-05-30 13:04:44','Camisa de Time Seleção Brasileira Amarela Retrô Lisa','G, Sem Personalização');
@@ -82,10 +95,10 @@ INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (76,1434863017,323759080,NULL,27,3,'2026-06-03 22:43:26','Camisa da Seleção Brasileira Amarela Retrô Lisa - Ronaldinho','M');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (77,1434863019,323759080,NULL,34,3,'2026-06-01 15:04:04','Camisa da Seleção Brasileira Amarela Retrô Lisa - Ronaldinho','G');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (78,1434863021,323759080,NULL,40,3,'2026-06-05 10:20:12','Camisa da Seleção Brasileira Amarela Retrô Lisa - Ronaldinho','GG');
-INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (79,1154921980,260360331,NULL,9,3,'2026-06-05 10:20:12','Camisa da Seleção Brasileira Amarela Retrô - Ronaldo','M');
-INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (80,1154921979,260360331,NULL,34,3,'2026-06-05 10:20:12','Camisa da Seleção Brasileira Amarela Retrô - Ronaldo','P');
-INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (81,1154921981,260360331,NULL,-19,3,'2026-06-05 10:20:12','Camisa da Seleção Brasileira Amarela Retrô - Ronaldo','G');
-INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (82,1154921982,260360331,NULL,28,3,'2026-06-05 11:08:50','Camisa da Seleção Brasileira Amarela Retrô - Ronaldo','GG');
+INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (79,1154921980,260360331,NULL,4,3,'2026-06-06 10:50:35','Camisa da Seleção Brasileira Amarela Retrô - Ronaldo','M');
+INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (80,1154921979,260360331,NULL,32,3,'2026-06-05 14:30:32','Camisa da Seleção Brasileira Amarela Retrô - Ronaldo','P');
+INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (81,1154921981,260360331,NULL,-31,3,'2026-06-06 12:28:52','Camisa da Seleção Brasileira Amarela Retrô - Ronaldo','G');
+INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (82,1154921982,260360331,NULL,22,3,'2026-06-06 10:50:35','Camisa da Seleção Brasileira Amarela Retrô - Ronaldo','GG');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (83,1479863514,332649784,NULL,13,3,'2026-06-03 19:46:11','Seleção Brasil I 2026 - Masculina Nike Torcedor - Amarelo','G, Sem Personalização');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (84,1479863505,332649784,NULL,10,3,'2026-06-03 19:43:54','Seleção Brasil I 2026 - Masculina Nike Torcedor - Amarelo','M, Sem Personalização');
 INSERT OR IGNORE INTO sku_stock (id,nv_variant_id,nv_product_id,sku,quantity,min_quantity,updated_at,produto_nome,variante_label) VALUES (85,1479863524,332649784,NULL,12,3,'2026-06-03 19:46:08','Seleção Brasil I 2026 - Masculina Nike Torcedor - Amarelo','GG, Sem Personalização');
@@ -1979,7 +1992,7 @@ INSERT OR IGNORE INTO sku_pers_pricing (id,nv_variant_id,sku,custo_nome,custo_nu
 INSERT OR IGNORE INTO sku_pers_pricing (id,nv_variant_id,sku,custo_nome,custo_numero,custo_escudo,created_at,updated_at) VALUES (8252,1227911654,'',10.0,20.0,0.0,'2026-05-13 18:19:29','2026-05-13 18:19:45');
 INSERT OR IGNORE INTO sku_pers_pricing (id,nv_variant_id,sku,custo_nome,custo_numero,custo_escudo,created_at,updated_at) VALUES (8261,1227911657,'',10.0,20.0,0.0,'2026-05-13 18:19:29','2026-05-13 18:19:45');
 
--- sku_stock_movements (2574 registros)
+-- sku_stock_movements (2607 registros)
 INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (1,1523881254,NULL,'entrada',25,NULL,'Estoque inicial','2026-05-13 17:27:57',NULL);
 INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2,1516965788,NULL,'entrada',0,NULL,'Estoque inicial','2026-05-13 17:30:42',NULL);
 INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (3,1513786409,NULL,'entrada',3,NULL,'Estoque inicial','2026-05-13 17:48:31',NULL);
@@ -4554,6 +4567,39 @@ INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,
 INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2578,1154921982,NULL,'saida_venda',1,'6886',NULL,'2026-06-05 11:08:50',NULL);
 INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2579,1523881254,NULL,'saida_venda',1,'6886',NULL,'2026-06-05 11:08:50',NULL);
 INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2580,1525947198,NULL,'saida_venda',1,'6886',NULL,'2026-06-05 11:08:50',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2581,1154921981,NULL,'saida_venda',1,'6888',NULL,'2026-06-05 12:39:11',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2582,1154921982,NULL,'saida_venda',1,'6889',NULL,'2026-06-05 13:01:56',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2583,1154921981,NULL,'saida_venda',1,'6891',NULL,'2026-06-05 13:16:05',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2584,1154921980,NULL,'saida_venda',1,'6890',NULL,'2026-06-05 13:16:05',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2585,1154921981,NULL,'saida_venda',1,'6892',NULL,'2026-06-05 13:22:01',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2586,1154921979,NULL,'saida_venda',1,'6893',NULL,'2026-06-05 13:45:39',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2587,1154921982,NULL,'saida_venda',1,'6893',NULL,'2026-06-05 13:45:39',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2588,1154921981,NULL,'saida_venda',2,'6893',NULL,'2026-06-05 13:45:39',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2589,1470277794,NULL,'saida_venda',1,'6894',NULL,'2026-06-05 14:08:09',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2590,1513786416,NULL,'saida_venda',1,'6894',NULL,'2026-06-05 14:08:09',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2591,1470277775,NULL,'saida_venda',2,'6894',NULL,'2026-06-05 14:08:09',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2592,1154921979,NULL,'saida_venda',1,'6895',NULL,'2026-06-05 14:30:32',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2593,1154921980,NULL,'saida_venda',1,'6897',NULL,'2026-06-05 15:59:13',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2594,1154921980,NULL,'saida_venda',1,'6898',NULL,'2026-06-05 16:21:30',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2595,1154921982,NULL,'saida_venda',1,'6900',NULL,'2026-06-05 18:01:51',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2596,1513781482,NULL,'saida_venda',1,'6901',NULL,'2026-06-05 18:01:51',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2597,1154921981,NULL,'saida_venda',1,'6902',NULL,'2026-06-05 18:01:51',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2598,1154921982,NULL,'saida_venda',1,'6904',NULL,'2026-06-05 20:47:22',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2599,1523881254,NULL,'saida_venda',1,'6903',NULL,'2026-06-05 20:47:22',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2600,1470277745,NULL,'saida_venda',1,'6905',NULL,'2026-06-05 21:47:54',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2601,1154921980,NULL,'saida_venda',1,'6906',NULL,'2026-06-05 22:09:35',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2602,1154921981,NULL,'saida_venda',1,'6907',NULL,'2026-06-05 22:31:24',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2603,1154921982,NULL,'saida_venda',1,'6908',NULL,'2026-06-05 23:14:34',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2604,1507397996,NULL,'saida_venda',1,'6917',NULL,'2026-06-06 10:50:35',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2605,1154921981,NULL,'saida_venda',1,'6916',NULL,'2026-06-06 10:50:35',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2606,1154921980,NULL,'saida_venda',1,'6915',NULL,'2026-06-06 10:50:35',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2607,1154921981,NULL,'saida_venda',1,'6914',NULL,'2026-06-06 10:50:35',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2608,1154921982,NULL,'saida_venda',1,'6913',NULL,'2026-06-06 10:50:35',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2609,1516965792,NULL,'saida_venda',1,'6912',NULL,'2026-06-06 10:50:35',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2610,1481705373,NULL,'saida_venda',1,'6912','Sync automático por nome','2026-06-06 10:50:35',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2611,1154921981,NULL,'saida_venda',1,'6910',NULL,'2026-06-06 10:50:35',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2612,1154921981,NULL,'saida_venda',1,'6918',NULL,'2026-06-06 11:12:50',NULL);
+INSERT OR IGNORE INTO sku_stock_movements (id,nv_variant_id,sku,tipo,quantidade,pedido_numero,observacao,created_at,preco_compra) VALUES (2613,1154921981,NULL,'saida_venda',1,'6919',NULL,'2026-06-06 12:28:52',NULL);
 
 -- compras_registros (2 registros)
 INSERT OR IGNORE INTO compras_registros (id,data,produto_nome,nv_product_id,fornecedor,preco_unit,observacao,criado_por,created_at) VALUES (1,'2026-06-03','Camisa Seleção Brasileira Copa do Mundo Azul 26/27',331843559,'bras',80.0,NULL,'gs.operacional','2026-06-03 20:24:06');
@@ -4621,20 +4667,7 @@ INSERT OR IGNORE INTO personalizacoes (id,numero_pedido,nome_personalizacao,nume
 INSERT OR IGNORE INTO personalizacoes (id,numero_pedido,nome_personalizacao,numero_personalizacao,status,observacao,criado_em,atualizado_em) VALUES (42,'6799','OSANA',NULL,'A SEPARAR','Camisa de Time Brasil Copa do Mundo Azul 26/27 FEMININA  G','2026-06-03 12:49:39','2026-06-03 12:49:39');
 INSERT OR IGNORE INTO personalizacoes (id,numero_pedido,nome_personalizacao,numero_personalizacao,status,observacao,criado_em,atualizado_em) VALUES (43,'6805','Thainá','10','A SEPARAR','Seleção Brasileira Copa do Mundo Amarela 26/27 FEMININA  M','2026-06-03 12:50:31','2026-06-03 12:50:31');
 
--- romaneios (4 registros)
-INSERT OR IGNORE INTO romaneios (id,criado_em,total,observacao) VALUES (2,'2026-05-08 16:03:20',10,NULL);
-INSERT OR IGNORE INTO romaneios (id,criado_em,total,observacao) VALUES (3,'2026-05-08 21:38:04',1,NULL);
-INSERT OR IGNORE INTO romaneios (id,criado_em,total,observacao) VALUES (4,'2026-05-13 16:14:10',3,NULL);
-INSERT OR IGNORE INTO romaneios (id,criado_em,total,observacao) VALUES (5,'2026-05-14 11:32:26',17,NULL);
-
--- config (5 registros)
-INSERT OR IGNORE INTO config (chave,valor) VALUES ('pers_custo_nome','10.0');
-INSERT OR IGNORE INTO config (chave,valor) VALUES ('pers_custo_numero','20.0');
-INSERT OR IGNORE INTO config (chave,valor) VALUES ('pers_custo_escudo','0.0');
-INSERT OR IGNORE INTO config (chave,valor) VALUES ('pers_ativo','1');
-INSERT OR IGNORE INTO config (chave,valor) VALUES ('ultima_sincronizacao','2026-06-05T14:51:09');
-
--- Pedidos marcados como SUSPEITOS (flag manual) — 9 pedidos
+-- Pedidos SUSPEITOS (flag manual) — 9 pedidos
 UPDATE pedidos SET suspeito=1 WHERE numero='4398';
 UPDATE pedidos SET suspeito=1 WHERE numero='6356';
 UPDATE pedidos SET suspeito=1 WHERE numero='6442';
