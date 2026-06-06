@@ -1278,6 +1278,31 @@ def delete_pedido(pid):
     return jsonify({"mensagem": "Pedido excluído"})
 
 
+def _enviados_total(conn):
+    """Total de pedidos enviados (ativo=0), CACHEADO em config (TTL 1h).
+
+    Antes, /api/stats fazia COUNT(*) WHERE ativo=0 a cada chamada — varrendo
+    milhares de linhas (ex: 5.713) a cada refresh de cada aba aberta. Era a
+    MAIOR fonte de leituras do Turso. Agora recalcula no maximo 1x/hora.
+    """
+    agora = datetime.now()
+    row = conn.execute("SELECT valor FROM config WHERE chave='enviados_cache'").fetchone()
+    if row and row["valor"]:
+        try:
+            ts_str, val_str = row["valor"].split("|", 1)
+            ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+            if (agora - ts).total_seconds() < 3600:   # cache valido por 1h
+                return int(val_str)
+        except Exception:
+            pass
+    val = conn.execute("SELECT COUNT(*) AS t FROM pedidos WHERE ativo=0").fetchone()["t"]
+    conn.execute(
+        "INSERT OR REPLACE INTO config (chave, valor) VALUES ('enviados_cache', ?)",
+        (f"{agora.strftime('%Y-%m-%d %H:%M:%S')}|{val}",),
+    )
+    return val
+
+
 @app.route("/api/stats")
 @login_required
 def get_stats():
@@ -1289,9 +1314,7 @@ def get_stats():
         suspeitos = conn.execute(
             "SELECT COUNT(*) as total FROM pedidos WHERE ativo = 1 AND suspeito = 1"
         ).fetchone()["total"]
-        enviados = conn.execute(
-            "SELECT COUNT(*) as total FROM pedidos WHERE ativo = 0"
-        ).fetchone()["total"]
+        enviados = _enviados_total(conn)
     counts = {s: 0 for s in STATUS_ORDER}
     for r in rows:
         if r["status"] in counts:
