@@ -858,13 +858,26 @@ async function salvarPedido() {
 // ── Detalhe ───────────────────────────────────────────────────────────
 async function abrirDetalhe(id) {
     pedidoAbertoId = id;
-    const [r] = await Promise.all([
-        fetch(`/api/atacado/pedidos/${id}`),
-        carregarCatalogo(),   // garante imagens disponíveis (usa cache, não reconsulta)
-    ]);
+    // Busca só o pedido (rápido) e mostra o modal IMEDIATAMENTE
+    const r = await fetch(`/api/atacado/pedidos/${id}`);
     const {pedido, itens} = await r.json();
     renderDetalhe(pedido, itens);
     new bootstrap.Modal(document.getElementById('modalDetalhe')).show();
+    // Catálogo (fotos) carrega em segundo plano só na 1ª vez — não trava a abertura
+    if (!catalogoProdutos.length) {
+        carregarCatalogo().then(() => atualizarImagensDetalhe(itens)).catch(() => {});
+    }
+}
+
+// Preenche as fotos dos itens depois que o catálogo carrega (sem re-renderizar tudo)
+function atualizarImagensDetalhe(itens) {
+    (itens || []).forEach(item => {
+        const img = imagemDaVariante(item.nv_variant_id);
+        if (!img) return;
+        const span = document.getElementById(`itemimg-${item.id}`);
+        if (span) span.innerHTML =
+            `<img src="${escHtml(img)}" style="width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0">`;
+    });
 }
 
 // Busca a imagem de uma variante no catálogo já carregado (sem tocar no banco)
@@ -968,7 +981,7 @@ function renderDetalhe(pedido, itens) {
         return `<tr class="item-det-row ${item.separado?'item-separado':''}" id="itemrow-${item.id}">
             <td>
                 <div class="d-flex align-items-center gap-2">
-                    ${imgHtml}
+                    <span id="itemimg-${item.id}">${imgHtml}</span>
                     <div style="min-width:0">
                         <div class="fw-semibold">${escHtml(item.produto)}</div>
                         <div style="font-size:.75rem;color:var(--muted)">${escHtml(item.variante||'')}</div>
