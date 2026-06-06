@@ -335,6 +335,7 @@ def init_db():
             "qty_fornecedor INTEGER DEFAULT 0",
             "estoque_descontado INTEGER DEFAULT 0",
             "valor_unit REAL DEFAULT 0",
+            "observacao TEXT",
         ]:
             try: conn.execute(f"ALTER TABLE atacado_itens ADD COLUMN {col}")
             except Exception: pass
@@ -4266,14 +4267,15 @@ def api_atacado_criar():
             qty_total = qty_est + qty_forn
             nv_vid    = item.get("nv_variant_id") or None
             valor_unit = float(item.get("valor_unit") or 0)
+            obs_item  = (item.get("observacao") or "").strip() or None
             if produto and qty_total > 0:
                 conn.execute(
                     """INSERT INTO atacado_itens
                        (pedido_id, produto, variante, quantidade,
-                        qty_estoque, qty_fornecedor, nv_variant_id, valor_unit)
-                       VALUES (?,?,?,?,?,?,?,?)""",
+                        qty_estoque, qty_fornecedor, nv_variant_id, valor_unit, observacao)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
                     (pedido_id, produto, variante, qty_total,
-                     qty_est, qty_forn, nv_vid, valor_unit)
+                     qty_est, qty_forn, nv_vid, valor_unit, obs_item)
                 )
         _log_atacado(conn, pedido_id, "Pedido criado",
                      f"Cliente: {cliente} · {len(itens)} item(ns)", session.get("usuario", ""))
@@ -4289,7 +4291,8 @@ def api_atacado_detalhe(pid):
         if not ped:
             return jsonify({"erro": "Pedido não encontrado"}), 404
         itens = conn.execute(
-            "SELECT * FROM atacado_itens WHERE pedido_id=? ORDER BY id", (pid,)
+            "SELECT * FROM atacado_itens WHERE pedido_id=? ORDER BY produto COLLATE NOCASE, variante COLLATE NOCASE",
+            (pid,)
         ).fetchall()
     return jsonify({"pedido": dict(ped), "itens": [dict(i) for i in itens]})
 
@@ -4386,6 +4389,7 @@ def api_atacado_editar(pid):
             qty_tot  = qty_est + qty_forn
             nv_vid   = item.get("nv_variant_id") or None
             valor    = float(item.get("valor_unit") or 0)
+            obs_item = (item.get("observacao") or "").strip() or None
             if not produto or qty_tot <= 0:
                 continue
             iid = item.get("id")
@@ -4402,18 +4406,20 @@ def api_atacado_editar(pid):
                     mudancas.append(
                         f"Item \"{produto}\": {old['quantidade']}un → {qty_tot}un, "
                         f"R${float(old['valor_unit'] or 0):.2f} → R${valor:.2f}")
+                if (old["observacao"] or "") != (obs_item or ""):
+                    mudancas.append(f"Obs. de \"{produto}\": \"{old['observacao'] or ''}\" → \"{obs_item or ''}\"")
                 conn.execute(
                     """UPDATE atacado_itens SET
                          produto=?, variante=?, quantidade=?, qty_estoque=?, qty_fornecedor=?,
-                         nv_variant_id=?, valor_unit=? WHERE id=?""",
-                    (produto, variante, qty_tot, qty_est, qty_forn, nv_vid, valor, iid))
+                         nv_variant_id=?, valor_unit=?, observacao=? WHERE id=?""",
+                    (produto, variante, qty_tot, qty_est, qty_forn, nv_vid, valor, obs_item, iid))
             else:
                 conn.execute(
                     """INSERT INTO atacado_itens
                          (pedido_id, produto, variante, quantidade, qty_estoque,
-                          qty_fornecedor, nv_variant_id, valor_unit)
-                       VALUES (?,?,?,?,?,?,?,?)""",
-                    (pid, produto, variante, qty_tot, qty_est, qty_forn, nv_vid, valor))
+                          qty_fornecedor, nv_variant_id, valor_unit, observacao)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (pid, produto, variante, qty_tot, qty_est, qty_forn, nv_vid, valor, obs_item))
                 mudancas.append(f"Item adicionado: \"{produto}\" ({qty_tot}un)")
 
         for iid, old in existentes.items():
@@ -4442,6 +4448,28 @@ def api_atacado_deletar(pid):
     with get_conn() as conn:
         conn.execute("DELETE FROM atacado_itens WHERE pedido_id=?", (pid,))
         conn.execute("DELETE FROM atacado_pedidos WHERE id=?", (pid,))
+        conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/atacado/itens/<int:iid>/observacao", methods=["PUT"])
+@login_required
+def api_atacado_item_observacao(iid):
+    """Atualiza a observação de um item a qualquer momento (edição inline)."""
+    data = request.get_json() or {}
+    obs  = (data.get("observacao") or "").strip() or None
+    with get_conn() as conn:
+        item = conn.execute(
+            "SELECT pedido_id, produto, observacao FROM atacado_itens WHERE id=?", (iid,)
+        ).fetchone()
+        if not item:
+            return jsonify({"erro": "Item não encontrado"}), 404
+        conn.execute("UPDATE atacado_itens SET observacao=? WHERE id=?", (obs, iid))
+        _log_atacado(
+            conn, item["pedido_id"], "Observação de produto editada",
+            f"\"{item['produto']}\": \"{item['observacao'] or ''}\" → \"{obs or ''}\"",
+            session.get("usuario", ""),
+        )
         conn.commit()
     return jsonify({"ok": True})
 
