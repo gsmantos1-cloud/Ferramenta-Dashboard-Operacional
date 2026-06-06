@@ -923,6 +923,12 @@ async function editarObsItem(itemId) {
 }
 
 function renderDetalhe(pedido, itens) {
+    // Ordem alfabética por produto e depois variante (garante no cliente, mesmo com cache)
+    itens = (itens || []).slice().sort((a, b) => {
+        const c = (a.produto || '').localeCompare(b.produto || '', 'pt', {sensitivity:'base'});
+        return c !== 0 ? c : (a.variante || '').localeCompare(b.variante || '', 'pt', {sensitivity:'base'});
+    });
+
     const numFmt = String(pedido.numero || pedido.id).padStart(2,'0');
     document.getElementById('detCliente').innerHTML =
         `<span class="pedido-num me-2">#${numFmt}</span>${escHtml(pedido.cliente)}`;
@@ -1007,11 +1013,17 @@ function renderDetalhe(pedido, itens) {
         </tr>`;
     }).join('');
 
-    // Tfoot — total geral
-    document.getElementById('detTotais').innerHTML = somaTotal > 0 ? `
+    // Tfoot — total geral (produtos, peças e valor)
+    const totalPecas = itens.reduce((s,i) => s + (i.quantidade||0), 0);
+    const nProdutos  = itens.length;
+    document.getElementById('detTotais').innerHTML = nProdutos > 0 ? `
         <tr style="border-top:2px solid var(--border)">
-            <td colspan="3" style="padding:8px;font-size:.8rem;color:var(--muted);text-align:right;font-weight:600">TOTAL DO PEDIDO</td>
-            <td style="padding:8px;text-align:right;font-weight:700;color:#f0e68c;font-size:.95rem">R$ ${fmtMoeda(somaTotal)}</td>
+            <td style="padding:10px 8px;font-size:.82rem;color:var(--text);font-weight:700">
+                TOTAL · ${nProdutos} produto${nProdutos!==1?'s':''}
+            </td>
+            <td style="padding:10px 4px;text-align:center;font-weight:800;color:var(--blue);font-size:1rem">${totalPecas}</td>
+            <td style="padding:10px 4px;text-align:right;font-size:.72rem;color:var(--muted)">peças →</td>
+            <td style="padding:10px 8px;text-align:right;font-weight:800;color:#f0e68c;font-size:1rem">R$ ${fmtMoeda(somaTotal)}</td>
             <td colspan="4"></td>
         </tr>` : '';
 
