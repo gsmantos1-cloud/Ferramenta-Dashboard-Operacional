@@ -998,7 +998,16 @@ def _salvar_itens_pedido(conn, numero, produtos):
 
 def _processar_estoque_pedidos():
     """Desconta do estoque os pedidos ainda não processados (estoque_processado=0).
-    Seguro para rodar múltiplas vezes: cada pedido é marcado após processar."""
+    Seguro para rodar múltiplas vezes: cada pedido é marcado após processar.
+
+    [DESATIVADO a pedido do usuário] O desconto automático de estoque na venda
+    foi desligado — o estoque só muda manualmente. Apenas marca os pedidos como
+    processados para não reprocessar caso seja religado. Para reativar, remova
+    este bloco inicial."""
+    with get_conn() as conn:
+        conn.execute("UPDATE pedidos SET estoque_processado = 1 WHERE estoque_processado = 0")
+    return
+    # --- código original abaixo (mantido para fácil reativação) ---
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_conn() as conn:
         # Sem estoque cadastrado (ex: banco novo) → nada a descontar, só marca
@@ -2912,7 +2921,12 @@ def _build_sync_query(produto_nome, variante_label, sku_origem, skip_vid):
 def _sync_estoque_por_nome(conn, produto_nome, variante_label, nova_qty, agora,
                            skip_vid=None, sku_origem=None):
     """Sincroniza TODOS os registros elegíveis (mesmo nome + mesma SKU se houver) para nova_qty.
-    Retorna quantos registros foram sincronizados além do original."""
+    Retorna quantos registros foram sincronizados além do original.
+
+    [DESATIVADO a pedido do usuário] A sincronização de estoque por nome foi
+    desligada — cada variante tem estoque independente. Para reativar, remova a
+    linha 'return 0' abaixo."""
+    return 0
     if not produto_nome:
         return 0
     q, params = _build_sync_query(produto_nome, variante_label, sku_origem, skip_vid)
@@ -2933,7 +2947,11 @@ def _sync_estoque_por_nome(conn, produto_nome, variante_label, nova_qty, agora,
 
 def _deducao_sync_por_nome(conn, produto_nome, variante_label, qty_deduzida, agora,
                            skip_vid=None, pedido_nr=None, sku_origem=None):
-    """Deduz qty_deduzida de TODOS os registros elegíveis (mesmo nome + mesma SKU se houver)."""
+    """Deduz qty_deduzida de TODOS os registros elegíveis (mesmo nome + mesma SKU se houver).
+
+    [DESATIVADO a pedido do usuário] Sincronização por nome desligada — cada
+    variante tem estoque independente. Para reativar, remova a linha 'return 0'."""
+    return 0
     if not produto_nome:
         return 0
     q, params = _build_sync_query(produto_nome, variante_label, sku_origem, skip_vid)
