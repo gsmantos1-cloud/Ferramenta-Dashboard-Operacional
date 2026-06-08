@@ -284,6 +284,16 @@
      border:1px solid var(--border);border-radius:8px;max-height:560px;overflow-y:auto;
      box-shadow:0 8px 32px rgba(0,0,0,.4);min-width:340px"></div>
 
+<!-- ── Lightbox: imagem do produto ampliada ────────────────────────────── -->
+<div id="lightbox" onclick="fecharImagemGrande()" style="display:none;position:fixed;inset:0;z-index:20000;
+     background:rgba(0,0,0,.85);align-items:center;justify-content:center;cursor:zoom-out">
+  <img id="lightboxImg" src="" alt="produto"
+       style="max-width:92vw;max-height:92vh;border-radius:10px;box-shadow:0 10px 50px rgba(0,0,0,.6)">
+  <button onclick="fecharImagemGrande()" title="Fechar" style="position:absolute;top:18px;right:24px;
+          background:rgba(255,255,255,.12);border:none;color:#fff;font-size:1.4rem;width:42px;height:42px;
+          border-radius:50%;cursor:pointer;line-height:1">&times;</button>
+</div>
+
 <!-- ── Área de impressão do PDF (oculta na tela, visível só ao imprimir) ─── -->
 <div id="pdfArea"></div>
 
@@ -932,7 +942,8 @@ function atualizarImagensDetalhe(itens) {
         if (!img) return;
         const span = document.getElementById(`itemimg-${item.id}`);
         if (span) span.innerHTML =
-            `<img src="${escHtml(img)}" style="width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0">`;
+            `<img src="${escHtml(img)}" onclick="abrirImagemGrande(this.src)" title="Clique para ampliar"
+               style="width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0;cursor:zoom-in">`;
     });
 }
 
@@ -945,6 +956,21 @@ function imagemDaVariante(nvVid) {
     }
     return '';
 }
+
+// Lightbox — abre a imagem do produto ampliada na tela
+function abrirImagemGrande(url) {
+    if (!url) return;
+    document.getElementById('lightboxImg').src = url;
+    document.getElementById('lightbox').style.display = 'flex';
+}
+function fecharImagemGrande() {
+    document.getElementById('lightbox').style.display = 'none';
+    document.getElementById('lightboxImg').src = '';
+}
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && document.getElementById('lightbox').style.display === 'flex')
+        fecharImagemGrande();
+});
 
 // Conteúdo da célula de observação do item (no detalhe)
 function obsCellHtml(item) {
@@ -1037,7 +1063,8 @@ function renderDetalhe(pedido, itens) {
 
         const imgVar = imagemDaVariante(item.nv_variant_id);
         const imgHtml = imgVar
-            ? `<img src="${escHtml(imgVar)}" style="width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0">`
+            ? `<img src="${escHtml(imgVar)}" onclick="abrirImagemGrande(this.src)" title="Clique para ampliar"
+                 style="width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0;cursor:zoom-in">`
             : `<div style="width:44px;height:44px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="bi bi-image" style="color:var(--muted)"></i></div>`;
 
         return `<tr class="item-det-row ${item.separado?'item-separado':''}" id="itemrow-${item.id}">
