@@ -1311,7 +1311,12 @@ async function gerarPdfPedido() {
             ? Promise.resolve()
             : new Promise(res => { img.onload = img.onerror = res; setTimeout(res, 4000); })));
 
+        // O nome sugerido do arquivo PDF vem do título da página
+        const numFmt = String(pedido.numero || pedido.id).padStart(2, '0');
+        const tituloOrig = document.title;
+        document.title = `FutDrop - Pedido Atacado ${numFmt}`;
         window.print();
+        document.title = tituloOrig;
     } catch(e) {
         alert('Erro ao gerar PDF.');
     } finally {
@@ -1357,7 +1362,7 @@ function buildPdfHtml(pedido, itens) {
     return `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1a3a5c;padding-bottom:10px;margin-bottom:14px">
         <div>
-            <div style="font-size:20px;font-weight:800;color:#1a3a5c">GS MANTOS</div>
+            <div style="font-size:20px;font-weight:800;color:#1a3a5c">FUTDROP</div>
             <div style="font-size:12px;color:#555">Pedido de Atacado</div>
         </div>
         <div style="text-align:right">
@@ -1391,7 +1396,7 @@ function buildPdfHtml(pedido, itens) {
     </table>
 
     ${pedido.observacao ? `<div style="margin-top:14px;font-size:11px;color:#444"><b>Observação:</b> ${escHtml(pedido.observacao)}</div>` : ''}
-    <div style="margin-top:24px;font-size:10px;color:#999;text-align:center">Gerado pelo sistema GS Mantos · ${totalPecas} peça(s)</div>
+    <div style="margin-top:24px;font-size:10px;color:#999;text-align:center">Gerado pelo sistema FutDrop · ${totalPecas} peça(s)</div>
     `;
 }
 
