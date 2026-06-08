@@ -957,6 +957,30 @@ function imagemDaVariante(nvVid) {
     return '';
 }
 
+// Ordem natural dos tamanhos (não alfabética): PP < P < M < G < GG < GGG < XG...
+function _ordemTamanho(variante) {
+    const ORDEM = { PP:0, P:1, M:2, G:3, GG:4, GGG:5, XG:6, XGG:7, XGGG:8 };
+    if (!variante) return 999;
+    const partes = String(variante).split(',').map(s => s.trim().toUpperCase());
+    for (const t of partes) {
+        if (t in ORDEM) return ORDEM[t];                 // P, M, G, GG...
+        const num = parseInt(t, 10);                     // tamanhos numéricos (38, 40...)
+        if (!isNaN(num) && String(num) === t) return 1000 + num;
+    }
+    return 500;                                          // sem tamanho reconhecido: meio-termo
+}
+
+// Ordena os itens: 1º nome do produto (A→Z), 2º tamanho na ordem natural
+function ordenarItensAtacado(itens) {
+    return [...(itens || [])].sort((a, b) => {
+        const pa = (a.produto || '').toLowerCase();
+        const pb = (b.produto || '').toLowerCase();
+        const cmp = pa.localeCompare(pb, 'pt-BR');
+        if (cmp !== 0) return cmp;
+        return _ordemTamanho(a.variante) - _ordemTamanho(b.variante);
+    });
+}
+
 // Lightbox — abre a imagem do produto ampliada na tela
 function abrirImagemGrande(url) {
     if (!url) return;
@@ -1045,9 +1069,11 @@ function renderDetalhe(pedido, itens) {
     document.getElementById('detProgressBar').style.width=pct+'%';
     document.getElementById('detProgressBar').style.background=pct===100?'var(--green)':pct>0?'var(--orange)':'var(--border)';
 
-    // Itens
+    // Itens — ordena por nome do produto (A→Z) e, dentro do mesmo produto,
+    // por tamanho na ordem natural (P, M, G, GG...).
     let somaTotal = 0;
-    document.getElementById('detItens').innerHTML = itens.map(item => {
+    const itensOrdenados = ordenarItensAtacado(itens);
+    document.getElementById('detItens').innerHTML = itensOrdenados.map(item => {
         const est  = item.qty_estoque   || 0;
         const forn = item.qty_fornecedor|| 0;
         const vu   = item.valor_unit    || 0;
@@ -1299,7 +1325,7 @@ function buildPdfHtml(pedido, itens) {
     const totalPecas = itens.reduce((s,i) => s + (i.quantidade||0), 0);
     const totalValor = itens.reduce((s,i) => s + (i.valor_unit||0) * (i.quantidade||0), 0);
 
-    const linhas = itens.map(it => {
+    const linhas = ordenarItensAtacado(itens).map(it => {
         const img = imagemDaVariante(it.nv_variant_id);
         const imgCell = img
             ? `<img class="pdf-img" src="${escHtml(img)}">`
