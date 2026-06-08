@@ -84,9 +84,13 @@
             <input id="fCep" type="text" class="form-control form-control-sm" placeholder="00000-000"
                    oninput="maskCep(this)" onblur="buscarCep()">
           </div>
-          <div class="col-md-5">
+          <div class="col-md-4">
             <label class="flabel">ENDEREÇO</label>
-            <input id="fEndereco" type="text" class="form-control form-control-sm" placeholder="Rua, número...">
+            <input id="fEndereco" type="text" class="form-control form-control-sm" placeholder="Rua, avenida...">
+          </div>
+          <div class="col-md-1">
+            <label class="flabel">Nº</label>
+            <input id="fNumeroEnd" type="text" class="form-control form-control-sm" placeholder="123">
           </div>
           <div class="col-md-3">
             <label class="flabel">CIDADE</label>
@@ -710,7 +714,7 @@ document.addEventListener('click', e => {
 function abrirModal() {
     editandoPedidoId = null;
     itemCount = 0;
-    ['fCliente','fCpf','fContato','fCep','fEndereco','fCidade','fPrazo','fObs'].forEach(id => {
+    ['fCliente','fCpf','fContato','fCep','fEndereco','fNumeroEnd','fCidade','fPrazo','fObs'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value='';
     });
@@ -746,6 +750,7 @@ async function editarPedido() {
     document.getElementById('fContato').value  = pedido.contato || '';
     document.getElementById('fCep').value      = pedido.cep || '';
     document.getElementById('fEndereco').value = pedido.endereco || '';
+    document.getElementById('fNumeroEnd').value = pedido.numero_endereco || '';
     document.getElementById('fCidade').value   = pedido.cidade || '';
     document.getElementById('fPrazo').value    = pedido.prazo || '';
     document.getElementById('fObs').value       = pedido.observacao || '';
@@ -880,6 +885,7 @@ async function salvarPedido() {
         cpf:document.getElementById('fCpf').value.trim(),
         cep:document.getElementById('fCep').value.trim(),
         endereco:document.getElementById('fEndereco').value.trim(),
+        numero_endereco:document.getElementById('fNumeroEnd').value.trim(),
         cidade:document.getElementById('fCidade').value.trim(),
         prazo:document.getElementById('fPrazo').value,
         observacao:document.getElementById('fObs').value.trim(),
@@ -999,7 +1005,7 @@ function renderDetalhe(pedido, itens) {
         pedido.cep      && `<div class="col-auto"><i class="bi bi-mailbox me-1" style="color:var(--muted)"></i>CEP ${escHtml(pedido.cep)}</div>`,
         pedido.cidade   && `<div class="col-auto"><i class="bi bi-geo-alt me-1" style="color:var(--blue)"></i>${escHtml(pedido.cidade)}</div>`,
         pedido.frete_tipo && `<div class="col-auto"><span style="font-size:.82rem">${freteIcon} <b>${labelFrete(pedido.frete_tipo)}</b></span></div>`,
-        pedido.endereco && `<div class="col-12"><i class="bi bi-house me-1" style="color:var(--muted)"></i>${escHtml(pedido.endereco)}</div>`,
+        pedido.endereco && `<div class="col-12"><i class="bi bi-house me-1" style="color:var(--muted)"></i>${escHtml(pedido.endereco)}${pedido.numero_endereco ? ', Nº '+escHtml(pedido.numero_endereco) : ''}</div>`,
         pedido.prazo    && `<div class="col-auto"><i class="bi bi-calendar2-check me-1" style="color:var(--orange)"></i>Prazo: ${fmtDate(pedido.prazo)}</div>`,
         pedido.observacao && `<div class="col-12"><i class="bi bi-chat-left-text me-1" style="color:var(--muted)"></i>${escHtml(pedido.observacao)}</div>`,
     ].filter(Boolean);
@@ -1290,7 +1296,7 @@ function buildPdfHtml(pedido, itens) {
         pedido.cpf      ? `CPF: ${escHtml(pedido.cpf)}` : '',
         pedido.cep      ? `CEP: ${escHtml(pedido.cep)}` : '',
         pedido.cidade   ? `Cidade: ${escHtml(pedido.cidade)}` : '',
-        pedido.endereco ? `Endereço: ${escHtml(pedido.endereco)}` : '',
+        pedido.endereco ? `Endereço: ${escHtml(pedido.endereco)}${pedido.numero_endereco ? ', Nº '+escHtml(pedido.numero_endereco) : ''}` : '',
         pedido.frete_tipo ? `Frete: ${labelFrete(pedido.frete_tipo)}` : '',
         pedido.prazo    ? `Prazo: ${fmtDate(pedido.prazo)}` : '',
     ].filter(Boolean).map(x => `<span style="margin-right:16px">${x}</span>`).join('');

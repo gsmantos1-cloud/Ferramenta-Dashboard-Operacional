@@ -324,7 +324,7 @@ def init_db():
         # atacado migrations (idempotent)
         for col in [
             "cep TEXT", "cpf TEXT", "cidade TEXT", "nome TEXT",
-            "pago INTEGER DEFAULT 0",
+            "pago INTEGER DEFAULT 0", "numero_endereco TEXT",
         ]:
             try: conn.execute(f"ALTER TABLE atacado_pedidos ADD COLUMN {col}")
             except Exception: pass
@@ -4246,12 +4246,13 @@ def api_atacado_criar():
 
         cur = conn.execute(
             """INSERT INTO atacado_pedidos
-               (numero, cliente, nome, contato, cep, endereco, cidade, cpf,
+               (numero, cliente, nome, contato, cep, endereco, numero_endereco, cidade, cpf,
                 observacao, prazo, pago, frete_tipo, criado_por)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (proximo_numero, cliente,
              data.get("nome",""), contato,
              data.get("cep",""),  data.get("endereco",""),
+             data.get("numero_endereco",""),
              data.get("cidade",""), data.get("cpf",""),
              data.get("observacao",""), data.get("prazo",""),
              1 if data.get("pago") else 0,
@@ -4347,6 +4348,7 @@ def api_atacado_editar(pid):
             ("cpf",        "CPF",        data.get("cpf", "") or ""),
             ("cep",        "CEP",        data.get("cep", "") or ""),
             ("endereco",   "Endereço",   data.get("endereco", "") or ""),
+            ("numero_endereco", "Número", data.get("numero_endereco", "") or ""),
             ("cidade",     "Cidade",     data.get("cidade", "") or ""),
             ("prazo",      "Prazo",      data.get("prazo", "") or ""),
             ("observacao", "Observação", data.get("observacao", "") or ""),
@@ -4366,11 +4368,12 @@ def api_atacado_editar(pid):
 
         conn.execute(
             """UPDATE atacado_pedidos SET
-                 cliente=?, nome=?, contato=?, cpf=?, cep=?, endereco=?, cidade=?,
+                 cliente=?, nome=?, contato=?, cpf=?, cep=?, endereco=?, numero_endereco=?, cidade=?,
                  prazo=?, observacao=?, frete_tipo=?, pago=?, updated_at=?
                WHERE id=?""",
             (cliente, data.get("nome", "") or "", contato, data.get("cpf", "") or "",
-             data.get("cep", "") or "", data.get("endereco", "") or "", data.get("cidade", "") or "",
+             data.get("cep", "") or "", data.get("endereco", "") or "",
+             data.get("numero_endereco", "") or "", data.get("cidade", "") or "",
              data.get("prazo", "") or "", data.get("observacao", "") or "",
              data.get("frete_tipo", "a_combinar") or "a_combinar", pago_novo, agora, pid),
         )
