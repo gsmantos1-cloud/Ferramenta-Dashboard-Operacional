@@ -277,7 +277,7 @@
 
 <!-- ── Dropdown de produto (fora do modal para não ser cortado) ─────── -->
 <div id="prodDropdown" style="display:none;position:fixed;z-index:9999;background:var(--card-bg);
-     border:1px solid var(--border);border-radius:8px;max-height:260px;overflow-y:auto;
+     border:1px solid var(--border);border-radius:8px;max-height:560px;overflow-y:auto;
      box-shadow:0 8px 32px rgba(0,0,0,.4);min-width:340px"></div>
 
 <!-- ── Área de impressão do PDF (oculta na tela, visível só ao imprimir) ─── -->
@@ -361,6 +361,7 @@
 /* Produto search dropdown */
 .prod-drop-item { padding:8px 12px;cursor:pointer;border-bottom:1px solid #21262d;font-size:.83rem; }
 .prod-drop-item:hover { background:rgba(88,166,255,.08); }
+.prod-drop-item.active { background:rgba(88,166,255,.20); }
 .prod-drop-item:last-child { border-bottom:none; }
 .stock-chip { font-size:.68rem;border-radius:10px;padding:1px 7px;border:1px solid; }
 .sc-ok   { background:rgba(63,185,80,.1); color:var(--green); border-color:#3fb95033; }
@@ -385,6 +386,8 @@ let editandoPedidoId = null;   // null = criando; id = editando
 // Cache de produtos + estoque (carrega uma vez)
 let catalogoProdutos = [];   // [{id, name, imageUrl, variants:[{id, values, stock}]}]
 let dropdownTarget = null;   // input ativo para dropdown
+let dropdownMatches = [];    // resultados atuais (para navegação por teclado)
+let dropdownIndex = -1;      // item destacado pelas setas
 
 // ── Carregar lista ────────────────────────────────────────────────────
 async function carregar() {
@@ -540,32 +543,79 @@ function mostrarDropdown(inputEl, rowId) {
 
     if (!matches.length) { dd.style.display='none'; return; }
 
+    dropdownMatches = matches;     // guarda para navegação por teclado
+    dropdownIndex = -1;
+
+    // Posiciona usando o máximo de espaço da tela: abre pra baixo, ou pra cima
+    // se houver mais espaço acima — nunca fica cortado pela borda da tela.
     const rect = inputEl.getBoundingClientRect();
-    dd.style.left   = rect.left + 'px';
-    dd.style.top    = (rect.bottom + 4) + 'px';
-    dd.style.width  = Math.max(rect.width, 420) + 'px';
+    const margem = 12;
+    const espacoAbaixo = window.innerHeight - rect.bottom - margem;
+    const espacoAcima  = rect.top - margem;
+    const abrirAcima = espacoAbaixo < 280 && espacoAcima > espacoAbaixo;
+    const maxH = Math.min(560, Math.max((abrirAcima ? espacoAcima : espacoAbaixo), 220));
+
+    dd.style.left      = rect.left + 'px';
+    dd.style.width     = Math.max(rect.width, 440) + 'px';
+    dd.style.maxHeight = maxH + 'px';
+    if (abrirAcima) {
+        dd.style.top    = 'auto';
+        dd.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+    } else {
+        dd.style.bottom = 'auto';
+        dd.style.top    = (rect.bottom + 4) + 'px';
+    }
     dd.style.display = 'block';
 
-    const header = `<div style="padding:6px 14px;font-size:.68rem;color:var(--muted);
-        border-bottom:1px solid var(--border);background:#0d1117;letter-spacing:.04em;position:sticky;top:0">
-        ${matches.length} produto${matches.length!==1?'s':''} encontrado${matches.length!==1?'s':''}</div>`;
+    const header = `<div style="padding:7px 14px;font-size:.68rem;color:var(--muted);
+        border-bottom:1px solid var(--border);background:#0d1117;letter-spacing:.04em;position:sticky;top:0;z-index:1">
+        ${matches.length} produto${matches.length!==1?'s':''} encontrado${matches.length!==1?'s':''} ·
+        <span style="opacity:.7">use ↑ ↓ e Enter</span></div>`;
 
-    dd.innerHTML = header + matches.map(p => {
+    dd.innerHTML = header + matches.map((p, i) => {
         const totalStock = p.variants.reduce((s,v) => s+(v.stock?.quantity||0), 0);
         const sc = totalStock > 5 ? 'sc-ok' : totalStock > 0 ? 'sc-low' : 'sc-zero';
         const img = p.imageUrl
-            ? `<img src="${escHtml(p.imageUrl)}" style="width:52px;height:52px;object-fit:cover;border-radius:8px;border:1px solid var(--border);flex-shrink:0">`
-            : `<div style="width:52px;height:52px;background:#21262d;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            ? `<img src="${escHtml(p.imageUrl)}" loading="lazy" style="width:48px;height:48px;object-fit:cover;border-radius:8px;border:1px solid var(--border);flex-shrink:0">`
+            : `<div style="width:48px;height:48px;background:#21262d;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
                  <i class="bi bi-image" style="font-size:1.1rem;color:var(--muted)"></i></div>`;
-        return `<div class="prod-drop-item" onclick="selecionarProduto(${p.id})"
-            style="display:flex;align-items:center;gap:12px;padding:10px 14px">
+        return `<div class="prod-drop-item" data-idx="${i}" onclick="selecionarProduto(${p.id})"
+            style="display:flex;align-items:center;gap:12px;padding:8px 14px">
             ${img}
             <div style="flex:1;min-width:0">
                 <div class="fw-semibold" style="font-size:.85rem;line-height:1.3">${escHtml(p.name)}</div>
-                <span class="stock-chip ${sc}" style="margin-top:4px;display:inline-block">${totalStock} em estoque</span>
+                <span class="stock-chip ${sc}" style="margin-top:3px;display:inline-block">${totalStock} em estoque</span>
             </div>
         </div>`;
     }).join('');
+}
+
+// Navegação por teclado no dropdown de produtos (setas + Enter + Esc)
+function navegarDropdown(event, inputEl, rowId) {
+    const dd = document.getElementById('prodDropdown');
+    if (event.key === 'Escape') { dd.style.display = 'none'; return; }
+    if (dd.style.display === 'none' || !dropdownMatches.length) return;
+    if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        dropdownIndex = Math.min(dropdownIndex + 1, dropdownMatches.length - 1);
+        _realcarDropdown();
+    } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        dropdownIndex = Math.max(dropdownIndex - 1, 0);
+        _realcarDropdown();
+    } else if (event.key === 'Enter') {
+        event.preventDefault();
+        const alvo = dropdownIndex >= 0 ? dropdownMatches[dropdownIndex] : dropdownMatches[0];
+        if (alvo) selecionarProduto(alvo.id);
+    }
+}
+
+function _realcarDropdown() {
+    document.querySelectorAll('#prodDropdown .prod-drop-item').forEach(el => {
+        const ativo = (+el.dataset.idx === dropdownIndex);
+        el.classList.toggle('active', ativo);
+        if (ativo) el.scrollIntoView({ block: 'nearest' });
+    });
 }
 
 function selecionarProduto(prodId) {
@@ -732,7 +782,7 @@ function addItem() {
     div.innerHTML = `
         <div style="display:flex;align-items:center;gap:8px">
             <input type="text" class="inp-prod" id="iprod-${n}" placeholder="Buscar produto..." autocomplete="off"
-                   oninput="mostrarDropdown(this,'${n}')" onkeydown="if(event.key==='Escape')document.getElementById('prodDropdown').style.display='none'">
+                   oninput="mostrarDropdown(this,'${n}')" onkeydown="navegarDropdown(event, this, '${n}')">
             <select class="inp-var" id="ivar-${n}" disabled style="flex:2">
                 <option value="">Variante...</option>
             </select>
