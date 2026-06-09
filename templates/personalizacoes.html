@@ -249,12 +249,34 @@ function renderKanban() {
 
     document.getElementById('kanban').innerHTML = COLS.map(col => {
         const itens = grupos[col.status];
-        const cards = itens.length === 0
-            ? `<div style="text-align:center;padding:2rem 0;color:var(--muted);font-size:.8rem">
+        let cards;
+        if (itens.length === 0) {
+            cards = `<div style="text-align:center;padding:2rem 0;color:var(--muted);font-size:.8rem">
                    <i class="bi bi-inbox" style="font-size:1.5rem;display:block;margin-bottom:6px"></i>
                    Nenhuma aqui
-               </div>`
-            : itens.map(p => renderCard(p, col)).join('');
+               </div>`;
+        } else {
+            // Agrupa as personalizações por número do pedido (um pedido pode ter 1+)
+            const porPedido = new Map();
+            itens.forEach(p => {
+                const k = p.numero_pedido;
+                if (!porPedido.has(k)) porPedido.set(k, []);
+                porPedido.get(k).push(p);
+            });
+            cards = Array.from(porPedido.entries()).map(([numped, pers]) => {
+                const inner = pers.map(p => renderCard(p, col)).join('');
+                const n = pers.length;
+                return `<div style="margin-bottom:10px;border:1px solid ${col.cor}33;border-radius:8px;overflow:hidden">
+                    <div style="background:${col.cor}14;padding:5px 9px;display:flex;align-items:center;justify-content:space-between">
+                        <span style="font-size:.74rem;font-weight:800;color:${col.cor}">
+                            <i class="bi bi-receipt me-1"></i>Pedido #${numped}
+                        </span>
+                        ${n > 1 ? `<span style="font-size:.62rem;color:var(--muted)">${n} personalizações</span>` : ''}
+                    </div>
+                    <div style="padding:7px 7px 1px">${inner}</div>
+                </div>`;
+            }).join('');
+        }
 
         return `<div style="flex:0 0 220px;min-width:220px">
             <div style="padding:8px 10px 6px;border-radius:8px 8px 0 0;
@@ -292,7 +314,6 @@ function renderCard(p, col) {
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:4px">
             <div>
                 <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
-                    <span style="font-size:.72rem;font-weight:700;color:${col.cor}">Pedido #${p.numero_pedido}</span>
                     ${tipoTag}
                 </div>
                 ${p.nome_personalizacao
