@@ -316,6 +316,19 @@
 .pdf-tbl td { border-bottom:1px solid #ddd; padding:7px 8px; font-size:12px; color:#000; vertical-align:middle; }
 .pdf-img { width:48px; height:48px; object-fit:cover; border-radius:6px; border:1px solid #ccc; }
 .pdf-noimg { width:48px; height:48px; border-radius:6px; border:1px dashed #ccc; display:flex; align-items:center; justify-content:center; color:#bbb; font-size:18px; }
+/* PDF agrupado por produto: uma imagem maior + tamanhos ao lado */
+.pdf-grupo { display:flex; gap:14px; align-items:flex-start; border:1px solid #e2e2e2; border-radius:8px; padding:12px; margin-bottom:12px; page-break-inside:avoid; }
+.pdf-img-big { width:110px; height:110px; object-fit:cover; border-radius:8px; border:1px solid #ccc; flex-shrink:0; }
+.pdf-noimg-big { width:110px; height:110px; border-radius:8px; border:1px dashed #ccc; display:flex; align-items:center; justify-content:center; color:#bbb; font-size:34px; flex-shrink:0; }
+.pdf-grupo-info { flex:1; min-width:0; }
+.pdf-grupo-nome { font-size:14px; font-weight:800; color:#1a3a5c; margin-bottom:6px; }
+.pdf-tam-tbl { width:100%; border-collapse:collapse; }
+.pdf-tam-tbl th { background:#1a3a5c; color:#fff; font-size:10px; text-transform:uppercase; letter-spacing:.04em; padding:5px 8px; text-align:left; }
+.pdf-tam-tbl td { border-bottom:1px solid #eee; padding:5px 8px; font-size:12px; color:#000; }
+.pdf-tam-tbl tr:last-child td { border-bottom:none; }
+.pdf-tam-tbl .tam-sz { font-weight:700; }
+.pdf-grupo-tot { margin-top:7px; font-size:11px; color:#1a3a5c; font-weight:700; text-align:right; }
+.pdf-total-geral { display:flex; justify-content:space-between; border-top:2px solid #1a3a5c; margin-top:6px; padding-top:10px; font-size:15px; font-weight:800; color:#1a3a5c; }
 
 
 .filter-atk { background:transparent;border:1px solid var(--border);color:var(--muted);font-size:.8rem;padding:4px 12px;border-radius:20px; }
@@ -1330,23 +1343,59 @@ function buildPdfHtml(pedido, itens) {
     const totalPecas = itens.reduce((s,i) => s + (i.quantidade||0), 0);
     const totalValor = itens.reduce((s,i) => s + (i.valor_unit||0) * (i.quantidade||0), 0);
 
-    const linhas = ordenarItensAtacado(itens).map(it => {
-        const img = imagemDaVariante(it.nv_variant_id);
-        const imgCell = img
-            ? `<img class="pdf-img" src="${escHtml(img)}">`
-            : `<div class="pdf-noimg">&#128247;</div>`;
-        const sub = (it.valor_unit||0) * (it.quantidade||0);
-        return `<tr>
-            <td style="width:56px">${imgCell}</td>
-            <td>
-                <div style="font-weight:700">${escHtml(it.produto)}</div>
-                ${it.variante ? `<div style="color:#555;font-size:11px">${escHtml(it.variante)}</div>` : ''}
-                ${it.observacao ? `<div style="color:#8a6d00;font-size:10px;font-style:italic">Obs: ${escHtml(it.observacao)}</div>` : ''}
-            </td>
-            <td style="text-align:center;font-weight:700;width:55px">${it.quantidade}</td>
-            <td style="text-align:right;width:80px">${it.valor_unit ? 'R$ '+fmtMoeda(it.valor_unit) : '—'}</td>
-            <td style="text-align:right;width:90px;font-weight:700">${sub ? 'R$ '+fmtMoeda(sub) : '—'}</td>
-        </tr>`;
+    // Agrupa por produto: uma imagem maior + os tamanhos listados ao lado
+    // (ordenados por nome do produto e, dentro, por tamanho natural P,M,G,GG).
+    const grupos = [];
+    const idxGrupo = {};
+    ordenarItensAtacado(itens).forEach(it => {
+        const chave = (it.produto || '').trim().toLowerCase();
+        if (!(chave in idxGrupo)) {
+            idxGrupo[chave] = grupos.length;
+            grupos.push({ produto: it.produto || '', img: '', itens: [] });
+        }
+        const g = grupos[idxGrupo[chave]];
+        if (!g.img) g.img = imagemDaVariante(it.nv_variant_id) || '';
+        g.itens.push(it);
+    });
+
+    const blocos = grupos.map(g => {
+        const imgCell = g.img
+            ? `<img class="pdf-img-big" src="${escHtml(g.img)}">`
+            : `<div class="pdf-noimg-big">&#128247;</div>`;
+        let gQtd = 0, gVal = 0;
+        const linhasTam = g.itens.map(it => {
+            const qtd = it.quantidade || 0;
+            const sub = (it.valor_unit||0) * qtd;
+            gQtd += qtd; gVal += sub;
+            const partes = (it.variante || '').split(',');
+            const tam    = (partes[0] || '').trim() || '—';
+            const resto  = partes.slice(1).join(',').trim();
+            const obsRow = it.observacao
+                ? `<tr><td colspan="4" style="color:#8a6d00;font-size:10px;font-style:italic;padding-top:0">Obs (${escHtml(tam)}): ${escHtml(it.observacao)}</td></tr>`
+                : '';
+            return `<tr>
+                <td class="tam-sz">${escHtml(tam)}${resto ? ` <span style="color:#888;font-weight:400;font-size:10px">(${escHtml(resto)})</span>` : ''}</td>
+                <td style="text-align:center">${qtd}</td>
+                <td style="text-align:right">${it.valor_unit ? 'R$ '+fmtMoeda(it.valor_unit) : '—'}</td>
+                <td style="text-align:right;font-weight:700">${sub ? 'R$ '+fmtMoeda(sub) : '—'}</td>
+            </tr>${obsRow}`;
+        }).join('');
+        return `<div class="pdf-grupo">
+            ${imgCell}
+            <div class="pdf-grupo-info">
+                <div class="pdf-grupo-nome">${escHtml(g.produto)}</div>
+                <table class="pdf-tam-tbl">
+                    <thead><tr>
+                        <th>Tamanho</th>
+                        <th style="text-align:center;width:50px">Qtd</th>
+                        <th style="text-align:right;width:78px">Unit.</th>
+                        <th style="text-align:right;width:88px">Subtotal</th>
+                    </tr></thead>
+                    <tbody>${linhasTam}</tbody>
+                </table>
+                <div class="pdf-grupo-tot">Subtotal do produto: ${gQtd} peça(s) · R$ ${fmtMoeda(gVal)}</div>
+            </div>
+        </div>`;
     }).join('');
 
     const infoCliente = [
@@ -1375,25 +1424,12 @@ function buildPdfHtml(pedido, itens) {
     <div style="font-size:15px;font-weight:700;color:#000;margin-bottom:2px">${escHtml(pedido.cliente || pedido.nome || '')}</div>
     <div style="font-size:11px;color:#444;margin-bottom:14px">${infoCliente}</div>
 
-    <table class="pdf-tbl">
-        <thead>
-            <tr>
-                <th>Foto</th><th>Produto / Variante</th>
-                <th style="text-align:center">Qtd</th>
-                <th style="text-align:right">Unit.</th>
-                <th style="text-align:right">Subtotal</th>
-            </tr>
-        </thead>
-        <tbody>${linhas}</tbody>
-        <tfoot>
-            <tr>
-                <td colspan="2" style="text-align:right;font-weight:700;border-top:2px solid #1a3a5c">TOTAL</td>
-                <td style="text-align:center;font-weight:800;border-top:2px solid #1a3a5c">${totalPecas}</td>
-                <td style="border-top:2px solid #1a3a5c"></td>
-                <td style="text-align:right;font-weight:800;border-top:2px solid #1a3a5c">R$ ${fmtMoeda(totalValor)}</td>
-            </tr>
-        </tfoot>
-    </table>
+    ${blocos}
+
+    <div class="pdf-total-geral">
+        <span>TOTAL</span>
+        <span>${totalPecas} peça(s) &nbsp;·&nbsp; R$ ${fmtMoeda(totalValor)}</span>
+    </div>
 
     ${pedido.observacao ? `<div style="margin-top:14px;font-size:11px;color:#444"><b>Observação:</b> ${escHtml(pedido.observacao)}</div>` : ''}
     <div style="margin-top:24px;font-size:10px;color:#999;text-align:center">Gerado pelo sistema FutDrop · ${totalPecas} peça(s)</div>
