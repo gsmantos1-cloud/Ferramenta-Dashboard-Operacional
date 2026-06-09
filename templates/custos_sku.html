@@ -616,6 +616,83 @@ async function loadStock() {
     } catch { stockMap = new Map(); }
 }
 
+// Injeta tamanhos EXTRAS (G1, G2...) como variantes virtuais nos produtos.
+// São registros de sku_stock com nv_variant_id NEGATIVO (sintético) ligados ao produto.
+function injetarTamanhosExtras() {
+    if (!Array.isArray(products)) return;
+    const porProduto = new Map();
+    for (const s of stockMap.values()) {
+        if (s.nv_variant_id < 0 && s.nv_product_id) {
+            if (!porProduto.has(s.nv_product_id)) porProduto.set(s.nv_product_id, []);
+            porProduto.get(s.nv_product_id).push(s);
+        }
+    }
+    for (const p of products) {
+        p.variants = (p.variants || []).filter(v => !v._extra);   // evita duplicar em re-load
+        const extras = (porProduto.get(p.id) || []).sort(
+            (a, b) => (a.variante_label || '').localeCompare(b.variante_label || '', 'pt'));
+        for (const s of extras) {
+            p.variants.push({
+                id: s.nv_variant_id,
+                values: [s.variante_label || 'Extra'],
+                sku: s.sku || '',
+                imageUrl: p.imageUrl,
+                _extra: true,
+            });
+        }
+    }
+}
+
+async function addTamanhoExtra(productId, label) {
+    if (!label) {
+        label = prompt('Nome do tamanho extra (ex: G1, G2, XG3):');
+        if (!label || !label.trim()) return;
+    }
+    label = label.trim();
+    const p = products.find(x => x.id === productId);
+    // Sugere um SKU baseado no padrão das variantes existentes
+    let skuBase = '';
+    const comSku = p ? (p.variants || []).find(v => v.sku && !v._extra) : null;
+    if (comSku && comSku.sku) {
+        const partes = comSku.sku.split(' - ');
+        skuBase = (partes.length > 1 ? partes.slice(0, -1).join(' - ') : comSku.sku) + ' - ' + label;
+    }
+    const sku = prompt('SKU do tamanho extra (opcional):', skuBase);
+    if (sku === null) return;   // cancelou
+    try {
+        const r = await fetch('/api/estoque/tamanho-extra', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ nv_product_id: productId, produto_nome: p ? p.name : null,
+                                   variante_label: label, sku: sku.trim() || null }),
+        });
+        const j = await r.json();
+        if (!r.ok) { toast(j.erro || 'Erro ao adicionar tamanho.', false); return; }
+        toast(`Tamanho "${label}" adicionado.`);
+        await loadStock();
+        injetarTamanhosExtras();
+        const exp = document.getElementById(`card-exp-${productId}`);
+        if (exp && p) exp.innerHTML = buildExpandedHtml(p);
+        const sb = document.getElementById(`sbadge-${productId}`); if (sb && p) sb.innerHTML = stockBadgeHtml(p);
+        const tb = document.getElementById(`tbadge-${productId}`); if (tb && p) tb.innerHTML = totalStockBadgeHtml(p);
+        renderStockSummary();
+    } catch (e) { toast('Erro de conexão.', false); }
+}
+
+async function removerTamanhoExtra(vid, productId) {
+    if (!confirm('Remover este tamanho extra?')) return;
+    try {
+        const r = await fetch(`/api/estoque/tamanho-extra/${vid}`, {method: 'DELETE'});
+        if (!r.ok) { toast('Erro ao remover.', false); return; }
+        toast('Tamanho extra removido.');
+        await loadStock();
+        injetarTamanhosExtras();
+        const p = products.find(x => x.id === productId);
+        const exp = document.getElementById(`card-exp-${productId}`);
+        if (exp && p) exp.innerHTML = buildExpandedHtml(p);
+        renderStockSummary();
+    } catch (e) { toast('Erro de conexão.', false); }
+}
+
 async function loadProducts(forceRefresh = false) {
     if (!forceRefresh) { const c = getCached(); if (c) { products = c; return; } }
     const params = new URLSearchParams({ sort_by: sortBy });
@@ -1268,6 +1345,14 @@ function buildExpandedHtml(product) {
                        style="background:rgba(139,92,246,.15);border:1px solid rgba(139,92,246,.4);color:#8b5cf6;border-radius:4px;padding:2px 6px;font-size:.68rem;cursor:pointer;margin-left:2px">
                    <i class="bi bi-stars"></i></button>` : '';
 
+        // Tamanho EXTRA (manual): tag + botão de remover
+        const extraTag = v._extra
+            ? `<span style="font-size:.6rem;background:rgba(240,196,62,.15);color:#f0c43e;border-radius:4px;padding:0 5px;margin-left:5px">extra</span>` : '';
+        const extraDelBtn = v._extra
+            ? `<button onclick="removerTamanhoExtra(${v.id},${product.id});event.stopPropagation()" title="Remover tamanho extra"
+                       style="background:rgba(248,81,73,.12);border:1px solid #f8514944;color:#f85149;border-radius:4px;padding:2px 6px;font-size:.68rem;cursor:pointer;margin-left:2px">
+                   <i class="bi bi-trash"></i></button>` : '';
+
         // Painel de personalização inline (oculto por padrão)
         const persPanel = isPers ? `
         <tr id="pers-panel-${v.id}" style="display:none">
@@ -1325,7 +1410,7 @@ function buildExpandedHtml(product) {
                 <input type="checkbox" id="sel-${v.id}" style="accent-color:var(--blue)">
             </td>
             <td style="padding:6px 8px;vertical-align:middle">${imgHtml}</td>
-            <td style="padding:6px 8px;vertical-align:middle;font-size:.82rem">${escHtml(label)}${nvSkuLbl}</td>
+            <td style="padding:6px 8px;vertical-align:middle;font-size:.82rem">${escHtml(label)}${extraTag}${nvSkuLbl}</td>
             <td style="padding:6px 4px;vertical-align:middle">
                 <input id="sku-${v.id}" type="text" value="${skuVal}" placeholder="SKU…"
                        class="form-control form-control-sm" style="font-size:.78rem;min-width:140px">
@@ -1341,7 +1426,7 @@ function buildExpandedHtml(product) {
                 </select>
             </td>
             <td style="padding:6px 8px;vertical-align:middle">${stockCell}</td>
-            <td style="padding:6px 4px;vertical-align:middle;white-space:nowrap">${histBtn}${persBtn}</td>
+            <td style="padding:6px 4px;vertical-align:middle;white-space:nowrap">${histBtn}${persBtn}${extraDelBtn}</td>
         </tr>${persPanel}`;
     }).join('');
 
@@ -1407,6 +1492,17 @@ function buildExpandedHtml(product) {
                 </thead>
                 <tbody>${rows}</tbody>
             </table>
+        </div>
+
+        <!-- Tamanhos extras (G1, G2...) — variantes manuais que não vêm da NuvemShop -->
+        <div class="d-flex align-items-center gap-2 mt-2" style="flex-wrap:wrap">
+            <span style="font-size:.72rem;color:var(--muted)">Adicionar tamanho extra:</span>
+            <button class="btn btn-sm py-0 px-2" style="font-size:.74rem;background:rgba(240,196,62,.12);border:1px solid #f0c43e44;color:#f0c43e"
+                    onclick="addTamanhoExtra(${product.id},'G1')">+ G1</button>
+            <button class="btn btn-sm py-0 px-2" style="font-size:.74rem;background:rgba(240,196,62,.12);border:1px solid #f0c43e44;color:#f0c43e"
+                    onclick="addTamanhoExtra(${product.id},'G2')">+ G2</button>
+            <button class="btn btn-sm py-0 px-2" style="font-size:.74rem;background:none;border:1px solid var(--border);color:var(--muted)"
+                    onclick="addTamanhoExtra(${product.id},null)">+ outro…</button>
         </div>
     </div>`;
 }
@@ -1657,6 +1753,7 @@ function onCategory(val) {
 async function refresh() {
     clearAllCaches(); expandedId = null; clearSelection(); loading = true; renderAll();
     await Promise.all([loadProducts(true), loadCosts(), loadStock()]);
+    injetarTamanhosExtras();
     loading = false; renderAll();
 }
 
@@ -1983,6 +2080,7 @@ async function init() {
     document.getElementById('bulkFrom').value = new Date().toISOString().slice(0, 10);
     loading = true; renderAll();
     await Promise.all([loadProducts(), loadCosts(), loadStock(), loadCategories(), loadPersConfig()]);
+    injetarTamanhosExtras();
     loading = false; renderAll();
 }
 

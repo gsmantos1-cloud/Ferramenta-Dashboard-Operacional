@@ -2988,6 +2988,50 @@ def api_estoque_get():
     return jsonify([dict(r) for r in rows])
 
 
+@app.route("/api/estoque/tamanho-extra", methods=["POST"])
+@login_required
+def api_estoque_tamanho_extra():
+    """Cria um tamanho EXTRA (ex: G1, G2) para um produto — uma variante manual
+    que não existe na NuvemShop. Usa nv_variant_id SINTÉTICO NEGATIVO para nunca
+    colidir com os ids reais da NuvemShop (sempre positivos)."""
+    data          = request.get_json() or {}
+    nv_product_id = data.get("nv_product_id")
+    produto_nome  = (data.get("produto_nome") or "").strip() or None
+    variante_label= (data.get("variante_label") or "").strip()
+    sku           = (data.get("sku") or "").strip() or None
+    if not nv_product_id or not variante_label:
+        return jsonify({"erro": "nv_product_id e variante_label são obrigatórios"}), 400
+
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        # id sintético negativo único (decrementa do menor existente)
+        menor = conn.execute("SELECT COALESCE(MIN(nv_variant_id), 0) AS m FROM sku_stock").fetchone()["m"]
+        novo_vid = min(menor, 0) - 1
+        conn.execute(
+            """INSERT INTO sku_stock
+               (nv_variant_id, nv_product_id, sku, quantity, min_quantity,
+                produto_nome, variante_label, updated_at)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (novo_vid, nv_product_id, sku, 0, 3, produto_nome, variante_label, agora),
+        )
+        conn.commit()
+    return jsonify({"ok": True, "nv_variant_id": novo_vid}), 201
+
+
+@app.route("/api/estoque/tamanho-extra/<int(signed=True):vid>", methods=["DELETE"])
+@login_required
+def api_estoque_tamanho_extra_delete(vid):
+    """Remove um tamanho extra (só permite ids sintéticos negativos, por segurança)."""
+    if vid >= 0:
+        return jsonify({"erro": "Só é possível remover tamanhos extras (id negativo)"}), 400
+    with get_conn() as conn:
+        conn.execute("DELETE FROM sku_stock           WHERE nv_variant_id=?", (vid,))
+        conn.execute("DELETE FROM sku_costs           WHERE nv_variant_id=?", (vid,))
+        conn.execute("DELETE FROM sku_stock_movements WHERE nv_variant_id=?", (vid,))
+        conn.commit()
+    return jsonify({"ok": True})
+
+
 @app.route("/api/estoque/ajustar", methods=["POST"])
 @login_required
 def api_estoque_ajustar():
