@@ -100,7 +100,7 @@
             <label class="flabel">PRAZO DE ENTREGA</label>
             <input id="fPrazo" type="date" class="form-control form-control-sm">
           </div>
-          <div class="col-md-5">
+          <div class="col-md-4">
             <label class="flabel">OBSERVAÇÃO</label>
             <input id="fObs" type="text" class="form-control form-control-sm" placeholder="Informações adicionais...">
           </div>
@@ -113,7 +113,11 @@
               <option value="a_combinar">A combinar</option>
             </select>
           </div>
-          <div class="col-md-4 d-flex align-items-end">
+          <div class="col-md-2">
+            <label class="flabel">VALOR DO FRETE (R$)</label>
+            <input id="fValorFrete" type="number" min="0" step="0.01" class="form-control form-control-sm" placeholder="0,00">
+          </div>
+          <div class="col-md-3 d-flex align-items-end">
             <div class="form-check form-switch ms-2 mb-1">
               <input class="form-check-input" type="checkbox" id="fPago" role="switch">
               <label class="form-check-label" for="fPago" style="font-size:.83rem;cursor:pointer">
@@ -490,8 +494,9 @@ function renderLista() {
             ? `<span class="pago-badge"><i class="bi bi-check2 me-1"></i>Pago</span>`
             : `<span class="npago-badge"><i class="bi bi-clock me-1"></i>Pendente pgto</span>`;
         const freteLabel = labelFrete(p.frete_tipo);
-        const valorTotalHtml = p.valor_total > 0
-            ? `<span style="font-weight:700;color:#f0e68c;font-size:.82rem"><i class="bi bi-currency-dollar me-1"></i>R$ ${fmtMoeda(p.valor_total)}</span>`
+        const totalComFrete = (p.valor_total || 0) + (p.valor_frete || 0);
+        const valorTotalHtml = totalComFrete > 0
+            ? `<span style="font-weight:700;color:#f0e68c;font-size:.82rem" title="${p.valor_frete > 0 ? 'Inclui frete R$ '+fmtMoeda(p.valor_frete) : 'Sem frete'}"><i class="bi bi-currency-dollar me-1"></i>R$ ${fmtMoeda(totalComFrete)}</span>`
             : '';
         const infos = [
             p.contato ? `<i class="bi bi-whatsapp" style="color:#25d366"></i> ${escHtml(p.contato)}` : '',
@@ -743,6 +748,7 @@ function abrirModal() {
     });
     document.getElementById('fPago').checked = false;
     document.getElementById('fFrete').value = 'a_combinar';
+    document.getElementById('fValorFrete').value = '';
     document.getElementById('itensContainer').innerHTML = '';
     document.getElementById('semItensMsg').style.display = 'block';
     document.getElementById('resumoItens').style.display = 'none';
@@ -779,6 +785,7 @@ async function editarPedido() {
     document.getElementById('fObs').value       = pedido.observacao || '';
     document.getElementById('fPago').checked    = !!pedido.pago;
     document.getElementById('fFrete').value     = pedido.frete_tipo || 'a_combinar';
+    document.getElementById('fValorFrete').value = (pedido.valor_frete && pedido.valor_frete > 0) ? pedido.valor_frete : '';
     document.getElementById('itensContainer').innerHTML = '';
     document.getElementById('semItensMsg').style.display = 'none';
     document.getElementById('erroModal').textContent = '';
@@ -912,6 +919,7 @@ async function salvarPedido() {
         cidade:document.getElementById('fCidade').value.trim(),
         prazo:document.getElementById('fPrazo').value,
         observacao:document.getElementById('fObs').value.trim(),
+        valor_frete:parseFloat(document.getElementById('fValorFrete').value) || 0,
         pago:document.getElementById('fPago').checked,
         frete_tipo:document.getElementById('fFrete').value,
         itens,
@@ -1067,7 +1075,7 @@ function renderDetalhe(pedido, itens) {
         pedido.contato  && `<div class="col-auto"><i class="bi bi-whatsapp me-1" style="color:#25d366"></i>${escHtml(pedido.contato)}</div>`,
         pedido.cep      && `<div class="col-auto"><i class="bi bi-mailbox me-1" style="color:var(--muted)"></i>CEP ${escHtml(pedido.cep)}</div>`,
         pedido.cidade   && `<div class="col-auto"><i class="bi bi-geo-alt me-1" style="color:var(--blue)"></i>${escHtml(pedido.cidade)}</div>`,
-        pedido.frete_tipo && `<div class="col-auto"><span style="font-size:.82rem">${freteIcon} <b>${labelFrete(pedido.frete_tipo)}</b></span></div>`,
+        pedido.frete_tipo && `<div class="col-auto"><span style="font-size:.82rem">${freteIcon} <b>${labelFrete(pedido.frete_tipo)}</b>${pedido.valor_frete > 0 ? ' · R$ '+fmtMoeda(pedido.valor_frete) : ''}</span></div>`,
         pedido.endereco && `<div class="col-12"><i class="bi bi-house me-1" style="color:var(--muted)"></i>${escHtml(pedido.endereco)}${pedido.numero_endereco ? ', Nº '+escHtml(pedido.numero_endereco) : ''}</div>`,
         pedido.prazo    && `<div class="col-auto"><i class="bi bi-calendar2-check me-1" style="color:var(--orange)"></i>Prazo: ${fmtDate(pedido.prazo)}</div>`,
         pedido.observacao && `<div class="col-12"><i class="bi bi-chat-left-text me-1" style="color:var(--muted)"></i>${escHtml(pedido.observacao)}</div>`,
@@ -1135,19 +1143,37 @@ function renderDetalhe(pedido, itens) {
         </tr>`;
     }).join('');
 
-    // Tfoot — total geral (produtos, peças e valor)
+    // Tfoot — total geral (produtos, peças, frete e valor)
     const totalPecas = itens.reduce((s,i) => s + (i.quantidade||0), 0);
     const nProdutos  = itens.length;
-    document.getElementById('detTotais').innerHTML = nProdutos > 0 ? `
+    const frete      = pedido.valor_frete || 0;
+    let totFoot = '';
+    if (nProdutos > 0) {
+        totFoot = `
         <tr style="border-top:2px solid var(--border)">
             <td style="padding:10px 8px;font-size:.82rem;color:var(--text);font-weight:700">
-                TOTAL · ${nProdutos} produto${nProdutos!==1?'s':''}
+                ${frete > 0 ? 'Produtos' : 'TOTAL'} · ${nProdutos} produto${nProdutos!==1?'s':''}
             </td>
             <td style="padding:10px 4px;text-align:center;font-weight:800;color:var(--blue);font-size:1rem">${totalPecas}</td>
             <td style="padding:10px 4px;text-align:right;font-size:.72rem;color:var(--muted)">peças →</td>
             <td style="padding:10px 8px;text-align:right;font-weight:800;color:#f0e68c;font-size:1rem">R$ ${fmtMoeda(somaTotal)}</td>
             <td colspan="4"></td>
-        </tr>` : '';
+        </tr>`;
+        if (frete > 0) {
+            totFoot += `
+            <tr>
+                <td colspan="3" style="padding:4px 8px;text-align:right;font-size:.8rem;color:var(--muted)"><i class="bi bi-truck me-1"></i>+ Frete</td>
+                <td style="padding:4px 8px;text-align:right;font-weight:700;color:#f0e68c;font-size:.9rem">R$ ${fmtMoeda(frete)}</td>
+                <td colspan="4"></td>
+            </tr>
+            <tr style="border-top:1px solid var(--border)">
+                <td colspan="3" style="padding:8px;text-align:right;font-size:.92rem;color:var(--text);font-weight:800">TOTAL c/ frete</td>
+                <td style="padding:8px;text-align:right;font-weight:800;color:#3fb950;font-size:1.05rem">R$ ${fmtMoeda(somaTotal + frete)}</td>
+                <td colspan="4"></td>
+            </tr>`;
+        }
+    }
+    document.getElementById('detTotais').innerHTML = totFoot;
 
     const enviado = pedido.status==='enviado';
     document.getElementById('btnEnviar').style.display  = enviado?'none':'';
@@ -1342,6 +1368,7 @@ function buildPdfHtml(pedido, itens) {
     const numFmt = String(pedido.numero || pedido.id).padStart(2, '0');
     const totalPecas = itens.reduce((s,i) => s + (i.quantidade||0), 0);
     const totalValor = itens.reduce((s,i) => s + (i.valor_unit||0) * (i.quantidade||0), 0);
+    const frete = pedido.valor_frete || 0;
 
     // Agrupa por produto: uma imagem maior + os tamanhos listados ao lado
     // (ordenados por nome do produto e, dentro, por tamanho natural P,M,G,GG).
@@ -1404,7 +1431,7 @@ function buildPdfHtml(pedido, itens) {
         pedido.cep      ? `CEP: ${escHtml(pedido.cep)}` : '',
         pedido.cidade   ? `Cidade: ${escHtml(pedido.cidade)}` : '',
         pedido.endereco ? `Endereço: ${escHtml(pedido.endereco)}${pedido.numero_endereco ? ', Nº '+escHtml(pedido.numero_endereco) : ''}` : '',
-        pedido.frete_tipo ? `Frete: ${labelFrete(pedido.frete_tipo)}` : '',
+        pedido.frete_tipo ? `Frete: ${labelFrete(pedido.frete_tipo)}${pedido.valor_frete > 0 ? ' (R$ '+fmtMoeda(pedido.valor_frete)+')' : ''}` : '',
         pedido.prazo    ? `Prazo: ${fmtDate(pedido.prazo)}` : '',
     ].filter(Boolean).map(x => `<span style="margin-right:16px">${x}</span>`).join('');
 
@@ -1426,9 +1453,16 @@ function buildPdfHtml(pedido, itens) {
 
     ${blocos}
 
+    ${frete > 0 ? `
+    <div style="display:flex;justify-content:space-between;font-size:12px;color:#444;margin-top:6px;padding:0 2px">
+        <span>Subtotal produtos</span><span>R$ ${fmtMoeda(totalValor)}</span>
+    </div>
+    <div style="display:flex;justify-content:space-between;font-size:12px;color:#444;padding:2px 2px">
+        <span>Frete${pedido.frete_tipo ? ' ('+labelFrete(pedido.frete_tipo)+')' : ''}</span><span>R$ ${fmtMoeda(frete)}</span>
+    </div>` : ''}
     <div class="pdf-total-geral">
-        <span>TOTAL</span>
-        <span>${totalPecas} peça(s) &nbsp;·&nbsp; R$ ${fmtMoeda(totalValor)}</span>
+        <span>TOTAL${frete > 0 ? ' c/ frete' : ''}</span>
+        <span>${totalPecas} peça(s) &nbsp;·&nbsp; R$ ${fmtMoeda(totalValor + frete)}</span>
     </div>
 
     ${pedido.observacao ? `<div style="margin-top:14px;font-size:11px;color:#444"><b>Observação:</b> ${escHtml(pedido.observacao)}</div>` : ''}

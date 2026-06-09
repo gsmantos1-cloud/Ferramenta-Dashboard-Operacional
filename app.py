@@ -340,7 +340,8 @@ def init_db():
             try: conn.execute(f"ALTER TABLE atacado_itens ADD COLUMN {col}")
             except Exception: pass
 
-        for col in ["frete_tipo TEXT DEFAULT 'a_combinar'", "numero INTEGER"]:
+        for col in ["frete_tipo TEXT DEFAULT 'a_combinar'", "numero INTEGER",
+                    "valor_frete REAL DEFAULT 0"]:
             try: conn.execute(f"ALTER TABLE atacado_pedidos ADD COLUMN {col}")
             except Exception: pass
 
@@ -4306,11 +4307,15 @@ def api_atacado_criar():
             "SELECT COALESCE(MAX(numero), 0) FROM atacado_pedidos"
         ).fetchone()[0] or 0) + 1
 
+        try:
+            valor_frete = max(float(data.get("valor_frete") or 0), 0)
+        except Exception:
+            valor_frete = 0
         cur = conn.execute(
             """INSERT INTO atacado_pedidos
                (numero, cliente, nome, contato, cep, endereco, numero_endereco, cidade, cpf,
-                observacao, prazo, pago, frete_tipo, criado_por)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                observacao, prazo, pago, frete_tipo, valor_frete, criado_por)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (proximo_numero, cliente,
              data.get("nome",""), contato,
              data.get("cep",""),  data.get("endereco",""),
@@ -4319,6 +4324,7 @@ def api_atacado_criar():
              data.get("observacao",""), data.get("prazo",""),
              1 if data.get("pago") else 0,
              data.get("frete_tipo","a_combinar") or "a_combinar",
+             valor_frete,
              session.get("usuario",""))
         )
         pedido_id = cur.lastrowid
@@ -4416,6 +4422,12 @@ def api_atacado_editar(pid):
             ("observacao", "Observação", data.get("observacao", "") or ""),
             ("frete_tipo", "Frete",      data.get("frete_tipo", "a_combinar") or "a_combinar"),
         ]
+        try:
+            valor_frete = max(float(data.get("valor_frete") or 0), 0)
+        except Exception:
+            valor_frete = 0
+        if float(ped["valor_frete"] or 0) != valor_frete:
+            mudancas.append(f"Valor do frete: R$ {float(ped['valor_frete'] or 0):.2f} → R$ {valor_frete:.2f}")
         chaves = ped.keys()
         for col, label, novo in campos:
             antigo = ped[col] if col in chaves else None
@@ -4431,13 +4443,13 @@ def api_atacado_editar(pid):
         conn.execute(
             """UPDATE atacado_pedidos SET
                  cliente=?, nome=?, contato=?, cpf=?, cep=?, endereco=?, numero_endereco=?, cidade=?,
-                 prazo=?, observacao=?, frete_tipo=?, pago=?, updated_at=?
+                 prazo=?, observacao=?, frete_tipo=?, valor_frete=?, pago=?, updated_at=?
                WHERE id=?""",
             (cliente, data.get("nome", "") or "", contato, data.get("cpf", "") or "",
              data.get("cep", "") or "", data.get("endereco", "") or "",
              data.get("numero_endereco", "") or "", data.get("cidade", "") or "",
              data.get("prazo", "") or "", data.get("observacao", "") or "",
-             data.get("frete_tipo", "a_combinar") or "a_combinar", pago_novo, agora, pid),
+             data.get("frete_tipo", "a_combinar") or "a_combinar", valor_frete, pago_novo, agora, pid),
         )
 
         # ── Itens (diff por id) ────────────────────────────────────────────
