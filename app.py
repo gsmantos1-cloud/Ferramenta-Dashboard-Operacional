@@ -310,6 +310,15 @@ def init_db():
                 tamanho    TEXT    NOT NULL,
                 quantidade INTEGER NOT NULL DEFAULT 0
             );
+
+            CREATE TABLE IF NOT EXISTS compras_historico (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                compra_id   INTEGER NOT NULL,
+                acao        TEXT    NOT NULL,
+                detalhe     TEXT,
+                usuario     TEXT,
+                created_at  TEXT DEFAULT (datetime('now','localtime'))
+            );
         """)
         for col, coltype in [
             ("cliente", "TEXT"), ("total", "TEXT"), ("pagamento", "TEXT"),
@@ -434,6 +443,7 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_atacado_itens_pedido  ON atacado_itens(pedido_id)",
             "CREATE INDEX IF NOT EXISTS idx_atacado_hist_pedido   ON atacado_historico(pedido_id)",
             "CREATE INDEX IF NOT EXISTS idx_compras_tam_compra    ON compras_tamanhos(compra_id)",
+            "CREATE INDEX IF NOT EXISTS idx_compras_hist_compra   ON compras_historico(compra_id)",
         ]
         for idx in indices:
             try: conn.execute(idx)
@@ -4020,6 +4030,23 @@ def api_compras_manual_delete(item_id):
 
 # ── Routes — Compras Registros ────────────────────────────────────────────────
 
+def _log_compra(conn, compra_id, acao, detalhe=None):
+    """Registra uma entrada no histórico de uma compra (auditoria)."""
+    try:
+        conn.execute(
+            "INSERT INTO compras_historico (compra_id, acao, detalhe, usuario) VALUES (?,?,?,?)",
+            (compra_id, acao, detalhe, session.get("usuario", "")),
+        )
+    except Exception:
+        pass
+
+
+def _tamanhos_resumo(tams):
+    """Texto 'G×10, GG×30' a partir de uma lista de {tamanho, quantidade}."""
+    return ", ".join(f"{str(t.get('tamanho','')).upper()}×{int(t.get('quantidade') or 0)}"
+                     for t in tams if int(t.get('quantidade') or 0) > 0)
+
+
 @app.route("/api/compras/registros", methods=["GET"])
 @login_required
 def api_compras_registros_list():
@@ -4096,6 +4123,9 @@ def api_compras_registros_add():
                 "INSERT INTO compras_tamanhos (compra_id, tamanho, quantidade) VALUES (?,?,?)",
                 (cid, str(t["tamanho"]).strip().upper(), int(t["quantidade"]))
             )
+        total_q = sum(int(t["quantidade"]) for t in tamanhos)
+        _log_compra(conn, cid, "criada",
+                    f"{produto} · {total_q} peça(s) ({_tamanhos_resumo(tamanhos)}) × R$ {preco_unit:.2f}")
 
         # ── Atualiza estoque + CMP se solicitado ──────────────────────────
         if atualizar_estoque and preco_unit > 0:
@@ -4201,10 +4231,83 @@ def api_compras_registros_add():
     return jsonify({"ok": True, "id": cid, "estoque_atualizado": estoque_atualizados}), 201
 
 
+@app.route("/api/compras/registros/<int:cid>", methods=["PUT"])
+@login_required
+def api_compras_registros_update(cid):
+    """Edita uma compra (corrige o registro; NÃO re-aplica estoque). Registra o histórico."""
+    data    = request.get_json() or {}
+    produto = (data.get("produto_nome") or "").strip()
+    if not produto:
+        return jsonify({"erro": "Nome do produto obrigatório"}), 400
+    tamanhos = [t for t in (data.get("tamanhos") or []) if int(t.get("quantidade") or 0) > 0]
+    if not tamanhos:
+        return jsonify({"erro": "Informe ao menos um tamanho com quantidade > 0"}), 400
+
+    preco_unit  = float(data.get("preco_unit") or 0)
+    fornecedor  = (data.get("fornecedor") or "").strip() or None
+    observacao  = (data.get("observacao") or "").strip() or None
+    data_compra = data.get("data") or date.today().isoformat()
+
+    with get_conn() as conn:
+        ant = conn.execute("SELECT * FROM compras_registros WHERE id=?", (cid,)).fetchone()
+        if not ant:
+            return jsonify({"erro": "Compra não encontrada"}), 404
+        ant_tams = conn.execute(
+            "SELECT tamanho, quantidade FROM compras_tamanhos WHERE compra_id=? ORDER BY tamanho", (cid,)
+        ).fetchall()
+        ant_resumo  = _tamanhos_resumo([dict(t) for t in ant_tams])
+        novo_resumo = _tamanhos_resumo(tamanhos)
+
+        mud = []
+        if (ant["produto_nome"] or "") != produto:
+            mud.append(f'produto: "{ant["produto_nome"] or "—"}" → "{produto}"')
+        if (ant["fornecedor"] or None) != fornecedor:
+            mud.append(f'fornecedor: "{ant["fornecedor"] or "—"}" → "{fornecedor or "—"}"')
+        if float(ant["preco_unit"] or 0) != preco_unit:
+            mud.append(f'preço: R$ {float(ant["preco_unit"] or 0):.2f} → R$ {preco_unit:.2f}')
+        if (ant["data"] or "") != data_compra:
+            mud.append(f'data: {ant["data"]} → {data_compra}')
+        if (ant["observacao"] or None) != observacao:
+            mud.append("observação alterada")
+        if ant_resumo != novo_resumo:
+            mud.append(f'tamanhos: {ant_resumo or "—"} → {novo_resumo or "—"}')
+
+        conn.execute(
+            """UPDATE compras_registros
+               SET data=?, produto_nome=?, fornecedor=?, preco_unit=?, observacao=?
+               WHERE id=?""",
+            (data_compra, produto, fornecedor, preco_unit, observacao, cid),
+        )
+        conn.execute("DELETE FROM compras_tamanhos WHERE compra_id=?", (cid,))
+        for t in tamanhos:
+            conn.execute(
+                "INSERT INTO compras_tamanhos (compra_id, tamanho, quantidade) VALUES (?,?,?)",
+                (cid, str(t["tamanho"]).strip().upper(), int(t["quantidade"]))
+            )
+        if mud:
+            _log_compra(conn, cid, "editada", "; ".join(mud))
+        conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/compras/registros/<int:cid>/historico", methods=["GET"])
+@login_required
+def api_compras_historico(cid):
+    """Histórico de modificações de uma compra."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT acao, detalhe, usuario, created_at FROM compras_historico WHERE compra_id=? ORDER BY id DESC",
+            (cid,),
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
 @app.route("/api/compras/registros/<int:cid>", methods=["DELETE"])
 @login_required
 def api_compras_registros_delete(cid):
     with get_conn() as conn:
+        reg = conn.execute("SELECT produto_nome FROM compras_registros WHERE id=?", (cid,)).fetchone()
+        _log_compra(conn, cid, "excluida", (reg["produto_nome"] if reg else "") or "Compra excluída")
         conn.execute("DELETE FROM compras_tamanhos  WHERE compra_id=?", (cid,))
         conn.execute("DELETE FROM compras_registros WHERE id=?", (cid,))
         conn.commit()
