@@ -661,9 +661,13 @@ function selecionarProduto(prodId) {
     inputEl.value = prod.name;
     inputEl.dataset.prodId = prodId;
     setItemImg(rowId, prod.imageUrl);   // mostra a imagem ao lado já na seleção
+    _popularVariantes(rowId, prod);
+}
 
-    // Preenche o select de variantes
+// Preenche o <select> de variantes de uma linha a partir do produto do catálogo
+function _popularVariantes(rowId, prod) {
     const varSel = document.getElementById(`ivar-${rowId}`);
+    if (!varSel) return;
     varSel.innerHTML = '<option value="">Variante...</option>';
     prod.variants.forEach(v => {
         const stock = v.stock?.quantity || 0;
@@ -689,6 +693,55 @@ function setItemImg(rowId, url) {
     if (!img) return;
     if (url) { img.src = url; img.style.display = ''; }
     else { img.removeAttribute('src'); img.style.display = 'none'; }
+}
+
+// Duplica uma linha de item (mesmo produto/variante/quantidades) — economiza
+// adicionar o mesmo produto do zero, ideal para vários tamanhos.
+function duplicarItem(n) {
+    const origProd = document.getElementById(`iprod-${n}`);
+    if (!origProd || !origProd.value.trim()) { addItem(); return; }
+    const prodNome = origProd.value;
+    const prodId   = origProd.dataset.prodId;
+    const origVar  = document.getElementById(`ivar-${n}`);
+    const varVal   = origVar ? origVar.value : '';
+    const varOpt   = origVar ? origVar.options[origVar.selectedIndex] : null;
+    const est  = document.getElementById(`iest-${n}`)?.value  || 0;
+    const forn = document.getElementById(`iforn-${n}`)?.value || 0;
+    const vu   = document.getElementById(`ivu-${n}`)?.value   || '';
+    const obs  = document.getElementById(`iobs-${n}`)?.value  || '';
+
+    addItem();
+    const m = itemCount;
+    document.getElementById(`iprod-${m}`).value = prodNome;
+
+    const prod = prodId ? catalogoProdutos.find(p => String(p.id) === String(prodId)) : null;
+    if (prod) {
+        document.getElementById(`iprod-${m}`).dataset.prodId = prod.id;
+        _popularVariantes(m, prod);
+        const varSel = document.getElementById(`ivar-${m}`);
+        varSel.value = varVal;
+        const v = prod.variants.find(x => String(x.id) === String(varVal));
+        setItemImg(m, (v && v.imageUrl) || prod.imageUrl);
+    } else if (varOpt) {
+        // Item manual (sem catálogo): copia a variante como estava
+        const varSel = document.getElementById(`ivar-${m}`);
+        varSel.innerHTML = '';
+        const opt = document.createElement('option');
+        opt.value = varVal;
+        opt.textContent = varOpt.textContent;
+        opt.dataset.label = varOpt.dataset?.label || '';
+        opt.selected = true;
+        varSel.appendChild(opt);
+        varSel.disabled = false;
+    }
+
+    document.getElementById(`iest-${m}`).value  = est;
+    document.getElementById(`iforn-${m}`).value = forn;
+    document.getElementById(`ivu-${m}`).value   = vu;
+    const obsEl = document.getElementById(`iobs-${m}`);
+    if (obsEl) obsEl.value = obs;
+    atualizarTotal(`${m}`);
+    document.getElementById(`ivar-${m}`)?.focus();   // foca na variante p/ trocar o tamanho
 }
 
 function atualizarLimiteEstoque(rowId) {
@@ -849,6 +902,9 @@ function addItem() {
                        oninput="atualizarSubtotal('${n}')" title="Valor unitário em R$" style="width:85px">
                 <span id="isub-${n}" style="font-size:.63rem;color:#f0e68c;margin-top:1px"></span>
             </div>
+            <button onclick="duplicarItem(${n})" style="background:none;border:none;color:#58a6ff;cursor:pointer;flex-shrink:0" title="Duplicar produto">
+                <i class="bi bi-files"></i>
+            </button>
             <button onclick="removerItem(${n})" style="background:none;border:none;color:var(--muted);cursor:pointer;flex-shrink:0" title="Remover">
                 <i class="bi bi-x-lg"></i>
             </button>
