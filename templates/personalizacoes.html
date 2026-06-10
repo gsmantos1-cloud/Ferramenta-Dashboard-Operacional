@@ -41,7 +41,7 @@
 </div>
 
 <!-- Kanban -->
-<div style="overflow-x:auto;padding-bottom:1rem">
+<div style="overflow:auto;max-height:calc(100vh - 230px);padding-bottom:1rem">
     <div id="kanban" class="d-flex gap-3" style="min-width:900px;align-items:flex-start"></div>
 </div>
 
@@ -321,8 +321,8 @@ function renderKanban() {
         }
 
         return `<div style="flex:0 0 220px;min-width:220px">
-            <div style="padding:8px 10px 6px;border-radius:8px 8px 0 0;
-                        background:${col.bg};border:1px solid ${col.cor}44;border-bottom:none;
+            <div style="position:sticky;top:0;z-index:3;padding:8px 10px 6px;border-radius:8px 8px 0 0;
+                        background:var(--card-bg);border:1px solid ${col.cor}44;border-bottom:2px solid ${col.cor}66;
                         display:flex;align-items:center;justify-content:space-between">
                 <span style="font-size:.72rem;font-weight:700;letter-spacing:.07em;color:${col.cor}">
                     <i class="bi ${col.icone} me-1"></i>${col.status}
@@ -331,8 +331,7 @@ function renderKanban() {
                              font-size:.7rem;font-weight:700;padding:1px 7px">${itens.length}</span>
             </div>
             <div style="border:1px solid ${col.cor}33;border-top:none;border-radius:0 0 8px 8px;
-                        background:rgba(255,255,255,.015);padding:8px;min-height:80px;
-                        max-height:calc(100vh - 250px);overflow-y:auto">
+                        background:rgba(255,255,255,.015);padding:8px;min-height:80px">
                 ${cards}
             </div>
         </div>`;
