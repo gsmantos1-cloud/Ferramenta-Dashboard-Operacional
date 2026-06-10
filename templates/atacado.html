@@ -660,6 +660,7 @@ function selecionarProduto(prodId) {
 
     inputEl.value = prod.name;
     inputEl.dataset.prodId = prodId;
+    setItemImg(rowId, prod.imageUrl);   // mostra a imagem ao lado já na seleção
 
     // Preenche o select de variantes
     const varSel = document.getElementById(`ivar-${rowId}`);
@@ -675,7 +676,19 @@ function selecionarProduto(prodId) {
         varSel.appendChild(opt);
     });
     varSel.disabled = false;
-    varSel.onchange = () => atualizarLimiteEstoque(rowId);
+    varSel.onchange = () => {
+        atualizarLimiteEstoque(rowId);
+        const v = prod.variants.find(x => String(x.id) === String(varSel.value));
+        setItemImg(rowId, (v && v.imageUrl) || prod.imageUrl);  // imagem da variante, se houver
+    };
+}
+
+// Mostra/atualiza a miniatura do produto na linha do item
+function setItemImg(rowId, url) {
+    const img = document.getElementById(`iimg-${rowId}`);
+    if (!img) return;
+    if (url) { img.src = url; img.style.display = ''; }
+    else { img.removeAttribute('src'); img.style.display = 'none'; }
 }
 
 function atualizarLimiteEstoque(rowId) {
@@ -816,6 +829,8 @@ function addItem() {
     div.style.gap = '5px';
     div.innerHTML = `
         <div style="display:flex;align-items:center;gap:8px">
+            <img id="iimg-${n}" alt="" onclick="abrirImagemGrande(this.src)" title="Clique para ampliar"
+                 style="width:40px;height:40px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0;display:none;cursor:zoom-in">
             <input type="text" class="inp-prod" id="iprod-${n}" placeholder="Buscar produto..." autocomplete="off"
                    oninput="mostrarDropdown(this,'${n}')" onkeydown="navegarDropdown(event, this, '${n}')">
             <select class="inp-var" id="ivar-${n}" disabled style="flex:2">
@@ -860,6 +875,7 @@ function addItemPreenchido(it) {
     if (row) row.dataset.itemId = it.id;   // id do item existente
 
     document.getElementById(`iprod-${n}`).value = it.produto || '';
+    setItemImg(n, imagemDaVariante(it.nv_variant_id));   // imagem ao lado do nome na edição
 
     // Variante atual como opção selecionada
     const varSel = document.getElementById(`ivar-${n}`);
