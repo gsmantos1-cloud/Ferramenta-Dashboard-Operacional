@@ -160,6 +160,18 @@ const TIPO_TAG = {
 
 let todos = [];
 
+// Pedidos com os detalhes minimizados (persiste no navegador entre recargas)
+let pedidosColapsados = new Set();
+try { pedidosColapsados = new Set(JSON.parse(localStorage.getItem('persColapsados') || '[]')); } catch {}
+
+function toggleColapsarPedido(numped) {
+    numped = String(numped);
+    if (pedidosColapsados.has(numped)) pedidosColapsados.delete(numped);
+    else pedidosColapsados.add(numped);
+    try { localStorage.setItem('persColapsados', JSON.stringify([...pedidosColapsados])); } catch {}
+    renderKanban();   // re-renderiza local, sem buscar no banco (zero leitura)
+}
+
 function toast(msg, ok = true) {
     const el = document.getElementById('toast');
     el.className = `toast align-items-center border-0 text-bg-${ok ? 'success' : 'danger'}`;
@@ -289,14 +301,21 @@ function renderKanban() {
             cards = Array.from(porPedido.entries()).map(([numped, pers]) => {
                 const inner = pers.map(p => renderCard(p, col)).join('');
                 const n = pers.length;
+                const colapsado = pedidosColapsados.has(String(numped));
                 return `<div style="margin-bottom:10px;border:1px solid ${col.cor}33;border-radius:8px;overflow:hidden">
-                    <div style="background:${col.cor}14;padding:5px 9px;display:flex;align-items:center;justify-content:space-between">
+                    <div style="background:${col.cor}14;padding:5px 9px;display:flex;align-items:center;justify-content:space-between;gap:6px">
                         <span style="font-size:.74rem;font-weight:800;color:${col.cor}">
                             <i class="bi bi-receipt me-1"></i>Pedido #${numped}
                         </span>
-                        ${n > 1 ? `<span style="font-size:.62rem;color:var(--muted)">${n} personalizações</span>` : ''}
+                        <div style="display:flex;align-items:center;gap:8px">
+                            ${n > 1 ? `<span style="font-size:.62rem;color:var(--muted)">${n} pers.</span>` : ''}
+                            <button onclick="toggleColapsarPedido('${numped}')" title="${colapsado ? 'Mostrar detalhes' : 'Minimizar detalhes'}"
+                                    style="background:none;border:none;color:${col.cor};cursor:pointer;font-size:.95rem;line-height:1;padding:0">
+                                <i class="bi bi-${colapsado ? 'chevron-down' : 'chevron-up'}"></i>
+                            </button>
+                        </div>
                     </div>
-                    <div style="padding:7px 7px 1px">${inner}</div>
+                    <div style="padding:7px 7px 1px;${colapsado ? 'display:none' : ''}">${inner}</div>
                 </div>`;
             }).join('');
         }
