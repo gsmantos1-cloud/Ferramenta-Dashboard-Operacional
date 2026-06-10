@@ -305,7 +305,7 @@ function renderKanban() {
                 return `<div style="margin-bottom:10px;border:1px solid ${col.cor}33;border-radius:8px;overflow:hidden">
                     <div style="background:${col.cor}14;padding:5px 9px;display:flex;align-items:center;justify-content:space-between;gap:6px">
                         <span style="font-size:.74rem;font-weight:800;color:${col.cor}">
-                            <i class="bi bi-receipt me-1"></i>Pedido #${numped}
+                            <i class="bi bi-receipt me-1"></i>Pedido #${String(numped).replace(/^#+/, '')}
                         </span>
                         <div style="display:flex;align-items:center;gap:8px">
                             ${n > 1 ? `<span style="font-size:.62rem;color:var(--muted)">${n} pers.</span>` : ''}
@@ -331,7 +331,8 @@ function renderKanban() {
                              font-size:.7rem;font-weight:700;padding:1px 7px">${itens.length}</span>
             </div>
             <div style="border:1px solid ${col.cor}33;border-top:none;border-radius:0 0 8px 8px;
-                        background:rgba(255,255,255,.015);padding:8px;min-height:80px">
+                        background:rgba(255,255,255,.015);padding:8px;min-height:80px;
+                        max-height:calc(100vh - 250px);overflow-y:auto">
                 ${cards}
             </div>
         </div>`;
