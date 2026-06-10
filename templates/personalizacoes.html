@@ -167,7 +167,17 @@ function toast(msg, ok = true) {
     bootstrap.Toast.getOrCreateInstance(el, { delay: 3000 }).show();
 }
 
+// ── Atualização automática (vê mudanças de outra pessoa quase em tempo real) ──
+let _persVersion = null;
+
 async function carregar() {
+    // Lê a versão ANTES da lista: se algo mudar durante a carga, o baseline fica
+    // "atrasado" e o próximo poll recarrega — assim nunca se perde uma atualização.
+    let vAntes = _persVersion;
+    try {
+        const rv = await fetch('/api/personalizacoes/version');
+        vAntes = (await rv.json()).v;
+    } catch {}
     try {
         const r = await fetch('/api/personalizacoes');
         todos = await r.json();
@@ -176,6 +186,19 @@ async function carregar() {
     } catch {
         toast('Erro ao carregar personalizações.', false);
     }
+    _persVersion = vAntes;
+}
+
+async function checarVersao() {
+    try {
+        const r = await fetch('/api/personalizacoes/version');
+        const v = (await r.json()).v;
+        if (_persVersion === null) { _persVersion = v; return; }
+        if (v !== _persVersion) {     // outra pessoa mudou algo → recarrega a lista
+            await carregar();
+            carregarPersBadge();
+        }
+    } catch {}
 }
 
 // ── Filtros (por nome, número e data) ──────────────────────────────────────────
@@ -503,5 +526,11 @@ async function verHistorico(id) {
 }
 
 carregar();
+
+// Verifica a cada 7s se outra pessoa mudou algo (só com a aba visível, para
+// não gastar leituras à toa). A checagem lê só 1 linha; recarrega a lista
+// inteira apenas quando o contador muda.
+setInterval(() => { if (!document.hidden) checarVersao(); }, 7000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checarVersao(); });
 </script>
 {% endblock %}

@@ -1071,6 +1071,21 @@ def _log_pers(conn, pers_id, numero_pedido, acao, detalhe=None):
         pass
 
 
+def _bump_pers_version(conn):
+    """Incrementa o contador de versão das personalizações em config.
+    As telas abertas leem só esse contador (1 linha) para detectar mudanças
+    de outra pessoa em tempo quase real — sem reler a lista toda a cada poll."""
+    try:
+        row = conn.execute("SELECT valor FROM config WHERE chave='pers_version'").fetchone()
+        v = (int(row["valor"]) if row and row["valor"] else 0) + 1
+        conn.execute(
+            "INSERT OR REPLACE INTO config (chave, valor) VALUES ('pers_version', ?)",
+            (str(v),),
+        )
+    except Exception:
+        pass
+
+
 def _sync_personalizacoes(conn):
     """Garante que todo pedido ativo com categoria='Personalizado' tenha entrada em personalizacoes."""
     pers_rows = conn.execute(
@@ -1083,6 +1098,7 @@ def _sync_personalizacoes(conn):
            WHERE ativo = 1 AND categoria = 'Personalizado'"""
     ).fetchall()
 
+    criou = False
     for p in novos:
         if p["numero"] not in ja_tem:
             cur = conn.execute(
@@ -1093,6 +1109,9 @@ def _sync_personalizacoes(conn):
             )
             _log_pers(conn, cur.lastrowid, p["numero"], "criada",
                       "Criada automaticamente (venda do varejo)")
+            criou = True
+    if criou:
+        _bump_pers_version(conn)
 
 
 # ── Routes — API ──────────────────────────────────────────────────────────────
@@ -1841,6 +1860,16 @@ def get_personalizacoes():
     return jsonify([dict(r) for r in rows])
 
 
+@app.route("/api/personalizacoes/version", methods=["GET"])
+@login_required
+def personalizacoes_version():
+    """Contador leve (1 linha) para as telas detectarem mudanças de outra pessoa
+    sem reler a lista inteira. Muda a cada criação/edição/status/exclusão."""
+    with get_conn() as conn:
+        row = conn.execute("SELECT valor FROM config WHERE chave='pers_version'").fetchone()
+    return jsonify({"v": int(row["valor"]) if row and row["valor"] else 0})
+
+
 @app.route("/api/personalizacoes", methods=["POST"])
 @login_required
 def criar_personalizacao():
@@ -1863,6 +1892,7 @@ def criar_personalizacao():
         )
         _log_pers(conn, cur.lastrowid, numero, "criada",
                   f"Criada manualmente ({tipo})")
+        _bump_pers_version(conn)
     return jsonify({"mensagem": "Personalização criada", "id": cur.lastrowid}), 201
 
 
@@ -1894,6 +1924,7 @@ def atualizar_pers_status(pid):
             _log_pers(conn, pid, row["numero_pedido"],
                       "retrocesso" if voltou else "status",
                       f"{anterior} {seta} {novo}")
+            _bump_pers_version(conn)
     return jsonify({"status": novo})
 
 
@@ -1907,6 +1938,7 @@ def deletar_personalizacao(pid):
         conn.execute("DELETE FROM personalizacoes WHERE id = ?", (pid,))
         if row:
             _log_pers(conn, pid, row["numero_pedido"], "excluida", "Personalização excluída")
+        _bump_pers_version(conn)
     return jsonify({"mensagem": "Personalização excluída"})
 
 
@@ -1966,6 +1998,7 @@ def editar_personalizacao(pid):
             mudancas.append(f"tipo: {row['tipo'] or 'varejo'} → {novo_tipo}")
         if mudancas:
             _log_pers(conn, pid, row["numero_pedido"], "editada", "; ".join(mudancas))
+            _bump_pers_version(conn)
     return jsonify({"mensagem": "Atualizado"})
 
 
