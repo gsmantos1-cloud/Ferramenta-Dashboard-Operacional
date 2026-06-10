@@ -311,9 +311,9 @@
     display: block !important;
     position: absolute; left: 0; top: 0; width: 100%;
     background: #fff; color: #000;
-    padding: 24px 28px; font-family: Arial, Helvetica, sans-serif;
+    padding: 0; font-family: Arial, Helvetica, sans-serif;
   }
-  @page { size: A4 portrait; margin: 12mm; }
+  @page { size: A4 portrait; margin: 8mm; }
 }
 .pdf-tbl { width:100%; border-collapse:collapse; }
 .pdf-tbl th { background:#1a3a5c; color:#fff; font-size:11px; text-transform:uppercase; letter-spacing:.04em; padding:7px 8px; text-align:left; }
@@ -1422,12 +1422,25 @@ async function gerarPdfPedido() {
             ? Promise.resolve()
             : new Promise(res => { img.onload = img.onerror = res; setTimeout(res, 4000); })));
 
+        // ── Escala para caber em UMA página A4, no maior tamanho possível ──
+        const PAGE_W = 733;    // largura útil (A4, margem 8mm) em px @96dpi
+        const PAGE_H = 1030;   // altura útil em px (com folga p/ não vazar p/ 2ª pág.)
+        area.style.zoom = '';
+        const estiloOrig = area.style.cssText;
+        area.style.cssText = 'display:block;position:fixed;left:-10000px;top:0;visibility:hidden;'
+                           + 'width:' + PAGE_W + 'px;padding:0;box-sizing:border-box;'
+                           + 'background:#fff;font-family:Arial,Helvetica,sans-serif';
+        const alturaConteudo = area.scrollHeight;
+        area.style.cssText = estiloOrig;
+        area.style.zoom = Math.min(1, PAGE_H / Math.max(alturaConteudo, 1));
+
         // O nome sugerido do arquivo PDF vem do título da página
         const numFmt = String(pedido.numero || pedido.id).padStart(2, '0');
         const tituloOrig = document.title;
         document.title = `FutDrop - Pedido Atacado ${numFmt}`;
         window.print();
         document.title = tituloOrig;
+        area.style.zoom = '';
     } catch(e) {
         alert('Erro ao gerar PDF.');
     } finally {
