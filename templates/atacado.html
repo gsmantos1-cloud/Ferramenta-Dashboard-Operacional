@@ -424,6 +424,7 @@ let pedidos = [];
 let filtroAtual = 'todos';
 let pedidoAbertoId = null;
 let itemCount = 0;
+let detalheItens = [];   // itens do pedido aberto (p/ recalcular sem buscar no servidor)
 let editandoPedidoId = null;   // null = criando; id = editando
 
 // Cache de produtos + estoque (carrega uma vez)
@@ -492,6 +493,43 @@ function renderContadores() {
             <div class="val" style="color:${i.color}">${cnt[i.s]}</div>
             <div class="lbl">${i.label}</div>
         </div>`).join('');
+}
+
+// Re-renderiza contadores + lista a partir dos dados em memória (sem buscar no servidor)
+function renderLocal() {
+    renderContadores();
+    renderLista();
+}
+
+// Recalcula o card do pedido aberto pelos itens em memória e re-renderiza (instantâneo)
+function _sincronizarCardLocal() {
+    const p = pedidos.find(x => x.id === pedidoAbertoId);
+    if (p) {
+        const totItens = detalheItens.length;
+        const sepItens = detalheItens.filter(i => i.separado).length;
+        p.total_qty    = detalheItens.reduce((s,i)=>s+(i.quantidade||0), 0);
+        p.qty_separada = detalheItens.reduce((s,i)=>s+(i.separado?(i.quantidade||0):0), 0);
+        if (p.status !== 'enviado') {
+            p.status = (sepItens === totItens && totItens > 0) ? 'separado'
+                     : (sepItens > 0 ? 'separando' : 'pendente');
+        }
+    }
+    renderLocal();
+}
+
+// Atualiza a barra de progresso do modal a partir dos itens em memória (sem buscar)
+function _atualizarBarraProgresso() {
+    const totalQty = detalheItens.reduce((s,i)=>s+(i.quantidade||0), 0);
+    const sepQty   = detalheItens.reduce((s,i)=>s+(i.separado?(i.quantidade||0):0), 0);
+    const pct = totalQty>0?Math.round(sepQty/totalQty*100):0;
+    const lbl = document.getElementById('detProgressLabel');
+    const bar = document.getElementById('detProgressBar');
+    if (lbl) lbl.textContent = `${sepQty}/${totalQty} unidades`;
+    if (bar) { bar.style.width = pct+'%'; bar.style.background = pct===100?'var(--green)':pct>0?'var(--orange)':'var(--border)'; }
+    const enviado = (pedidos.find(x => x.id === pedidoAbertoId)?.status) === 'enviado';
+    const be = document.getElementById('btnEnviar'), br = document.getElementById('btnReabrir');
+    if (be) be.style.display = enviado?'none':'';
+    if (br) br.style.display = enviado?'':'none';
 }
 
 function renderLista() {
@@ -1078,6 +1116,7 @@ async function abrirDetalhe(id) {
     // Busca só o pedido (rápido) e mostra o modal IMEDIATAMENTE
     const r = await fetch(`/api/atacado/pedidos/${id}`);
     const {pedido, itens, anexos} = await r.json();
+    detalheItens = itens || [];
     renderDetalhe(pedido, itens);
     renderAnexos(anexos);
     new bootstrap.Modal(document.getElementById('modalDetalhe')).show();
@@ -1498,8 +1537,7 @@ async function descontarTudo() {
         }
         alert(msg);
 
-        await abrirDetalhe(pedidoAbertoId);
-        carregar();
+        await abrirDetalhe(pedidoAbertoId);   // recarrega só o detalhe (a lista não muda)
     } catch(e) {
         alert('Erro de conexão.');
     } finally {
@@ -1517,9 +1555,16 @@ async function toggleSeparado(itemId, novoVal) {
     label.style.color = novoVal?'var(--green)':'var(--muted)';
     row.classList.toggle('item-separado', !!novoVal);
     tog.onclick = () => toggleSeparado(itemId, novoVal?0:1);
-    await fetch(`/api/atacado/itens/${itemId}/separado`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({separado:!!novoVal})});
-    await atualizarProgresso();
-    carregar();
+    // Atualização instantânea (em memória) — sem buscar nada no servidor
+    const it = detalheItens.find(i => i.id === itemId);
+    if (it) it.separado = novoVal ? 1 : 0;
+    _atualizarBarraProgresso();
+    _sincronizarCardLocal();
+    // Persiste em segundo plano; só recarrega se der erro
+    try {
+        const r = await fetch(`/api/atacado/itens/${itemId}/separado`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({separado:!!novoVal})});
+        if (!r.ok) throw 0;
+    } catch(e) { carregar(); }
 }
 
 async function atualizarProgresso() {
@@ -1539,30 +1584,56 @@ async function atualizarProgresso() {
 
 async function togglePago() {
     if (!pedidoAbertoId) return;
+    const id = pedidoAbertoId;
     const pago = document.getElementById('detPago').checked;
-    await fetch(`/api/atacado/pedidos/${pedidoAbertoId}/pago`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({pago})});
     document.getElementById('detPagoBadge').innerHTML = pago
         ? `<span class="pago-badge"><i class="bi bi-check2 me-1"></i>Pago</span>`
         : `<span class="npago-badge">Pgto pendente</span>`;
-    carregar();
+    const p = pedidos.find(x => x.id === id);
+    if (p) p.pago = pago ? 1 : 0;
+    renderLocal();
+    try {
+        const r = await fetch(`/api/atacado/pedidos/${id}/pago`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({pago})});
+        if (!r.ok) throw 0;
+    } catch(e) { carregar(); }
 }
 
 async function marcarEnviado() {
     if (!confirm('Marcar este pedido como ENVIADO?')) return;
-    await fetch(`/api/atacado/pedidos/${pedidoAbertoId}/enviado`,{method:'PUT'});
+    const id = pedidoAbertoId;
     bootstrap.Modal.getInstance(document.getElementById('modalDetalhe')).hide();
-    carregar();
+    const p = pedidos.find(x => x.id === id);
+    if (p) p.status = 'enviado';
+    renderLocal();
+    try {
+        const r = await fetch(`/api/atacado/pedidos/${id}/enviado`,{method:'PUT'});
+        if (!r.ok) throw 0;
+    } catch(e) { carregar(); }
 }
 async function reabrirPedido() {
-    await fetch(`/api/atacado/pedidos/${pedidoAbertoId}/reabrir`,{method:'PUT'});
+    const id = pedidoAbertoId;
     document.getElementById('btnEnviar').style.display=''; document.getElementById('btnReabrir').style.display='none';
-    carregar();
+    const p = pedidos.find(x => x.id === id);
+    if (p) {
+        const tot = detalheItens.length, sep = detalheItens.filter(i=>i.separado).length;
+        p.status = (sep===tot && tot>0)?'separado':(sep>0?'separando':'pendente');
+    }
+    renderLocal();
+    try {
+        const r = await fetch(`/api/atacado/pedidos/${id}/reabrir`,{method:'PUT'});
+        if (!r.ok) throw 0;
+    } catch(e) { carregar(); }
 }
 async function deletarPedido() {
     if (!confirm('Excluir este pedido permanentemente?')) return;
-    await fetch(`/api/atacado/pedidos/${pedidoAbertoId}`,{method:'DELETE'});
+    const id = pedidoAbertoId;
     bootstrap.Modal.getInstance(document.getElementById('modalDetalhe')).hide();
-    carregar();
+    pedidos = pedidos.filter(x => x.id !== id);
+    renderLocal();
+    try {
+        const r = await fetch(`/api/atacado/pedidos/${id}`,{method:'DELETE'});
+        if (!r.ok) throw 0;
+    } catch(e) { carregar(); }
 }
 
 // ── Histórico de edições ──────────────────────────────────────────────
