@@ -4582,6 +4582,25 @@ def api_atacado_anexo_delete(aid):
     return jsonify({"ok": True})
 
 
+@app.route("/api/atacado/itens/<int:iid>/imagem", methods=["PUT"])
+@login_required
+def api_atacado_item_imagem(iid):
+    """Define/remove a imagem manual de um item direto pelo detalhe do pedido."""
+    data   = request.get_json(silent=True) or {}
+    imagem = (data.get("imagem") or "").strip() or None
+    if imagem and len(imagem) > 800_000:
+        return jsonify({"erro": "Imagem muito grande"}), 400
+    with get_conn() as conn:
+        it = conn.execute("SELECT pedido_id, produto FROM atacado_itens WHERE id=?", (iid,)).fetchone()
+        if not it:
+            return jsonify({"erro": "Item não encontrado"}), 404
+        conn.execute("UPDATE atacado_itens SET imagem=? WHERE id=?", (imagem, iid))
+        _log_atacado(conn, it["pedido_id"],
+                     "Imagem do produto " + ("definida" if imagem else "removida"), it["produto"])
+        conn.commit()
+    return jsonify({"ok": True})
+
+
 def _log_atacado(conn, pid, descricao, detalhes=None, usuario=None):
     """Registra uma entrada no histórico do pedido de atacado."""
     conn.execute(

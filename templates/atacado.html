@@ -1167,10 +1167,58 @@ function atualizarImagensDetalhe(itens) {
         const img = item.imagem || imagemDaVariante(item.nv_variant_id);
         if (!img) return;
         const span = document.getElementById(`itemimg-${item.id}`);
-        if (span) span.innerHTML =
-            `<img src="${escHtml(img)}" onclick="abrirImagemGrande(this.src)" title="Clique para ampliar"
-               style="width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0;cursor:zoom-in">`;
+        if (span) span.innerHTML = _imgBoxDetalhe(item.id, img);
     });
+}
+
+// Caixa de imagem no DETALHE: clicável para enviar/trocar a imagem do produto
+function _imgBoxDetalhe(itemId, url) {
+    return `<label title="Clique para colocar/trocar a imagem do produto"
+                   style="width:44px;height:44px;flex-shrink:0;border-radius:6px;border:1px solid var(--border);
+                          display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;margin:0;background:var(--card-bg)">
+        ${url ? `<img src="${escHtml(url)}" style="width:100%;height:100%;object-fit:cover">`
+              : `<i class="bi bi-camera" style="color:var(--muted)"></i>`}
+        <input type="file" accept="image/*" style="display:none" onchange="uploadImgItemDetalhe(${itemId}, this)">
+    </label>`;
+}
+
+async function uploadImgItemDetalhe(itemId, input) {
+    const f = input.files && input.files[0];
+    input.value = '';
+    if (!f) return;
+    const dataUrl = await new Promise((res) => {
+        const fr = new FileReader();
+        fr.onload = () => {
+            const im = new Image();
+            im.onload = () => {
+                const MAX = 360;
+                let w = im.width, h = im.height;
+                if (w >= h && w > MAX)     { h = Math.round(h * MAX / w); w = MAX; }
+                else if (h > w && h > MAX) { w = Math.round(w * MAX / h); h = MAX; }
+                const cv = document.createElement('canvas');
+                cv.width = w; cv.height = h;
+                cv.getContext('2d').drawImage(im, 0, 0, w, h);
+                res(cv.toDataURL('image/jpeg', 0.72));
+            };
+            im.onerror = () => res(null);
+            im.src = fr.result;
+        };
+        fr.onerror = () => res(null);
+        fr.readAsDataURL(f);
+    });
+    if (!dataUrl) { toast('Não foi possível ler a imagem.', false); return; }
+    try {
+        const r = await fetch(`/api/atacado/itens/${itemId}/imagem`, {
+            method: 'PUT', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ imagem: dataUrl }),
+        });
+        if (!r.ok) { const j = await r.json().catch(()=>({})); toast(j.erro || 'Erro ao salvar imagem.', false); return; }
+        toast('Imagem salva.');
+        const span = document.getElementById(`itemimg-${itemId}`);
+        if (span) span.innerHTML = _imgBoxDetalhe(itemId, dataUrl);
+    } catch (e) {
+        toast('Erro de conexão.', false);
+    }
 }
 
 // Busca a imagem de uma variante no catálogo já carregado (sem tocar no banco)
@@ -1314,15 +1362,11 @@ function renderDetalhe(pedido, itens) {
             : `<span style="font-size:.72rem;color:var(--muted)">—</span>`;
 
         const imgVar = item.imagem || imagemDaVariante(item.nv_variant_id);
-        const imgHtml = imgVar
-            ? `<img src="${escHtml(imgVar)}" onclick="abrirImagemGrande(this.src)" title="Clique para ampliar"
-                 style="width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0;cursor:zoom-in">`
-            : `<div style="width:44px;height:44px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="bi bi-image" style="color:var(--muted)"></i></div>`;
 
         return `<tr class="item-det-row ${item.separado?'item-separado':''}" id="itemrow-${item.id}">
             <td>
                 <div class="d-flex align-items-center gap-2">
-                    <span id="itemimg-${item.id}">${imgHtml}</span>
+                    <span id="itemimg-${item.id}">${_imgBoxDetalhe(item.id, imgVar)}</span>
                     <div style="min-width:0">
                         <div class="fw-semibold">${escHtml(item.produto)}</div>
                         <div style="font-size:.75rem;color:var(--muted)">${escHtml(item.variante||'')}</div>
