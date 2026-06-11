@@ -362,7 +362,7 @@ def init_db():
             except Exception: pass
 
         for col in ["frete_tipo TEXT DEFAULT 'a_combinar'", "numero INTEGER",
-                    "valor_frete REAL DEFAULT 0"]:
+                    "valor_frete REAL DEFAULT 0", "rastreio TEXT"]:
             try: conn.execute(f"ALTER TABLE atacado_pedidos ADD COLUMN {col}")
             except Exception: pass
 
@@ -4463,8 +4463,8 @@ def api_atacado_criar():
         cur = conn.execute(
             """INSERT INTO atacado_pedidos
                (numero, cliente, nome, contato, cep, endereco, numero_endereco, cidade, cpf,
-                observacao, prazo, pago, frete_tipo, valor_frete, criado_por)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                observacao, prazo, pago, frete_tipo, valor_frete, rastreio, criado_por)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (proximo_numero, cliente,
              data.get("nome",""), contato,
              data.get("cep",""),  data.get("endereco",""),
@@ -4474,6 +4474,7 @@ def api_atacado_criar():
              1 if data.get("pago") else 0,
              data.get("frete_tipo","a_combinar") or "a_combinar",
              valor_frete,
+             (data.get("rastreio") or "").strip() or None,
              session.get("usuario",""))
         )
         pedido_id = cur.lastrowid
@@ -4601,6 +4602,25 @@ def api_atacado_item_imagem(iid):
     return jsonify({"ok": True})
 
 
+@app.route("/api/atacado/pedidos/<int:pid>/rastreio", methods=["PUT"])
+@login_required
+def api_atacado_rastreio(pid):
+    """Define/atualiza o código de rastreio do pedido (rápido, pelo detalhe)."""
+    data     = request.get_json(silent=True) or {}
+    rastreio = (data.get("rastreio") or "").strip() or None
+    with get_conn() as conn:
+        ped = conn.execute("SELECT rastreio FROM atacado_pedidos WHERE id=?", (pid,)).fetchone()
+        if not ped:
+            return jsonify({"erro": "Pedido não encontrado"}), 404
+        antigo = ped["rastreio"]
+        conn.execute("UPDATE atacado_pedidos SET rastreio=?, updated_at=? WHERE id=?",
+                     (rastreio, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), pid))
+        if (antigo or "") != (rastreio or ""):
+            _log_atacado(conn, pid, "Rastreio atualizado", rastreio or "(removido)")
+        conn.commit()
+    return jsonify({"ok": True})
+
+
 def _log_atacado(conn, pid, descricao, detalhes=None, usuario=None):
     """Registra uma entrada no histórico do pedido de atacado."""
     conn.execute(
@@ -4656,6 +4676,7 @@ def api_atacado_editar(pid):
             ("prazo",      "Prazo",      data.get("prazo", "") or ""),
             ("observacao", "Observação", data.get("observacao", "") or ""),
             ("frete_tipo", "Frete",      data.get("frete_tipo", "a_combinar") or "a_combinar"),
+            ("rastreio",   "Rastreio",   (data.get("rastreio") or "").strip()),
         ]
         try:
             valor_frete = max(float(data.get("valor_frete") or 0), 0)
@@ -4678,13 +4699,14 @@ def api_atacado_editar(pid):
         conn.execute(
             """UPDATE atacado_pedidos SET
                  cliente=?, nome=?, contato=?, cpf=?, cep=?, endereco=?, numero_endereco=?, cidade=?,
-                 prazo=?, observacao=?, frete_tipo=?, valor_frete=?, pago=?, updated_at=?
+                 prazo=?, observacao=?, frete_tipo=?, valor_frete=?, rastreio=?, pago=?, updated_at=?
                WHERE id=?""",
             (cliente, data.get("nome", "") or "", contato, data.get("cpf", "") or "",
              data.get("cep", "") or "", data.get("endereco", "") or "",
              data.get("numero_endereco", "") or "", data.get("cidade", "") or "",
              data.get("prazo", "") or "", data.get("observacao", "") or "",
-             data.get("frete_tipo", "a_combinar") or "a_combinar", valor_frete, pago_novo, agora, pid),
+             data.get("frete_tipo", "a_combinar") or "a_combinar", valor_frete,
+             (data.get("rastreio") or "").strip() or None, pago_novo, agora, pid),
         )
 
         # ── Itens (diff por id) ────────────────────────────────────────────

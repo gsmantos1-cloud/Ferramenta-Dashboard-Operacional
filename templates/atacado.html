@@ -127,6 +127,13 @@
           </div>
         </div>
 
+        <div class="row g-2 mb-3">
+          <div class="col-md-6">
+            <label class="flabel">CÓDIGO DE RASTREIO</label>
+            <input id="fRastreio" type="text" class="form-control form-control-sm" placeholder="Ex: NM123456789BR (opcional)">
+          </div>
+        </div>
+
         <!-- Seção: Itens -->
         <div class="d-flex align-items-center justify-content-between mb-2">
           <div class="sec-title mb-0">ITENS DO PEDIDO</div>
@@ -223,6 +230,25 @@
           <tbody id="detItens"></tbody>
           <tfoot id="detTotais"></tfoot>
         </table>
+
+        <!-- Código de rastreio -->
+        <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+          <div style="font-size:.82rem;font-weight:600;color:var(--text);margin-bottom:6px">
+            <i class="bi bi-truck me-1"></i>Código de rastreio
+          </div>
+          <div class="d-flex gap-2 align-items-center flex-wrap">
+            <input id="detRastreio" type="text" class="form-control form-control-sm"
+                   placeholder="Cole o código aqui..." style="max-width:280px"
+                   oninput="atualizarLinkRastreio()">
+            <button class="btn btn-sm btn-outline-primary" onclick="salvarRastreio()">
+              <i class="bi bi-check2 me-1"></i>Salvar
+            </button>
+            <a id="detRastreioLink" href="#" target="_blank" rel="noopener"
+               style="display:none;font-size:.78rem;color:#58a6ff;text-decoration:none">
+              <i class="bi bi-box-arrow-up-right me-1"></i>Rastrear
+            </a>
+          </div>
+        </div>
 
         <!-- Anexos (PDF) -->
         <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
@@ -903,6 +929,7 @@ function abrirModal() {
     document.getElementById('fPago').checked = false;
     document.getElementById('fFrete').value = 'a_combinar';
     document.getElementById('fValorFrete').value = '';
+    document.getElementById('fRastreio').value = '';
     document.getElementById('itensContainer').innerHTML = '';
     document.getElementById('semItensMsg').style.display = 'block';
     document.getElementById('resumoItens').style.display = 'none';
@@ -940,6 +967,7 @@ async function editarPedido() {
     document.getElementById('fPago').checked    = !!pedido.pago;
     document.getElementById('fFrete').value     = pedido.frete_tipo || 'a_combinar';
     document.getElementById('fValorFrete').value = (pedido.valor_frete && pedido.valor_frete > 0) ? pedido.valor_frete : '';
+    document.getElementById('fRastreio').value = pedido.rastreio || '';
     document.getElementById('itensContainer').innerHTML = '';
     document.getElementById('semItensMsg').style.display = 'none';
     document.getElementById('erroModal').textContent = '';
@@ -1088,6 +1116,7 @@ async function salvarPedido() {
         prazo:document.getElementById('fPrazo').value,
         observacao:document.getElementById('fObs').value.trim(),
         valor_frete:parseFloat(document.getElementById('fValorFrete').value) || 0,
+        rastreio:document.getElementById('fRastreio').value.trim(),
         pago:document.getElementById('fPago').checked,
         frete_tipo:document.getElementById('fFrete').value,
         itens,
@@ -1412,6 +1441,10 @@ function renderDetalhe(pedido, itens) {
     ].filter(Boolean);
     document.getElementById('detInfos').innerHTML = campos.join('');
 
+    // Código de rastreio
+    const inpR = document.getElementById('detRastreio');
+    if (inpR) { inpR.value = pedido.rastreio || ''; atualizarLinkRastreio(); }
+
     // Progresso
     const totalQty = itens.reduce((s,i)=>s+i.quantidade,0);
     const sepQty   = itens.reduce((s,i)=>s+(i.separado?i.quantidade:0),0);
@@ -1580,6 +1613,33 @@ async function atualizarProgresso() {
     const enviado = pedido.status==='enviado';
     document.getElementById('btnEnviar').style.display  = enviado?'none':'';
     document.getElementById('btnReabrir').style.display = enviado?'':'none';
+}
+
+// ── Código de rastreio ────────────────────────────────────────────────
+function atualizarLinkRastreio() {
+    const inp = document.getElementById('detRastreio');
+    const lnk = document.getElementById('detRastreioLink');
+    if (!inp || !lnk) return;
+    const cod = (inp.value || '').trim();
+    if (cod) { lnk.href = 'https://t.17track.net/pt#nums=' + encodeURIComponent(cod); lnk.style.display = ''; }
+    else { lnk.style.display = 'none'; }
+}
+
+async function salvarRastreio() {
+    if (!pedidoAbertoId) return;
+    const id  = pedidoAbertoId;
+    const cod = document.getElementById('detRastreio').value.trim();
+    atualizarLinkRastreio();
+    const p = pedidos.find(x => x.id === id);
+    if (p) p.rastreio = cod || null;
+    try {
+        const r = await fetch(`/api/atacado/pedidos/${id}/rastreio`, {
+            method: 'PUT', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ rastreio: cod }),
+        });
+        if (!r.ok) throw 0;
+        toast('Rastreio salvo.');
+    } catch(e) { toast('Erro ao salvar rastreio.', false); }
 }
 
 async function togglePago() {
@@ -1804,6 +1864,7 @@ function buildPdfHtml(pedido, itens) {
         pedido.endereco ? `Endereço: ${escHtml(pedido.endereco)}${pedido.numero_endereco ? ', Nº '+escHtml(pedido.numero_endereco) : ''}` : '',
         pedido.frete_tipo ? `Frete: ${labelFrete(pedido.frete_tipo)}${pedido.valor_frete > 0 ? ' (R$ '+fmtMoeda(pedido.valor_frete)+')' : ''}` : '',
         pedido.prazo    ? `Prazo: ${fmtDate(pedido.prazo)}` : '',
+        pedido.rastreio ? `Rastreio: ${escHtml(pedido.rastreio)}` : '',
     ].filter(Boolean).map(x => `<span style="margin-right:16px">${x}</span>`).join('');
 
     return `
