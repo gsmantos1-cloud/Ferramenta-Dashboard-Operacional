@@ -356,6 +356,7 @@ def init_db():
             "estoque_descontado INTEGER DEFAULT 0",
             "valor_unit REAL DEFAULT 0",
             "observacao TEXT",
+            "imagem TEXT",
         ]:
             try: conn.execute(f"ALTER TABLE atacado_itens ADD COLUMN {col}")
             except Exception: pass
@@ -4485,14 +4486,15 @@ def api_atacado_criar():
             nv_vid    = item.get("nv_variant_id") or None
             valor_unit = float(item.get("valor_unit") or 0)
             obs_item  = (item.get("observacao") or "").strip() or None
+            imagem    = (item.get("imagem") or "").strip() or None
             if produto and qty_total > 0:
                 conn.execute(
                     """INSERT INTO atacado_itens
                        (pedido_id, produto, variante, quantidade,
-                        qty_estoque, qty_fornecedor, nv_variant_id, valor_unit, observacao)
-                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                        qty_estoque, qty_fornecedor, nv_variant_id, valor_unit, observacao, imagem)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
                     (pedido_id, produto, variante, qty_total,
-                     qty_est, qty_forn, nv_vid, valor_unit, obs_item)
+                     qty_est, qty_forn, nv_vid, valor_unit, obs_item, imagem)
                 )
         _log_atacado(conn, pedido_id, "Pedido criado",
                      f"Cliente: {cliente} · {len(itens)} item(ns)", session.get("usuario", ""))
@@ -4681,6 +4683,7 @@ def api_atacado_editar(pid):
             nv_vid   = item.get("nv_variant_id") or None
             valor    = float(item.get("valor_unit") or 0)
             obs_item = (item.get("observacao") or "").strip() or None
+            imagem   = (item.get("imagem") or "").strip() or None
             if not produto or qty_tot <= 0:
                 continue
             iid = item.get("id")
@@ -4702,15 +4705,15 @@ def api_atacado_editar(pid):
                 conn.execute(
                     """UPDATE atacado_itens SET
                          produto=?, variante=?, quantidade=?, qty_estoque=?, qty_fornecedor=?,
-                         nv_variant_id=?, valor_unit=?, observacao=? WHERE id=?""",
-                    (produto, variante, qty_tot, qty_est, qty_forn, nv_vid, valor, obs_item, iid))
+                         nv_variant_id=?, valor_unit=?, observacao=?, imagem=? WHERE id=?""",
+                    (produto, variante, qty_tot, qty_est, qty_forn, nv_vid, valor, obs_item, imagem, iid))
             else:
                 conn.execute(
                     """INSERT INTO atacado_itens
                          (pedido_id, produto, variante, quantidade, qty_estoque,
-                          qty_fornecedor, nv_variant_id, valor_unit, observacao)
-                       VALUES (?,?,?,?,?,?,?,?,?)""",
-                    (pid, produto, variante, qty_tot, qty_est, qty_forn, nv_vid, valor, obs_item))
+                          qty_fornecedor, nv_variant_id, valor_unit, observacao, imagem)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    (pid, produto, variante, qty_tot, qty_est, qty_forn, nv_vid, valor, obs_item, imagem))
                 mudancas.append(f"Item adicionado: \"{produto}\" ({qty_tot}un)")
 
         for iid, old in existentes.items():

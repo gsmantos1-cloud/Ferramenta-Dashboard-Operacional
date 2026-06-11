@@ -699,12 +699,47 @@ function _popularVariantes(rowId, prod) {
     };
 }
 
-// Mostra/atualiza a miniatura do produto na linha do item
-function setItemImg(rowId, url) {
+// Imagem do produto na linha: manual (enviada) tem prioridade sobre a do catálogo
+function setItemImg(rowId, url) {   // url vinda do catálogo
+    const row = document.getElementById(`item-${rowId}`);
+    if (row) row.dataset.imgCatalogo = url || '';
+    mostrarImgItem(rowId);
+}
+
+function mostrarImgItem(rowId) {
+    const row = document.getElementById(`item-${rowId}`);
     const img = document.getElementById(`iimg-${rowId}`);
-    if (!img) return;
-    if (url) { img.src = url; img.style.display = ''; }
-    else { img.removeAttribute('src'); img.style.display = 'none'; }
+    const ph  = document.getElementById(`iimgph-${rowId}`);
+    if (!row || !img) return;
+    const url = row.dataset.imgManual || row.dataset.imgCatalogo || '';
+    if (url) { img.src = url; img.style.display = ''; if (ph) ph.style.display = 'none'; }
+    else { img.removeAttribute('src'); img.style.display = 'none'; if (ph) ph.style.display = ''; }
+}
+
+// Envia uma imagem manual: redimensiona para miniatura (base64 pequeno) e guarda na linha
+function uploadItemImg(rowId, input) {
+    const f = input.files && input.files[0];
+    input.value = '';
+    if (!f) return;
+    const fr = new FileReader();
+    fr.onload = () => {
+        const im = new Image();
+        im.onload = () => {
+            const MAX = 360;
+            let w = im.width, h = im.height;
+            if (w >= h && w > MAX)      { h = Math.round(h * MAX / w); w = MAX; }
+            else if (h > w && h > MAX)  { w = Math.round(w * MAX / h); h = MAX; }
+            const cv = document.createElement('canvas');
+            cv.width = w; cv.height = h;
+            cv.getContext('2d').drawImage(im, 0, 0, w, h);
+            const row = document.getElementById(`item-${rowId}`);
+            if (row) row.dataset.imgManual = cv.toDataURL('image/jpeg', 0.72);
+            mostrarImgItem(rowId);
+        };
+        im.onerror = () => toast('Não foi possível ler a imagem.', false);
+        im.src = fr.result;
+    };
+    fr.readAsDataURL(f);
 }
 
 // Duplica uma linha de item (mesmo produto/variante/quantidades) — economiza
@@ -752,6 +787,9 @@ function duplicarItem(n) {
     document.getElementById(`ivu-${m}`).value   = vu;
     const obsEl = document.getElementById(`iobs-${m}`);
     if (obsEl) obsEl.value = obs;
+    // copia a imagem manual, se houver
+    const imgManual = document.getElementById(`item-${n}`)?.dataset.imgManual;
+    if (imgManual) { const r = document.getElementById(`item-${m}`); if (r) { r.dataset.imgManual = imgManual; mostrarImgItem(m); } }
     atualizarTotal(`${m}`);
     document.getElementById(`ivar-${m}`)?.focus();   // foca na variante p/ trocar o tamanho
 }
@@ -894,8 +932,13 @@ function addItem() {
     div.style.gap = '5px';
     div.innerHTML = `
         <div style="display:flex;align-items:center;gap:8px">
-            <img id="iimg-${n}" alt="" onclick="abrirImagemGrande(this.src)" title="Clique para ampliar"
-                 style="width:40px;height:40px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0;display:none;cursor:zoom-in">
+            <label id="iimgbox-${n}" title="Clique para colocar/trocar a imagem do produto"
+                   style="width:40px;height:40px;flex-shrink:0;border-radius:6px;border:1px solid var(--border);
+                          display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;margin:0">
+              <img id="iimg-${n}" alt="" style="width:100%;height:100%;object-fit:cover;display:none">
+              <i id="iimgph-${n}" class="bi bi-camera" style="color:var(--muted);font-size:.95rem"></i>
+              <input type="file" accept="image/*" style="display:none" onchange="uploadItemImg('${n}', this)">
+            </label>
             <input type="text" class="inp-prod" id="iprod-${n}" placeholder="Buscar produto..." autocomplete="off"
                    oninput="mostrarDropdown(this,'${n}')" onkeydown="navegarDropdown(event, this, '${n}')">
             <select class="inp-var" id="ivar-${n}" disabled style="flex:2">
@@ -943,7 +986,8 @@ function addItemPreenchido(it) {
     if (row) row.dataset.itemId = it.id;   // id do item existente
 
     document.getElementById(`iprod-${n}`).value = it.produto || '';
-    setItemImg(n, imagemDaVariante(it.nv_variant_id));   // imagem ao lado do nome na edição
+    setItemImg(n, imagemDaVariante(it.nv_variant_id));   // imagem do catálogo (se houver)
+    if (it.imagem && row) { row.dataset.imgManual = it.imagem; mostrarImgItem(n); }  // imagem manual salva
 
     // Variante atual como opção selecionada
     const varSel = document.getElementById(`ivar-${n}`);
@@ -985,8 +1029,10 @@ async function salvarPedido() {
         const vLabel = opt?.dataset?.label || ivar?.value || '';
         const valorUnit = parseFloat(document.getElementById(`ivu-${i}`)?.value||0);
         const obs = (document.getElementById(`iobs-${i}`)?.value || '').trim();
-        const itemId = document.getElementById(`item-${i}`)?.dataset.itemId || null;
-        itens.push({id:itemId, produto:prod, variante:vLabel, qty_estoque:est, qty_fornecedor:forn, nv_variant_id:nvVid, valor_unit:valorUnit, observacao:obs});
+        const itemRow = document.getElementById(`item-${i}`);
+        const itemId = itemRow?.dataset.itemId || null;
+        const imagem = itemRow?.dataset.imgManual || '';
+        itens.push({id:itemId, produto:prod, variante:vLabel, qty_estoque:est, qty_fornecedor:forn, nv_variant_id:nvVid, valor_unit:valorUnit, observacao:obs, imagem:imagem});
     }
     if (!itens.length) { document.getElementById('erroModal').textContent='Adicione ao menos um item com quantidade.'; return; }
 
@@ -1118,7 +1164,7 @@ async function excluirAnexo(aid) {
 // Preenche as fotos dos itens depois que o catálogo carrega (sem re-renderizar tudo)
 function atualizarImagensDetalhe(itens) {
     (itens || []).forEach(item => {
-        const img = imagemDaVariante(item.nv_variant_id);
+        const img = item.imagem || imagemDaVariante(item.nv_variant_id);
         if (!img) return;
         const span = document.getElementById(`itemimg-${item.id}`);
         if (span) span.innerHTML =
@@ -1267,7 +1313,7 @@ function renderDetalhe(pedido, itens) {
             ? `<span style="font-size:.72rem;color:var(--green)"><i class="bi bi-check2-circle me-1"></i>Descontado</span>`
             : `<span style="font-size:.72rem;color:var(--muted)">—</span>`;
 
-        const imgVar = imagemDaVariante(item.nv_variant_id);
+        const imgVar = item.imagem || imagemDaVariante(item.nv_variant_id);
         const imgHtml = imgVar
             ? `<img src="${escHtml(imgVar)}" onclick="abrirImagemGrande(this.src)" title="Clique para ampliar"
                  style="width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0;cursor:zoom-in">`
@@ -1553,7 +1599,7 @@ function buildPdfHtml(pedido, itens) {
             grupos.push({ produto: it.produto || '', img: '', itens: [] });
         }
         const g = grupos[idxGrupo[chave]];
-        if (!g.img) g.img = imagemDaVariante(it.nv_variant_id) || '';
+        if (!g.img) g.img = it.imagem || imagemDaVariante(it.nv_variant_id) || '';
         g.itens.push(it);
     });
 
