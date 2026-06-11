@@ -229,8 +229,8 @@
           <div class="d-flex align-items-center justify-content-between mb-2">
             <span style="font-size:.82rem;font-weight:600;color:var(--text)"><i class="bi bi-paperclip me-1"></i>Anexos</span>
             <label id="lblAnexar" style="font-size:.74rem;background:rgba(88,166,255,.15);border:1px solid #58a6ff44;color:#58a6ff;border-radius:6px;padding:3px 10px;cursor:pointer;margin:0">
-              <i class="bi bi-upload me-1"></i>Anexar PDF
-              <input type="file" accept="application/pdf,.pdf" style="display:none" onchange="anexarPdf(this)">
+              <i class="bi bi-upload me-1"></i>Anexar PDF/Imagem
+              <input type="file" accept="image/*,application/pdf,.pdf" style="display:none" onchange="anexarPdf(this)">
             </label>
           </div>
           <div id="detAnexos" style="font-size:.8rem"></div>
@@ -1097,15 +1097,23 @@ function renderAnexos(anexos) {
     const el = document.getElementById('detAnexos');
     if (!el) return;
     if (!anexos || !anexos.length) {
-        el.innerHTML = '<span style="color:var(--muted);font-size:.76rem">Nenhum anexo. Use “Anexar PDF”.</span>';
+        el.innerHTML = '<span style="color:var(--muted);font-size:.76rem">Nenhum anexo. Use “Anexar PDF/Imagem”.</span>';
         return;
     }
-    el.innerHTML = anexos.map(a => `
-        <div class="d-flex align-items-center justify-content-between" style="border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-bottom:6px">
-            <a href="/api/atacado/anexos/${a.id}/download" target="_blank" rel="noopener"
-               style="color:#58a6ff;text-decoration:none;font-size:.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-               <i class="bi bi-file-earmark-pdf me-1" style="color:#f85149"></i>${escHtml(a.nome || 'arquivo.pdf')}
-            </a>
+    el.innerHTML = anexos.map(a => {
+        const url = `/api/atacado/anexos/${a.id}/download`;
+        const ehImg = (a.mime || '').startsWith('image/');
+        const esquerda = ehImg
+            ? `<div class="d-flex align-items-center gap-2" style="min-width:0">
+                 <img src="${url}" onclick="abrirImagemGrande('${url}')" title="Clique para ampliar"
+                      style="width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:zoom-in;flex-shrink:0">
+                 <span style="font-size:.78rem;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(a.nome || 'imagem')}</span>
+               </div>`
+            : `<a href="${url}" target="_blank" rel="noopener"
+                  style="color:#58a6ff;text-decoration:none;font-size:.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                  <i class="bi bi-file-earmark-pdf me-1" style="color:#f85149"></i>${escHtml(a.nome || 'arquivo.pdf')}</a>`;
+        return `<div class="d-flex align-items-center justify-content-between" style="border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-bottom:6px;gap:8px">
+            ${esquerda}
             <div class="d-flex align-items-center gap-2" style="flex-shrink:0">
                 <span style="font-size:.68rem;color:var(--muted)">${_fmtTam(a.tamanho)}</span>
                 <button onclick="excluirAnexo(${a.id})" title="Remover anexo"
@@ -1113,32 +1121,62 @@ function renderAnexos(anexos) {
                     <i class="bi bi-trash3"></i>
                 </button>
             </div>
-        </div>`).join('');
+        </div>`;
+    }).join('');
 }
 
 async function anexarPdf(input) {
     const f = input.files && input.files[0];
     if (!f) return;
-    if (f.size > 3*1024*1024) { toast('Arquivo muito grande (máx 3 MB).', false); input.value=''; return; }
+    const ehImg = (f.type || '').startsWith('image/');
+    if (!ehImg && f.size > 3*1024*1024) { toast('Arquivo muito grande (máx 3 MB).', false); input.value=''; return; }
     const lbl = document.getElementById('lblAnexar');
     const html = lbl.innerHTML;
     lbl.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando...';
     try {
-        const b64 = await new Promise((res, rej) => {
-            const fr = new FileReader();
-            fr.onload  = () => res(String(fr.result).split(',')[1] || '');
-            fr.onerror = rej;
-            fr.readAsDataURL(f);
-        });
+        let nome = f.name, mime = f.type || 'application/pdf', b64;
+        if (ehImg) {
+            // Redimensiona a imagem (boa qualidade, mas leve) e converte p/ JPEG
+            const dataUrl = await new Promise((res) => {
+                const fr = new FileReader();
+                fr.onload = () => {
+                    const im = new Image();
+                    im.onload = () => {
+                        const MAX = 1400;
+                        let w = im.width, h = im.height;
+                        if (w >= h && w > MAX)     { h = Math.round(h * MAX / w); w = MAX; }
+                        else if (h > w && h > MAX) { w = Math.round(w * MAX / h); h = MAX; }
+                        const cv = document.createElement('canvas');
+                        cv.width = w; cv.height = h;
+                        cv.getContext('2d').drawImage(im, 0, 0, w, h);
+                        res(cv.toDataURL('image/jpeg', 0.82));
+                    };
+                    im.onerror = () => res(null);
+                    im.src = fr.result;
+                };
+                fr.onerror = () => res(null);
+                fr.readAsDataURL(f);
+            });
+            if (!dataUrl) { toast('Não foi possível ler a imagem.', false); return; }
+            b64  = dataUrl.split(',')[1] || '';
+            mime = 'image/jpeg';
+            nome = (f.name || 'imagem').replace(/\.[^.]+$/, '') + '.jpg';
+        } else {
+            b64 = await new Promise((res, rej) => {
+                const fr = new FileReader();
+                fr.onload  = () => res(String(fr.result).split(',')[1] || '');
+                fr.onerror = rej;
+                fr.readAsDataURL(f);
+            });
+        }
         const r = await fetch(`/api/atacado/pedidos/${pedidoAbertoId}/anexos`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ nome: f.name, mime: f.type || 'application/pdf', conteudo: b64 }),
+            body: JSON.stringify({ nome, mime, conteudo: b64 }),
         });
         const j = await r.json();
         if (!r.ok) { toast(j.erro || 'Erro ao anexar.', false); return; }
-        toast('PDF anexado.');
-        // Recarrega só os anexos
+        toast(ehImg ? 'Imagem anexada.' : 'PDF anexado.');
         const d = await fetch(`/api/atacado/pedidos/${pedidoAbertoId}`).then(x=>x.json());
         renderAnexos(d.anexos);
     } catch(e) {
