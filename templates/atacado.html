@@ -224,6 +224,18 @@
           <tfoot id="detTotais"></tfoot>
         </table>
 
+        <!-- Anexos (PDF) -->
+        <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+          <div class="d-flex align-items-center justify-content-between mb-2">
+            <span style="font-size:.82rem;font-weight:600;color:var(--text)"><i class="bi bi-paperclip me-1"></i>Anexos</span>
+            <label id="lblAnexar" style="font-size:.74rem;background:rgba(88,166,255,.15);border:1px solid #58a6ff44;color:#58a6ff;border-radius:6px;padding:3px 10px;cursor:pointer;margin:0">
+              <i class="bi bi-upload me-1"></i>Anexar PDF
+              <input type="file" accept="application/pdf,.pdf" style="display:none" onchange="anexarPdf(this)">
+            </label>
+          </div>
+          <div id="detAnexos" style="font-size:.8rem"></div>
+        </div>
+
       </div>
       <div class="modal-footer" style="border-top:1px solid var(--border);gap:8px">
         <button id="btnDeletar" class="btn btn-sm btn-outline-danger me-auto" onclick="deletarPedido()">
@@ -1019,12 +1031,79 @@ async function abrirDetalhe(id) {
     pedidoAbertoId = id;
     // Busca só o pedido (rápido) e mostra o modal IMEDIATAMENTE
     const r = await fetch(`/api/atacado/pedidos/${id}`);
-    const {pedido, itens} = await r.json();
+    const {pedido, itens, anexos} = await r.json();
     renderDetalhe(pedido, itens);
+    renderAnexos(anexos);
     new bootstrap.Modal(document.getElementById('modalDetalhe')).show();
     // Catálogo (fotos) carrega em segundo plano só na 1ª vez — não trava a abertura
     if (!catalogoProdutos.length) {
         carregarCatalogo().then(() => atualizarImagensDetalhe(itens)).catch(() => {});
+    }
+}
+
+// ── Anexos (PDF) ──────────────────────────────────────────────────────
+function _fmtTam(bytes) {
+    if (!bytes) return '';
+    return bytes < 1024*1024 ? (bytes/1024).toFixed(0) + ' KB' : (bytes/1024/1024).toFixed(1) + ' MB';
+}
+
+function renderAnexos(anexos) {
+    const el = document.getElementById('detAnexos');
+    if (!el) return;
+    if (!anexos || !anexos.length) {
+        el.innerHTML = '<span style="color:var(--muted);font-size:.76rem">Nenhum anexo. Use “Anexar PDF”.</span>';
+        return;
+    }
+    el.innerHTML = anexos.map(a => `
+        <div class="d-flex align-items-center justify-content-between" style="border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-bottom:6px">
+            <a href="/api/atacado/anexos/${a.id}/download" target="_blank" rel="noopener"
+               style="color:#58a6ff;text-decoration:none;font-size:.8rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+               <i class="bi bi-file-earmark-pdf me-1" style="color:#f85149"></i>${escHtml(a.nome || 'arquivo.pdf')}
+            </a>
+            <div class="d-flex align-items-center gap-2" style="flex-shrink:0">
+                <span style="font-size:.68rem;color:var(--muted)">${_fmtTam(a.tamanho)}</span>
+                <button onclick="excluirAnexo(${a.id})" title="Remover anexo"
+                        style="background:none;border:none;color:var(--red);cursor:pointer;font-size:.8rem;padding:0">
+                    <i class="bi bi-trash3"></i>
+                </button>
+            </div>
+        </div>`).join('');
+}
+
+async function anexarPdf(input) {
+    const f = input.files && input.files[0];
+    if (!f) return;
+    if (f.size > 3*1024*1024) { toast('Arquivo muito grande (máx 3 MB).', false); input.value=''; return; }
+    const lbl = document.getElementById('lblAnexar');
+    const html = lbl.innerHTML;
+    lbl.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando...';
+    try {
+        const fd = new FormData();
+        fd.append('arquivo', f);
+        const r = await fetch(`/api/atacado/pedidos/${pedidoAbertoId}/anexos`, { method:'POST', body: fd });
+        const j = await r.json();
+        if (!r.ok) { toast(j.erro || 'Erro ao anexar.', false); return; }
+        toast('PDF anexado.');
+        // Recarrega só os anexos
+        const d = await fetch(`/api/atacado/pedidos/${pedidoAbertoId}`).then(x=>x.json());
+        renderAnexos(d.anexos);
+    } catch(e) {
+        toast('Erro de conexão.', false);
+    } finally {
+        lbl.innerHTML = html;
+        input.value = '';
+    }
+}
+
+async function excluirAnexo(aid) {
+    if (!confirm('Remover este anexo?')) return;
+    try {
+        await fetch(`/api/atacado/anexos/${aid}`, { method:'DELETE' });
+        toast('Anexo removido.');
+        const d = await fetch(`/api/atacado/pedidos/${pedidoAbertoId}`).then(x=>x.json());
+        renderAnexos(d.anexos);
+    } catch(e) {
+        toast('Erro ao remover.', false);
     }
 }
 

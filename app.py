@@ -281,6 +281,17 @@ def init_db():
                 created_at DATETIME DEFAULT (datetime('now','localtime'))
             );
 
+            CREATE TABLE IF NOT EXISTS atacado_anexos (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                pedido_id  INTEGER NOT NULL,
+                nome       TEXT,
+                mime       TEXT,
+                tamanho    INTEGER,
+                conteudo   TEXT,
+                criado_por TEXT,
+                created_at DATETIME DEFAULT (datetime('now','localtime'))
+            );
+
             CREATE TABLE IF NOT EXISTS compras_manual (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 nome        TEXT    NOT NULL,
@@ -442,6 +453,7 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_pedidos_status        ON pedidos(status)",
             "CREATE INDEX IF NOT EXISTS idx_atacado_itens_pedido  ON atacado_itens(pedido_id)",
             "CREATE INDEX IF NOT EXISTS idx_atacado_hist_pedido   ON atacado_historico(pedido_id)",
+            "CREATE INDEX IF NOT EXISTS idx_atacado_anexo_pedido  ON atacado_anexos(pedido_id)",
             "CREATE INDEX IF NOT EXISTS idx_compras_tam_compra    ON compras_tamanhos(compra_id)",
             "CREATE INDEX IF NOT EXISTS idx_compras_hist_compra   ON compras_historico(compra_id)",
         ]
@@ -4499,7 +4511,72 @@ def api_atacado_detalhe(pid):
             "SELECT * FROM atacado_itens WHERE pedido_id=? ORDER BY produto COLLATE NOCASE, variante COLLATE NOCASE",
             (pid,)
         ).fetchall()
-    return jsonify({"pedido": dict(ped), "itens": [dict(i) for i in itens]})
+        # Anexos: só metadados (o conteúdo base64 só é lido no download)
+        anexos = conn.execute(
+            "SELECT id, nome, mime, tamanho, created_at FROM atacado_anexos WHERE pedido_id=? ORDER BY id DESC",
+            (pid,)
+        ).fetchall()
+    return jsonify({"pedido": dict(ped), "itens": [dict(i) for i in itens],
+                    "anexos": [dict(a) for a in anexos]})
+
+
+@app.route("/api/atacado/pedidos/<int:pid>/anexos", methods=["POST"])
+@login_required
+def api_atacado_anexo_upload(pid):
+    """Anexa um arquivo (PDF) ao pedido. Guardado em base64 no banco."""
+    import base64
+    f = request.files.get("arquivo")
+    if not f:
+        return jsonify({"erro": "Nenhum arquivo enviado"}), 400
+    dados = f.read()
+    if not dados:
+        return jsonify({"erro": "Arquivo vazio"}), 400
+    if len(dados) > 3 * 1024 * 1024:
+        return jsonify({"erro": "Arquivo muito grande (máximo 3 MB)"}), 400
+    nome = (f.filename or "arquivo.pdf").strip()
+    mime = f.mimetype or "application/pdf"
+    b64  = base64.b64encode(dados).decode("ascii")
+    with get_conn() as conn:
+        if not conn.execute("SELECT id FROM atacado_pedidos WHERE id=?", (pid,)).fetchone():
+            return jsonify({"erro": "Pedido não encontrado"}), 404
+        conn.execute(
+            """INSERT INTO atacado_anexos (pedido_id, nome, mime, tamanho, conteudo, criado_por)
+               VALUES (?,?,?,?,?,?)""",
+            (pid, nome, mime, len(dados), b64, session.get("usuario", "")),
+        )
+        _log_atacado(conn, pid, "Anexo adicionado", nome)
+        conn.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/atacado/anexos/<int:aid>/download", methods=["GET"])
+@login_required
+def api_atacado_anexo_download(aid):
+    import base64
+    with get_conn() as conn:
+        a = conn.execute(
+            "SELECT nome, mime, conteudo FROM atacado_anexos WHERE id=?", (aid,)
+        ).fetchone()
+    if not a:
+        return jsonify({"erro": "Anexo não encontrado"}), 404
+    try:
+        dados = base64.b64decode(a["conteudo"] or "")
+    except Exception:
+        return jsonify({"erro": "Anexo corrompido"}), 500
+    return send_file(BytesIO(dados), mimetype=a["mime"] or "application/pdf",
+                     as_attachment=False, download_name=a["nome"] or "anexo.pdf")
+
+
+@app.route("/api/atacado/anexos/<int:aid>", methods=["DELETE"])
+@login_required
+def api_atacado_anexo_delete(aid):
+    with get_conn() as conn:
+        a = conn.execute("SELECT pedido_id, nome FROM atacado_anexos WHERE id=?", (aid,)).fetchone()
+        conn.execute("DELETE FROM atacado_anexos WHERE id=?", (aid,))
+        if a:
+            _log_atacado(conn, a["pedido_id"], "Anexo removido", a["nome"])
+        conn.commit()
+    return jsonify({"ok": True})
 
 
 def _log_atacado(conn, pid, descricao, detalhes=None, usuario=None):
