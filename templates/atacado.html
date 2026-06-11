@@ -1078,9 +1078,17 @@ async function anexarPdf(input) {
     const html = lbl.innerHTML;
     lbl.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Enviando...';
     try {
-        const fd = new FormData();
-        fd.append('arquivo', f);
-        const r = await fetch(`/api/atacado/pedidos/${pedidoAbertoId}/anexos`, { method:'POST', body: fd });
+        const b64 = await new Promise((res, rej) => {
+            const fr = new FileReader();
+            fr.onload  = () => res(String(fr.result).split(',')[1] || '');
+            fr.onerror = rej;
+            fr.readAsDataURL(f);
+        });
+        const r = await fetch(`/api/atacado/pedidos/${pedidoAbertoId}/anexos`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ nome: f.name, mime: f.type || 'application/pdf', conteudo: b64 }),
+        });
         const j = await r.json();
         if (!r.ok) { toast(j.erro || 'Erro ao anexar.', false); return; }
         toast('PDF anexado.');

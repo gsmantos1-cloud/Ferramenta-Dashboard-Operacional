@@ -4523,26 +4523,27 @@ def api_atacado_detalhe(pid):
 @app.route("/api/atacado/pedidos/<int:pid>/anexos", methods=["POST"])
 @login_required
 def api_atacado_anexo_upload(pid):
-    """Anexa um arquivo (PDF) ao pedido. Guardado em base64 no banco."""
+    """Anexa um arquivo (PDF) ao pedido. Recebe base64 em JSON (confiável no Vercel)."""
     import base64
-    f = request.files.get("arquivo")
-    if not f:
+    data = request.get_json(silent=True) or {}
+    b64  = (data.get("conteudo") or "").strip()
+    nome = (data.get("nome") or "arquivo.pdf").strip()
+    mime = data.get("mime") or "application/pdf"
+    if not b64:
         return jsonify({"erro": "Nenhum arquivo enviado"}), 400
-    dados = f.read()
-    if not dados:
-        return jsonify({"erro": "Arquivo vazio"}), 400
-    if len(dados) > 3 * 1024 * 1024:
+    try:
+        tamanho = len(base64.b64decode(b64))
+    except Exception:
+        return jsonify({"erro": "Arquivo inválido"}), 400
+    if tamanho > 3 * 1024 * 1024:
         return jsonify({"erro": "Arquivo muito grande (máximo 3 MB)"}), 400
-    nome = (f.filename or "arquivo.pdf").strip()
-    mime = f.mimetype or "application/pdf"
-    b64  = base64.b64encode(dados).decode("ascii")
     with get_conn() as conn:
         if not conn.execute("SELECT id FROM atacado_pedidos WHERE id=?", (pid,)).fetchone():
             return jsonify({"erro": "Pedido não encontrado"}), 404
         conn.execute(
             """INSERT INTO atacado_anexos (pedido_id, nome, mime, tamanho, conteudo, criado_por)
                VALUES (?,?,?,?,?,?)""",
-            (pid, nome, mime, len(dados), b64, session.get("usuario", "")),
+            (pid, nome, mime, tamanho, b64, session.get("usuario", "")),
         )
         _log_atacado(conn, pid, "Anexo adicionado", nome)
         conn.commit()
