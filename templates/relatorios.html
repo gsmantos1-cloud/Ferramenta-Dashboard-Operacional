@@ -10,6 +10,11 @@
         <small style="color:var(--muted)">Histórico de pedidos enviados por período</small>
     </div>
     <div class="d-flex gap-2">
+        <button class="btn btn-sm" id="btnDatasEnvio" onclick="corrigirDatasEnvio()"
+                title="Atualiza a data dos envios usando a data real registrada na NuvemShop (últimos 30 dias)"
+                style="background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.3);color:var(--green)">
+            <i class="bi bi-calendar-check me-1"></i>Corrigir datas de envio
+        </button>
         <a href="/relatorio/vendas-pdf" class="btn btn-sm" style="background:rgba(88,166,255,.12);border:1px solid rgba(88,166,255,.3);color:var(--blue)">
             <i class="bi bi-file-earmark-pdf me-1"></i>Relatório de Vendas PDF
         </a>
@@ -423,6 +428,28 @@ async function verificarCorrecao() {
             banner.style.display = 'none';
         }
     } catch(e) {}
+}
+
+async function corrigirDatasEnvio() {
+    const btn = document.getElementById('btnDatasEnvio');
+    const html0 = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sincronizando datas…';
+    try {
+        const r = await fetch('/api/manutencao/corrigir-datas-envio', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dias: 30 }),
+        });
+        const d = await r.json();
+        if (d.erro) { alert('Erro: ' + d.erro); }
+        else { carregar(); alert('✓ ' + (d.mensagem || 'Datas atualizadas.')); }
+    } catch(e) {
+        alert('Erro ao corrigir as datas.');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = html0;
+    }
 }
 
 async function corrigirReconciliacao() {

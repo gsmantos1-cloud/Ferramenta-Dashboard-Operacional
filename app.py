@@ -2085,6 +2085,87 @@ def pendentes_correcao():
     return jsonify({"pendentes": n})
 
 
+@app.route("/api/manutencao/corrigir-datas-envio", methods=["POST"])
+@login_required
+def corrigir_datas_envio():
+    """Corrige o enviado_em dos pedidos JÁ enviados para a data REAL de envio
+    registrada na NuvemShop (e não a data em que o sync rodou). Busca apenas uma
+    janela recente para não estourar chamadas/leituras. Body: {"dias": N} (padrão 30).
+    Não mexe em pedidos enviados por romaneio (têm a data manual do operador)."""
+    import urllib.request as ureq
+    store_id, token = _get_nv_credentials()
+    if not store_id or not token:
+        return jsonify({"erro": "NuvemShop não configurada"}), 400
+
+    body = request.get_json(silent=True) or {}
+    try:
+        dias = int(body.get("dias", 30))
+    except Exception:
+        dias = 30
+    dias = max(1, min(dias, 180))
+
+    headers = _nuvemshop_headers()
+    from datetime import timedelta as _td
+    desde = (date.today() - _td(days=dias)).strftime("%Y-%m-%d")
+
+    # Coleta {numero: data_real_envio} dos pedidos enviados/entregues na janela.
+    reais = {}
+    pg = 1
+    while pg <= 100:
+        url = (f"https://api.nuvemshop.com.br/v1/{store_id}/orders"
+               f"?per_page=200&page={pg}&updated_at_min={desde}")
+        try:
+            req = ureq.Request(url, headers=headers)
+            with ureq.urlopen(req, timeout=20) as resp:
+                orders = json.loads(resp.read())
+        except Exception as e:
+            if pg == 1:
+                return jsonify({"erro": str(e)}), 502
+            break
+        if not orders:
+            break
+        for o in orders:
+            if o.get("shipping_status") in ("shipped", "delivered"):
+                numero = str(o.get("number", "")).strip()
+                d = _nv_data_envio(o)
+                if numero and d:
+                    reais[numero] = d
+        if len(orders) < 200:
+            break
+        pg += 1
+
+    if not reais:
+        return jsonify({"corrigidos": 0,
+                        "mensagem": "Nenhum pedido enviado encontrado nessa janela."})
+
+    # Atualiza só onde a DATA do envio está diferente. Ignora cancelados e
+    # pedidos enviados por romaneio (a data deles é a do operador, não da Nuvem).
+    updates = [
+        ("""UPDATE pedidos SET enviado_em=?
+            WHERE numero=? AND ativo=0 AND romaneio_id IS NULL
+              AND (status_ao_enviar IS NULL OR status_ao_enviar != 'Cancelado')
+              AND date(enviado_em) != date(?)""",
+         (data_real, numero, data_real))
+        for numero, data_real in reais.items()
+    ]
+    with get_conn() as conn:
+        for i in range(0, len(updates), 100):
+            try:
+                conn.execute_batch(updates[i:i + 100])
+            except Exception:
+                for sql, params in updates[i:i + 100]:
+                    try:
+                        conn.execute(sql, params)
+                    except Exception:
+                        pass
+
+    return jsonify({
+        "verificados": len(reais),
+        "mensagem": (f"Datas de envio sincronizadas com a NuvemShop "
+                     f"({len(reais)} pedidos enviados verificados nos últimos {dias} dias)."),
+    })
+
+
 # ── Romaneio routes ──────────────────────────────────────────────────────────
 
 @app.route("/api/romaneios", methods=["GET"])
@@ -2290,6 +2371,45 @@ def _nuvemshop_headers():
         "Content-Type": "application/json",
     }
 
+def _nv_data_envio(o):
+    """Melhor estimativa da data REAL em que o pedido foi marcado como ENVIADO na
+    NuvemShop. Retorna 'YYYY-MM-DD HH:MM:SS' (horário de Brasília) ou None.
+
+    É isto que o relatório usa para agrupar os envios por dia. Antes gravávamos
+    'agora' (o momento em que o sync rodou) — então um pedido enviado ontem, mas
+    sincronizado hoje, aparecia com a data de hoje. Aqui pegamos a data que a
+    própria NuvemShop registrou no envio."""
+    from datetime import timezone, timedelta
+    _brt = timezone(timedelta(hours=-3))
+
+    def _conv(s):
+        if not s:
+            return None
+        try:
+            dt = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(_brt)      # converte p/ fuso de Brasília
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            t = str(s)[:19].replace("T", " ")
+            return t if len(t) >= 10 else None
+
+    # 1) Data do fulfillment (a mais precisa, quando a API a envia)
+    for f in (o.get("fulfillments") or []):
+        for k in ("fulfilled_at", "shipped_at", "created_at"):
+            d = _conv(f.get(k))
+            if d:
+                return d
+    # 2) Campos diretos no pedido, caso existam
+    for k in ("shipped_at", "fulfilled_at"):
+        d = _conv(o.get(k))
+        if d:
+            return d
+    # 3) Última atualização do pedido — no filtro incremental, um pedido recém
+    #    enviado tem updated_at ~= ao momento do envio.
+    return _conv(o.get("updated_at"))
+
+
 def _parse_order_fields(o, hoje=None):
     """Extrai e normaliza os campos de um pedido vindo da API NuvemShop.
     Retorna um dict pronto para inserção, ou None se o pedido for inválido/cancelado."""
@@ -2356,6 +2476,7 @@ def _parse_order_fields(o, hoje=None):
         "forma_pagamento": forma_pagamento,
         "status":          status,
         "is_env":          envio in ("Enviada", "Entregue"),
+        "data_envio":      _nv_data_envio(o),   # data real de envio na NuvemShop (p/ relatório)
         "produtos":        o.get("products") or [],
     }
 
@@ -2387,7 +2508,7 @@ def _processar_order(conn, o):
                    VALUES (?,?,?,?,?,?,?,?,?,0,?,?)""",
                 (numero, c["data_str"], "Normal", c["status"], c["cliente"], c["total"],
                  "Recebido", c["forma_pagamento"], c["transportadora"],
-                 hoje.isoformat(), c["status"]),
+                 c["data_envio"] or hoje.isoformat(), c["status"]),
             )
             if produtos:
                 _salvar_itens_pedido(conn, numero, produtos)
@@ -2507,9 +2628,11 @@ def sincronizar_nuvemshop():
                 elif ship in ("shipped", "delivered"):
                     c2 = _parse_order_fields(o, hoje)
                     st = (c2 and c2["status"]) or "NO PRAZO"
+                    # usa a data REAL de envio da NuvemShop, não a data do sync
+                    quando = _nv_data_envio(o) or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     pending.append((
                         "UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar=? WHERE numero=? AND ativo=1",
-                        (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), st, numero)))
+                        (quando, st, numero)))
                     ativos.discard(numero); reconciliados_env += 1
             if numero not in com_itens:
                 produtos = o.get("products") or []
@@ -2529,7 +2652,7 @@ def sincronizar_nuvemshop():
             pending.append((SQL_ENV, (
                 numero, c["data_str"], "Normal", c["status"], c["cliente"], c["total"],
                 "Recebido", c["forma_pagamento"], c["transportadora"],
-                hoje.isoformat(), c["status"])))
+                c["data_envio"] or hoje.isoformat(), c["status"])))
             ja_enviados += 1
         else:
             pending.append((SQL_ATV, (
@@ -2881,7 +3004,8 @@ def webhook_order_fulfilled():
     if not numero:
         return jsonify({"ok": True}), 200
 
-    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # data real de envio da NuvemShop (se o payload trouxer); senão, agora
+    quando = _nv_data_envio(order) or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_conn() as conn:
         row = conn.execute(
             "SELECT id, status FROM pedidos WHERE numero = ? AND ativo = 1", (numero,)
@@ -2889,7 +3013,7 @@ def webhook_order_fulfilled():
         if row:
             conn.execute(
                 "UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar=? WHERE id=?",
-                (agora, row["status"], row["id"]),
+                (quando, row["status"], row["id"]),
             )
 
     return jsonify({"ok": True}), 200
