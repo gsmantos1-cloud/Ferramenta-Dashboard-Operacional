@@ -572,6 +572,10 @@ function escHtml(str) {
     return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// Para interpolar dentro de string JS com aspas simples em handlers inline
+// (ex: onclick="fn('${escJs(sku)}')"). Sem isto, um SKU com apóstrofo quebra o handler.
+function escJs(str) { return escHtml(str).replace(/'/g, "\\'"); }
+
 function fmtQty(n) { return Number.isInteger(n) ? n : 0; }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1303,22 +1307,29 @@ function buildExpandedHtml(product) {
                     <span style="color:#8b5cf6;font-weight:600">Usa estoque de</span>
                     <span style="color:var(--text)">${baseLbl}</span>
                 </span>
-                <span style="font-size:.82rem;font-weight:700;color:${qColor};margin-left:4px">${baseQty}</span>
+                <span class="qty-link" data-base="${baseId != null ? baseId : ''}"
+                      ${baseId == null ? `title="Estoque-base não encontrado pelo SKU — confira se o SKU desta variante é igual ao da 'Sem Personalização'"` : ''}
+                      style="font-size:.82rem;font-weight:700;color:${qColor};margin-left:4px">${baseQty}</span>
             </div>`;
         } else if (stock) {
             const qty   = fmtQty(stock.quantity);
             const min   = fmtQty(stock.min_quantity);
             const qColor = qty <= 0 ? '#f85149' : qty <= min ? '#f0883e' : '#3fb950';
             stockCell = `<div style="display:flex;align-items:center;gap:4px">
-                <button onclick="quickStock(${v.id},${product.id},'${escHtml(v.sku||'')}','saida_manual');event.stopPropagation()"
+                <button onclick="quickStock(${v.id},${product.id},'${escJs(v.sku||'')}','saida_manual');event.stopPropagation()"
                         style="background:rgba(248,81,73,.15);border:1px solid #f8514944;color:#f85149;border-radius:4px;width:26px;height:26px;font-size:.9rem;cursor:pointer;display:flex;align-items:center;justify-content:center">−</button>
-                <span id="qty-${v.id}" style="font-size:.88rem;font-weight:700;color:${qColor};min-width:32px;text-align:center">${qty}</span>
-                <button onclick="quickStock(${v.id},${product.id},'${escHtml(v.sku||'')}','entrada');event.stopPropagation()"
+                <input id="qty-${v.id}" type="number" min="0" value="${qty}" inputmode="numeric"
+                       title="Digite o estoque e tecle Enter"
+                       onchange="setStockDireto(${v.id},${product.id},'${escJs(v.sku||'')}')"
+                       onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+                       onclick="this.select();event.stopPropagation()"
+                       style="width:52px;height:26px;text-align:center;font-size:.86rem;font-weight:700;color:${qColor};background:var(--input-bg);border:1px solid var(--border);border-radius:4px;padding:0 2px">
+                <button onclick="quickStock(${v.id},${product.id},'${escJs(v.sku||'')}','entrada');event.stopPropagation()"
                         style="background:rgba(63,185,80,.15);border:1px solid #3fb95044;color:#3fb950;border-radius:4px;width:26px;height:26px;font-size:.9rem;cursor:pointer;display:flex;align-items:center;justify-content:center">+</button>
-                <button onclick="abrirCMP(${v.id},${product.id},'${escHtml(v.sku||'')}');event.stopPropagation()"
+                <button onclick="abrirCMP(${v.id},${product.id},'${escJs(v.sku||'')}');event.stopPropagation()"
                         title="Entrada com preço — Custo Médio Ponderado"
                         style="background:rgba(240,196,62,.12);border:1px solid #f0c43e44;color:#f0c43e;border-radius:4px;width:26px;height:26px;font-size:.72rem;cursor:pointer;display:flex;align-items:center;justify-content:center;font-weight:700">R$</button>
-                <button onclick="openMov(${v.id},'${escHtml(label)}');event.stopPropagation()"
+                <button onclick="openMov(${v.id},'${escJs(label)}');event.stopPropagation()"
                         title="Movimentos" style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:2px 5px;font-size:.68rem;cursor:pointer;margin-left:2px">
                     <i class="bi bi-clock-history"></i></button>
             </div>`;
@@ -1326,7 +1337,7 @@ function buildExpandedHtml(product) {
             stockCell = `<div style="display:flex;align-items:center;gap:4px">
                 <input id="init-stock-${v.id}" type="number" min="0" placeholder="Qtd"
                        class="form-control form-control-sm" style="width:66px;font-size:.78rem" onclick="event.stopPropagation()">
-                <button onclick="setInitStock(${v.id},${product.id},'${escHtml(v.sku||'')}');event.stopPropagation()"
+                <button onclick="setInitStock(${v.id},${product.id},'${escJs(v.sku||'')}');event.stopPropagation()"
                         class="btn btn-outline-secondary btn-sm py-0 px-2" style="font-size:.71rem;white-space:nowrap">Definir</button>
             </div>`;
         }
@@ -1375,7 +1386,7 @@ function buildExpandedHtml(product) {
                                    oninput="persPanelCalc(${v.id})" onclick="event.stopPropagation()">
                         </div>
                         <div class="ms-auto d-flex gap-2">
-                            <button onclick="savePersVariant(${v.id},'${escHtml(v.sku||'')}');event.stopPropagation()"
+                            <button onclick="savePersVariant(${v.id},'${escJs(v.sku||'')}');event.stopPropagation()"
                                     class="btn btn-sm px-3" style="background:#8b5cf6;color:#fff;border:none;font-size:.78rem">
                                 <i class="bi bi-check2 me-1"></i>Salvar
                             </button>
@@ -1587,65 +1598,158 @@ async function saveCard(productId) {
 // ══════════════════════════════════════════════════════════════════════════════
 //  AÇÕES DE ESTOQUE
 // ══════════════════════════════════════════════════════════════════════════════
+// Resolve nome do produto + label da variante (para o backend)
+function _nomesVariante(variantId, productId) {
+    const prod = products.find(p => p.id === productId);
+    let nome = null, label = null;
+    if (prod) {
+        nome = prod.name || null;
+        const vari = (prod.variants || []).find(v => v.id === variantId);
+        if (vari) label = (vari.values || []).join(', ') || null;
+    }
+    return { nome, label };
+}
+
+// Primeiro cadastro de estoque (a linha troca de layout → recarrega o card)
 async function setInitStock(variantId, productId, sku) {
     const inp = document.getElementById(`init-stock-${variantId}`);
     const qty = parseInt(inp ? inp.value : '0', 10);
     if (isNaN(qty) || qty < 0) { toast('Quantidade inválida.', false); return; }
-    await _ajustarEstoque(variantId, productId, sku, 'entrada', qty, 'Estoque inicial');
-}
-
-async function quickStock(variantId, productId, sku, tipo) {
-    await _ajustarEstoque(variantId, productId, sku, tipo, 1, null);
-}
-
-async function _ajustarEstoque(variantId, productId, sku, tipo, quantidade, observacao) {
-    // Resolve nome do produto e variante para sync por nome
-    let prodNome = null, varLabel = null;
-    const prod = products.find(p => p.id === productId);
-    if (prod) {
-        prodNome = prod.name || null;
-        const vari = (prod.variants || []).find(v => v.id === variantId);
-        if (vari) varLabel = (vari.values || []).join(', ') || null;
-    }
+    const { nome, label } = _nomesVariante(variantId, productId);
     try {
         const r = await fetch('/api/estoque/ajustar', {
             method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({ nv_variant_id: variantId, nv_product_id: productId,
-                                   sku: sku || null, tipo, quantidade, observacao,
-                                   produto_nome: prodNome, variante_label: varLabel }),
+                                   sku: sku || null, tipo:'entrada', quantidade: qty,
+                                   observacao:'Estoque inicial',
+                                   produto_nome: nome, variante_label: label }),
         });
         const j = await r.json();
-        if (!r.ok) { toast(j.erro || 'Erro ao ajustar.', false); return; }
-
+        if (!r.ok) { toast(j.erro || 'Erro ao definir.', false); return; }
         await loadStock();
-
-        const qtyEl = document.getElementById(`qty-${variantId}`);
-        if (qtyEl) {
-            const nova = j.nova_quantidade;
-            const s    = stockMap.get(variantId);
-            const min  = s ? s.min_quantity : 3;
-            qtyEl.style.color = nova <= 0 ? '#f85149' : nova <= min ? '#f0883e' : '#3fb950';
-            qtyEl.textContent  = nova;
-        }
-
-        const initInp = document.getElementById(`init-stock-${variantId}`);
-        if (initInp) {
-            const product = products.find(x => x.id === productId);
-            if (product) {
-                const exp = document.getElementById(`card-exp-${productId}`);
-                if (exp && exp.style.display !== 'none') exp.innerHTML = buildExpandedHtml(product);
-            }
-        }
-
         const product = products.find(x => x.id === productId);
         if (product) {
+            const exp = document.getElementById(`card-exp-${productId}`);
+            if (exp && exp.style.display !== 'none') exp.innerHTML = buildExpandedHtml(product);
             const sb = document.getElementById(`sbadge-${productId}`); if (sb) sb.innerHTML = stockBadgeHtml(product);
             const tb = document.getElementById(`tbadge-${productId}`); if (tb) tb.innerHTML = totalStockBadgeHtml(product);
             const vb = document.getElementById(`vbadge-${productId}`); if (vb) vb.innerHTML = custoMedioBadgeHtml(product);
         }
         renderStockSummary();
-        toast(tipo === 'entrada' ? `+${quantidade} adicionado${quantidade!==1?'s':''}` : `-${quantidade} removido${quantidade!==1?'s':''}`, true);
+        toast(`Estoque definido: ${j.nova_quantidade}`, true);
     } catch { toast('Erro de conexão.', false); }
+}
+
+// Estado por variante para gravações concorrentes seguras:
+const _estoqueFila       = new Map();  // variantId → Promise (cauda da fila)
+const _estoquePendentes  = new Map();  // variantId → nº de gravações na fila/voo
+const _estoqueConfirmado = new Map();  // variantId → última qty confirmada pelo servidor
+
+// Serializa as gravações de UMA MESMA variante: a próxima só dispara quando a
+// anterior termina. Isso evita respostas fora de ordem repintarem valor antigo
+// e evita corrida de leitura/escrita no backend (+/− somam em ordem).
+function _enfileirarEstoque(variantId, tarefa) {
+    const cauda   = _estoqueFila.get(variantId) || Promise.resolve();
+    const proxima = cauda.then(tarefa, tarefa);   // roda mesmo se a anterior falhou
+    _estoqueFila.set(variantId, proxima.catch(() => {}));
+    return proxima;
+}
+
+// Botões + / − (1 unidade) — atualização otimista
+async function quickStock(variantId, productId, sku, tipo) {
+    const s     = stockMap.get(variantId);
+    const atual = s ? (s.quantity || 0) : 0;
+    const nova  = tipo === 'entrada' ? atual + 1 : Math.max(atual - 1, 0);  // nunca negativo
+    if (nova === atual) return;   // já está em 0 e clicou "−" → nada a fazer
+    _aplicarAjuste(variantId, productId, sku, tipo, 1, nova, atual,
+                   tipo === 'entrada' ? '+1 adicionado' : '−1 removido');
+}
+
+// Edição DIRETA: define o valor absoluto digitado no campo
+async function setStockDireto(variantId, productId, sku) {
+    const inp = document.getElementById(`qty-${variantId}`);
+    if (!inp) return;
+    const s     = stockMap.get(variantId);
+    const atual = s ? (s.quantity || 0) : 0;
+    const nova  = parseInt(inp.value, 10);
+    if (isNaN(nova) || nova < 0) { inp.value = atual; toast('Quantidade inválida.', false); return; }
+    if (nova === atual) { inp.value = atual; return; }   // nada mudou → não grava
+    _aplicarAjuste(variantId, productId, sku, 'ajuste', nova, nova, atual,
+                   `Estoque definido: ${nova}`);
+}
+
+// Núcleo OTIMISTA: pinta a tela na hora; grava em 2º plano (em fila por variante);
+// reconcilia/desfaz só quando a fila daquela variante esvazia. Sem re-leitura da
+// lista inteira → mais rápido e economiza leituras do Turso.
+function _aplicarAjuste(variantId, productId, sku, tipo, quantidade, nova, anterior, msgOk) {
+    _aplicarEstoqueLocal(variantId, productId, nova);            // ← instantâneo
+    _estoquePendentes.set(variantId, (_estoquePendentes.get(variantId) || 0) + 1);
+    const { nome, label } = _nomesVariante(variantId, productId);
+
+    _enfileirarEstoque(variantId, async () => {
+        let ok = false, serverQty = null, erroMsg = null;
+        try {
+            const r = await fetch('/api/estoque/ajustar', {
+                method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({ nv_variant_id: variantId, nv_product_id: productId,
+                                       sku: sku || null, tipo, quantidade,
+                                       observacao: tipo === 'ajuste' ? 'Edição manual' : null,
+                                       produto_nome: nome, variante_label: label }),
+            });
+            const j = await r.json().catch(() => ({}));
+            if (r.ok) { ok = true; serverQty = (typeof j.nova_quantidade === 'number') ? j.nova_quantidade : null; }
+            else      { erroMsg = j.erro || 'Erro ao ajustar.'; }
+        } catch { erroMsg = 'Erro de conexão.'; }
+
+        if (ok && serverQty != null) _estoqueConfirmado.set(variantId, serverQty);
+
+        const restantes = (_estoquePendentes.get(variantId) || 1) - 1;
+        _estoquePendentes.set(variantId, restantes);
+        const ehUltima = restantes <= 0;   // só age quando esta é a última pendente
+
+        if (!ok) {
+            if (ehUltima) {   // desfaz para o último valor confirmado pelo servidor
+                const base = _estoqueConfirmado.has(variantId) ? _estoqueConfirmado.get(variantId) : anterior;
+                _aplicarEstoqueLocal(variantId, productId, base, true);
+            }
+            toast(erroMsg, false);
+            return;
+        }
+        if (ehUltima) {
+            if (serverQty != null) _aplicarEstoqueLocal(variantId, productId, serverQty);
+            toast(msgOk, true);
+        }
+    });
+}
+
+// Aplica uma nova quantidade ao estado local + DOM (célula própria, vinculadas e badges).
+// force=true sobrescreve o input mesmo se estiver com foco (usado no rollback de erro).
+function _aplicarEstoqueLocal(variantId, productId, novaQty, force) {
+    let s = stockMap.get(variantId);
+    if (s) { s.quantity = novaQty; }
+    else   { s = { nv_variant_id: variantId, quantity: novaQty, min_quantity: 3 }; stockMap.set(variantId, s); }
+    const min = (s.min_quantity != null) ? s.min_quantity : 3;
+    const cor = novaQty <= 0 ? '#f85149' : novaQty <= min ? '#f0883e' : '#3fb950';
+
+    // Célula própria (input editável)
+    const el = document.getElementById(`qty-${variantId}`);
+    if (el) {
+        if (el.tagName === 'INPUT') { if (force || document.activeElement !== el) el.value = novaQty; }
+        else el.textContent = novaQty;
+        el.style.color = cor;
+    }
+    // Células "Com Personalização" que usam esta base como estoque
+    document.querySelectorAll(`.qty-link[data-base="${variantId}"]`).forEach(le => {
+        le.textContent = novaQty; le.style.color = cor;
+    });
+    // Selos do produto + resumo do topo
+    const product = products.find(x => x.id === productId);
+    if (product) {
+        const sb = document.getElementById(`sbadge-${productId}`); if (sb) sb.innerHTML = stockBadgeHtml(product);
+        const tb = document.getElementById(`tbadge-${productId}`); if (tb) tb.innerHTML = totalStockBadgeHtml(product);
+        const vb = document.getElementById(`vbadge-${productId}`); if (vb) vb.innerHTML = custoMedioBadgeHtml(product);
+    }
+    renderStockSummary();
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

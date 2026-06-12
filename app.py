@@ -3274,8 +3274,8 @@ def api_estoque_ajustar():
                 nova_qty = quantidade          # valor absoluto
             elif tipo == "entrada":
                 nova_qty = existing["quantity"] + quantidade
-            else:  # saida_manual
-                nova_qty = existing["quantity"] - quantidade
+            else:  # saida_manual — nunca deixa o estoque negativo
+                nova_qty = max(existing["quantity"] - quantidade, 0)
 
             upd = "UPDATE sku_stock SET quantity=?, updated_at=?"
             params = [nova_qty, agora]
@@ -3298,8 +3298,8 @@ def api_estoque_ajustar():
                 nova_qty = quantidade
             elif tipo == "entrada":
                 nova_qty = quantidade
-            else:
-                nova_qty = -quantidade
+            else:  # saida_manual sem registro prévio → não fica negativo
+                nova_qty = max(-quantidade, 0)
 
             min_q = int(min_quantity) if min_quantity is not None else 3
             conn.execute(
@@ -3311,8 +3311,11 @@ def api_estoque_ajustar():
                  produto_nome, variante_label, agora),
             )
 
-        # Registra movimento (exceto ajuste que só muda min)
-        if tipo != "ajuste" or quantidade != 0:
+        # Registra o movimento no histórico. Para 'ajuste' (definição de valor
+        # absoluto) registra sempre que o valor MUDOU de fato — inclusive ao ZERAR
+        # o estoque (ex.: 5→0), caso que o guard antigo (quantidade!=0) ignorava.
+        valor_anterior = existing["quantity"] if existing else 0
+        if tipo != "ajuste" or nova_qty != valor_anterior:
             conn.execute(
                 """INSERT INTO sku_stock_movements
                    (nv_variant_id, sku, tipo, quantidade, observacao, created_at)
