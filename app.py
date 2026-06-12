@@ -2427,8 +2427,10 @@ def sincronizar_nuvemshop():
                       conn.execute("SELECT numero FROM pedidos").fetchall()}
         com_itens  = {r["pedido_numero"] for r in
                       conn.execute("SELECT DISTINCT pedido_numero FROM pedido_itens").fetchall()}
+        ativos     = {r["numero"] for r in
+                      conn.execute("SELECT numero FROM pedidos WHERE ativo=1").fetchall()}
 
-    salvos = duplicados = ja_enviados = 0
+    salvos = duplicados = ja_enviados = reconciliados_env = 0
     hoje = date.today()
 
     # Instrumentação: mede o tempo gasto em cada fase (retornado no resultado)
@@ -2484,7 +2486,7 @@ def sincronizar_nuvemshop():
 
     def _coletar(o):
         """Decide o destino de um pedido da API e acumula os inserts necessários."""
-        nonlocal salvos, duplicados, ja_enviados
+        nonlocal salvos, duplicados, ja_enviados, reconciliados_env
         numero = str(o.get("number", "")).strip()
         if not numero:
             return
@@ -2492,6 +2494,23 @@ def sincronizar_nuvemshop():
         # Pedido já existe no banco → não reprocessa (só completa itens se faltarem)
         if numero in existentes:
             duplicados += 1
+            # Pedido ATIVO que mudou de status na NuvemShop (enviado/cancelado) →
+            # atualiza aqui mesmo (caso o webhook não tenha pego).
+            if numero in ativos:
+                ship      = o.get("shipping_status")
+                cancelado = o.get("status") == "cancelled" or o.get("payment_status") in ("voided", "refunded")
+                if cancelado:
+                    pending.append((
+                        "UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar='Cancelado' WHERE numero=? AND ativo=1",
+                        (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), numero)))
+                    ativos.discard(numero); reconciliados_env += 1
+                elif ship in ("shipped", "delivered"):
+                    c2 = _parse_order_fields(o, hoje)
+                    st = (c2 and c2["status"]) or "NO PRAZO"
+                    pending.append((
+                        "UPDATE pedidos SET ativo=0, enviado_em=?, status_ao_enviar=? WHERE numero=? AND ativo=1",
+                        (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), st, numero)))
+                    ativos.discard(numero); reconciliados_env += 1
             if numero not in com_itens:
                 produtos = o.get("products") or []
                 if produtos:
@@ -2656,7 +2675,7 @@ def sincronizar_nuvemshop():
         )
     _limpar_estado()
     return {"done": True, "salvos": salvos, "duplicados": duplicados,
-            "ja_enviados": ja_enviados, "reconciliados": reconciliados,
+            "ja_enviados": ja_enviados, "reconciliados": reconciliados + reconciliados_env,
             "total": salvos + ja_enviados}
 
 
