@@ -382,8 +382,8 @@ def init_db():
         except Exception:
             pass
 
-        # sku_stock — nomes para sync
-        for col in ["produto_nome TEXT", "variante_label TEXT"]:
+        # sku_stock — nomes para sync + grupo de compartilhamento de estoque
+        for col in ["produto_nome TEXT", "variante_label TEXT", "grupo_estoque INTEGER"]:
             try: conn.execute(f"ALTER TABLE sku_stock ADD COLUMN {col}")
             except Exception: pass
 
@@ -447,6 +447,7 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_pers_hist             ON personalizacao_historico(personalizacao_id)",
             "CREATE INDEX IF NOT EXISTS idx_stock_variant         ON sku_stock(nv_variant_id)",
             "CREATE INDEX IF NOT EXISTS idx_stock_produto_nome    ON sku_stock(produto_nome)",
+            "CREATE INDEX IF NOT EXISTS idx_stock_grupo           ON sku_stock(grupo_estoque)",
             "CREATE INDEX IF NOT EXISTS idx_costs_variant         ON sku_costs(nv_variant_id)",
             "CREATE INDEX IF NOT EXISTS idx_costs_sku             ON sku_costs(sku)",
             "CREATE INDEX IF NOT EXISTS idx_movs_variant          ON sku_stock_movements(nv_variant_id)",
@@ -3085,6 +3086,34 @@ def limpar_cancelados():
 
 # ── Helpers — Estoque ────────────────────────────────────────────────────────
 
+def _sync_grupo_estoque(conn, grupo, variante_label, nova_qty, agora, skip_vid=None):
+    """Sincroniza o estoque entre variantes do MESMO grupo de compartilhamento e
+    MESMO tamanho (variante_label). Usado quando o usuário marca produtos como
+    'compartilhamento de estoque': mexer no estoque de um reflete em todos.
+
+    Eficiência Turso: 1 SELECT (variantes do grupo) + 1 execute_batch. Sem loop de leitura."""
+    if not grupo:
+        return 0
+    if variante_label:
+        rows = conn.execute(
+            """SELECT id FROM sku_stock
+               WHERE grupo_estoque = ?
+                 AND UPPER(TRIM(COALESCE(variante_label,''))) = UPPER(TRIM(?))
+                 AND nv_variant_id != ?""",
+            (grupo, variante_label, skip_vid if skip_vid is not None else -999999999),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id FROM sku_stock WHERE grupo_estoque = ? AND nv_variant_id != ?",
+            (grupo, skip_vid if skip_vid is not None else -999999999),
+        ).fetchall()
+    if not rows:
+        return 0
+    batch = [("UPDATE sku_stock SET quantity=?, updated_at=? WHERE id=?", (nova_qty, agora, r["id"])) for r in rows]
+    conn.execute_batch(batch)
+    return len(rows)
+
+
 def _build_sync_query(produto_nome, variante_label, sku_origem, skip_vid):
     """Monta a query de busca de registros para sincronização.
 
@@ -3262,11 +3291,11 @@ def api_estoque_ajustar():
     with get_conn() as conn:
         if nv_variant_id:
             existing = conn.execute(
-                "SELECT id, quantity FROM sku_stock WHERE nv_variant_id=?", (nv_variant_id,)
+                "SELECT id, quantity, grupo_estoque, variante_label FROM sku_stock WHERE nv_variant_id=?", (nv_variant_id,)
             ).fetchone()
         else:
             existing = conn.execute(
-                "SELECT id, quantity FROM sku_stock WHERE sku=? AND nv_variant_id IS NULL", (sku,)
+                "SELECT id, quantity, grupo_estoque, variante_label FROM sku_stock WHERE sku=? AND nv_variant_id IS NULL", (sku,)
             ).fetchone()
 
         if existing:
@@ -3329,7 +3358,85 @@ def api_estoque_ajustar():
             skip_vid=nv_variant_id, sku_origem=sku
         )
 
+        # ── Sincroniza variantes do mesmo GRUPO de compartilhamento (mesmo tamanho) ──
+        grupo  = existing["grupo_estoque"] if existing else None
+        vlabel = variante_label or (existing["variante_label"] if existing else None)
+        synced += _sync_grupo_estoque(conn, grupo, vlabel, nova_qty, agora, skip_vid=nv_variant_id)
+
     return jsonify({"ok": True, "nova_quantidade": nova_qty, "sincronizados": synced})
+
+
+@app.route("/api/estoque/compartilhar", methods=["POST"])
+@login_required
+def api_estoque_compartilhar():
+    """Marca vários produtos como 'compartilhamento de estoque': todas as variantes
+    em estoque deles entram no MESMO grupo. A partir daí, mexer no estoque de um
+    tamanho reflete nos outros produtos do grupo (mesmo tamanho).
+    Eficiência Turso: 1 SELECT (max grupo) + 1 UPDATE."""
+    data = request.get_json() or {}
+    product_ids = data.get("nv_product_ids") or []
+    if not product_ids:
+        return jsonify({"erro": "nenhum produto selecionado"}), 400
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        row = conn.execute("SELECT COALESCE(MAX(grupo_estoque), 0) AS m FROM sku_stock").fetchone()
+        novo_grupo = (row["m"] or 0) + 1
+        placeholders = ",".join("?" * len(product_ids))
+        conn.execute(
+            f"UPDATE sku_stock SET grupo_estoque=?, updated_at=? WHERE nv_product_id IN ({placeholders})",
+            [novo_grupo, agora] + list(product_ids),
+        )
+    return jsonify({"ok": True, "grupo": novo_grupo, "produtos": len(product_ids)})
+
+
+@app.route("/api/estoque/descompartilhar", methods=["POST"])
+@login_required
+def api_estoque_descompartilhar():
+    """Remove os produtos do grupo de compartilhamento — estoque volta a ser independente."""
+    data = request.get_json() or {}
+    product_ids = data.get("nv_product_ids") or []
+    if not product_ids:
+        return jsonify({"erro": "nenhum produto selecionado"}), 400
+    with get_conn() as conn:
+        placeholders = ",".join("?" * len(product_ids))
+        conn.execute(
+            f"UPDATE sku_stock SET grupo_estoque=NULL WHERE nv_product_id IN ({placeholders})",
+            list(product_ids),
+        )
+    return jsonify({"ok": True})
+
+
+@app.route("/api/estoque/definir-massa", methods=["POST"])
+@login_required
+def api_estoque_definir_massa():
+    """Define a MESMA quantidade de estoque para todas as variantes (já cadastradas)
+    dos produtos selecionados, de uma vez. Registra movimento 'ajuste'.
+    Eficiência Turso: 1 SELECT + 1 execute_batch."""
+    data = request.get_json() or {}
+    product_ids = data.get("nv_product_ids") or []
+    try:
+        quantidade = int(data.get("quantidade"))
+    except (TypeError, ValueError):
+        return jsonify({"erro": "quantidade inválida"}), 400
+    if not product_ids:
+        return jsonify({"erro": "nenhum produto selecionado"}), 400
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        placeholders = ",".join("?" * len(product_ids))
+        rows = conn.execute(
+            f"SELECT id, nv_variant_id, sku FROM sku_stock WHERE nv_product_id IN ({placeholders})",
+            list(product_ids),
+        ).fetchall()
+        batch = []
+        for r in rows:
+            batch.append(("UPDATE sku_stock SET quantity=?, updated_at=? WHERE id=?",
+                          (quantidade, agora, r["id"])))
+            batch.append(("""INSERT INTO sku_stock_movements
+                             (nv_variant_id, sku, tipo, quantidade, observacao, created_at)
+                             VALUES (?, ?, 'ajuste', ?, 'ajuste em massa', ?)""",
+                          (r["nv_variant_id"], r["sku"], quantidade, agora)))
+        conn.execute_batch(batch)
+    return jsonify({"ok": True, "afetados": len(rows)})
 
 
 @app.route("/api/estoque/sincronizar-catalogo", methods=["POST"])

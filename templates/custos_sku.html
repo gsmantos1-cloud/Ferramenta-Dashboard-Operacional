@@ -294,6 +294,26 @@
             <i class="bi bi-lightning-fill me-1"></i>Gerar e Salvar
         </button>
         <span id="bulkProgress" style="font-size:.78rem;color:var(--muted)"></span>
+
+        <!-- ═══ Ações de ESTOQUE em massa ═══ -->
+        <div class="vr mx-1" style="height:28px"></div>
+        <div style="display:flex;align-items:center;gap:5px">
+            <label style="font-size:.75rem;color:var(--muted);white-space:nowrap;margin:0">Estoque</label>
+            <input id="bulkStockQty" type="number" min="0" placeholder="qtd"
+                   class="form-control form-control-sm" style="width:70px">
+            <button class="btn btn-outline-primary btn-sm py-0" onclick="definirEstoqueMassa()"
+                    title="Define essa quantidade de estoque em todos os produtos selecionados">
+                <i class="bi bi-box-seam me-1"></i>Definir
+            </button>
+        </div>
+        <button class="btn btn-outline-success btn-sm py-0" onclick="compartilharEstoque()"
+                title="Os produtos selecionados passam a dividir o mesmo estoque (por tamanho)">
+            <i class="bi bi-link-45deg me-1"></i>Compartilhar estoque
+        </button>
+        <button class="btn btn-outline-warning btn-sm py-0" onclick="descompartilharEstoque()"
+                title="Desfaz o compartilhamento de estoque dos selecionados">
+            <i class="bi bi-x-circle me-1"></i>Desfazer
+        </button>
     </div>
 </div>
 
@@ -834,6 +854,60 @@ async function applyBulk() {
     renderAll();
 }
 
+// ═══ ESTOQUE EM MASSA ═══════════════════════════════════════════════════════
+// Define a mesma quantidade de estoque em todos os produtos selecionados
+async function definirEstoqueMassa() {
+    if (!selectedProducts.size) { toast('Selecione produtos primeiro.', false); return; }
+    const raw = document.getElementById('bulkStockQty').value;
+    if (raw === '') { toast('Digite a quantidade de estoque.', false); return; }
+    const qtd = parseInt(raw, 10);
+    if (isNaN(qtd) || qtd < 0) { toast('Quantidade inválida.', false); return; }
+    if (!confirm(`Definir estoque = ${qtd} em ${selectedProducts.size} produto(s) selecionado(s)?`)) return;
+
+    const r = await fetch('/api/estoque/definir-massa', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nv_product_ids: [...selectedProducts], quantidade: qtd }),
+    });
+    const d = await r.json();
+    if (r.ok) {
+        toast(`✓ Estoque ${qtd} aplicado em ${d.afetados} variante(s).`);
+        document.getElementById('bulkStockQty').value = '';
+        await loadStock(); clearSelection(); renderAll();
+    } else { toast(d.erro || 'Erro ao definir estoque.', false); }
+}
+
+// Agrupa os selecionados para compartilhar o mesmo estoque físico (por tamanho)
+async function compartilharEstoque() {
+    if (selectedProducts.size < 2) { toast('Selecione 2 ou mais produtos para compartilhar.', false); return; }
+    if (!confirm(`Marcar ${selectedProducts.size} produtos como compartilhamento de estoque?\n\nA partir de agora, mexer no estoque de um tamanho reflete nos outros (mesmo tamanho).`)) return;
+
+    const r = await fetch('/api/estoque/compartilhar', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nv_product_ids: [...selectedProducts] }),
+    });
+    const d = await r.json();
+    if (r.ok) {
+        toast(`✓ ${d.produtos} produtos agora compartilham estoque (grupo ${d.grupo}).`);
+        await loadStock(); clearSelection(); renderAll();
+    } else { toast(d.erro || 'Erro ao compartilhar.', false); }
+}
+
+// Desfaz o compartilhamento dos selecionados
+async function descompartilharEstoque() {
+    if (!selectedProducts.size) { toast('Selecione produtos primeiro.', false); return; }
+    if (!confirm(`Desfazer o compartilhamento de estoque de ${selectedProducts.size} produto(s)?`)) return;
+
+    const r = await fetch('/api/estoque/descompartilhar', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nv_product_ids: [...selectedProducts] }),
+    });
+    const d = await r.json();
+    if (r.ok) {
+        toast('✓ Compartilhamento desfeito. Estoque independente novamente.');
+        await loadStock(); clearSelection(); renderAll();
+    } else { toast(d.erro || 'Erro ao desfazer.', false); }
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  FILTROS
 // ══════════════════════════════════════════════════════════════════════════════
@@ -943,6 +1017,13 @@ function stockBadgeHtml(product) {
     return `<span style="background:rgba(139,148,158,.1);border:1px solid #8b949e44;color:#8b949e;border-radius:12px;padding:2px 9px;font-size:.73rem;font-weight:600"><i class="bi bi-dash-circle me-1"></i>Sem estoque</span>`;
 }
 
+// Badge que indica se o produto está num grupo de compartilhamento de estoque
+function sharedBadgeHtml(product) {
+    const shared = product.variants.some(v => { const s = stockMap.get(v.id); return s && s.grupo_estoque; });
+    if (!shared) return '';
+    return `<span style="background:rgba(88,166,255,.12);border:1px solid #58a6ff55;color:#58a6ff;border-radius:12px;padding:2px 9px;font-size:.73rem;font-weight:600" title="Compartilha estoque com outros produtos (por tamanho)"><i class="bi bi-link-45deg me-1"></i>Compartilhado</span>`;
+}
+
 function totalStockBadgeHtml(product) {
     // Ignora variantes "Com Personalização" para não contar em dobro
     const total = product.variants
@@ -1038,6 +1119,7 @@ function renderCard(p) {
                             <div id="tbadge-${p.id}">${totalStockBadgeHtml(p)}</div>
                             <div id="vbadge-${p.id}">${custoMedioBadgeHtml(p)}</div>
                             <div id="cbadge-${p.id}">${costBadgeHtml(p)}</div>
+                            <div id="shbadge-${p.id}">${sharedBadgeHtml(p)}</div>
                             ${teamBadge}
                             <span style="color:var(--muted);font-size:.73rem">${nv} var.</span>
                         </div>
