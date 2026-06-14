@@ -3200,6 +3200,99 @@ def _deducao_sync_por_nome(conn, produto_nome, variante_label, qty_deduzida, ago
     return len(rows)
 
 
+def _resolver_sku_variante(conn, nv_variant_id, sku=None):
+    """Descobre o SKU 'oficial' de uma variante. Usa o SKU informado se houver;
+    se vier vazio, busca em sku_costs — que é a fonte de verdade do mapeamento
+    SKU↔variante (onde o usuário cadastra o SKU na tela de Custos SKU)."""
+    if sku and str(sku).strip():
+        return str(sku).strip()
+    if nv_variant_id:
+        r = conn.execute(
+            """SELECT sku FROM sku_costs
+               WHERE nv_variant_id=? AND sku IS NOT NULL AND TRIM(sku) <> ''
+               ORDER BY (effective_to IS NULL) DESC, effective_from DESC, id DESC
+               LIMIT 1""",
+            (nv_variant_id,)
+        ).fetchone()
+        if r and r["sku"]:
+            return str(r["sku"]).strip()
+    return None
+
+
+def _sync_sku(conn, sku, nova_qty, agora, skip_vid=None,
+              motivo="Unificação por SKU", pedido_nr=None):
+    """UNIFICA o estoque por SKU (a pedido do usuário: trabalhar por SKU).
+
+    Aplica `nova_qty` em TODAS as variantes que compartilham o MESMO SKU — a
+    fonte de verdade do mapeamento é a tabela sku_costs, porque o mesmo SKU
+    (ex.: 'BR RONALDO - P') aparece em vários produtos/variantes diferentes do
+    site. Cria a linha em sku_stock se ainda não existir (upsert). Assim, mexeu
+    no estoque de um SKU → reflete em todos os produtos com aquele SKU.
+
+    Eficiência Turso: 1 SELECT em sku_costs (índice idx_costs_sku) + 1 SELECT em
+    sku_stock (índice idx_stock_variant) + 1 gravação em lote. NENHUM SELECT
+    dentro de loop. Retorna quantas OUTRAS variantes foram sincronizadas."""
+    if not sku or not str(sku).strip():
+        return 0
+    sku_n = str(sku).strip()
+    skip  = skip_vid if skip_vid is not None else -999999999
+
+    # Todas as variantes (de qualquer produto) que têm este SKU — exceto a origem
+    seen = {}   # nv_variant_id → nv_product_id  (dedup por variante)
+    for r in conn.execute(
+        """SELECT DISTINCT nv_variant_id, nv_product_id
+           FROM sku_costs
+           WHERE UPPER(TRIM(sku)) = UPPER(TRIM(?))
+             AND nv_variant_id IS NOT NULL
+             AND nv_variant_id != ?""",
+        (sku_n, skip)
+    ).fetchall():
+        v = r["nv_variant_id"]
+        if v not in seen:
+            seen[v] = r["nv_product_id"]
+    if not seen:
+        return 0
+
+    vids = list(seen.keys())
+    ph   = ",".join("?" * len(vids))
+    existentes = {
+        x["nv_variant_id"]: x["id"]
+        for x in conn.execute(
+            f"SELECT id, nv_variant_id FROM sku_stock WHERE nv_variant_id IN ({ph})",
+            vids
+        ).fetchall()
+    }
+
+    batch = []
+    for vid, pid in seen.items():
+        if vid in existentes:
+            batch.append((
+                "UPDATE sku_stock SET quantity=?, sku=?, updated_at=? WHERE id=?",
+                (nova_qty, sku_n, agora, existentes[vid])
+            ))
+        else:
+            batch.append((
+                """INSERT INTO sku_stock
+                   (nv_variant_id, nv_product_id, sku, quantity, min_quantity, updated_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (vid, pid, sku_n, nova_qty, 3, agora)
+            ))
+        batch.append((
+            """INSERT INTO sku_stock_movements
+               (nv_variant_id, sku, tipo, quantidade, pedido_numero, observacao, created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (vid, sku_n, "ajuste", nova_qty, pedido_nr, motivo, agora)
+        ))
+
+    # execute_batch (1 request) no Turso; fallback em loop no SQLite local
+    if hasattr(conn, "execute_batch"):
+        conn.execute_batch(batch)
+    else:
+        for sql, p in batch:
+            conn.execute(sql, p)
+    return len(seen)
+
+
 # ── Routes — Estoque ─────────────────────────────────────────────────────────
 
 @app.route("/api/estoque", methods=["GET"])
@@ -3318,6 +3411,9 @@ def api_estoque_ajustar():
             if variante_label:
                 upd += ", variante_label=?"
                 params.append(variante_label)
+            if sku:                       # mantém o SKU gravado na linha de estoque
+                upd += ", sku=?"
+                params.append(sku)
             upd += " WHERE id=?"
             params.append(existing["id"])
             conn.execute(upd, params)
@@ -3352,10 +3448,11 @@ def api_estoque_ajustar():
                 (nv_variant_id, sku, tipo, abs(quantidade), observacao, agora),
             )
 
-        # ── Sincroniza produtos com mesmo nome + mesma SKU ─────────────────
-        synced = _sync_estoque_por_nome(
-            conn, produto_nome, variante_label, nova_qty, agora,
-            skip_vid=nv_variant_id, sku_origem=sku
+        # ── Unifica o estoque por SKU (todas as variantes com o mesmo SKU) ──
+        sku_real = _resolver_sku_variante(conn, nv_variant_id, sku)
+        synced = _sync_sku(
+            conn, sku_real, nova_qty, agora,
+            skip_vid=nv_variant_id, motivo="Unificação por SKU (ajuste manual)"
         )
 
         # ── Sincroniza variantes do mesmo GRUPO de compartilhamento (mesmo tamanho) ──
@@ -3825,11 +3922,11 @@ def api_estoque_entrada_lote():
              nv_variant_id, nv_product_id)
         )
 
-        # ── Sync por nome + SKU ──────────────────────────────────────
-        _sync_estoque_por_nome(
-            conn, produto_nome or (stock["produto_nome"] if stock else None),
-            variante_label or (stock["variante_label"] if stock else None),
-            nova_qty, agora, skip_vid=nv_variant_id, sku_origem=sku
+        # ── Unifica o estoque por SKU (a quantidade resultante) ──────
+        sku_real = _resolver_sku_variante(conn, nv_variant_id, sku)
+        _sync_sku(
+            conn, sku_real, nova_qty, agora,
+            skip_vid=nv_variant_id, motivo="Unificação por SKU (entrada CMP)"
         )
 
         conn.commit()
@@ -5159,11 +5256,13 @@ def _descontar_item_estoque(conn, item, agora):
         VALUES (?,?,?,?,?,?,?)""",
         (nv_vid, item["variante"] or "", "saida_venda",
          qty_est, f"ATK-{item['pedido_id']}", "Saída por pedido de atacado", agora))
-    _deducao_sync_por_nome(
-        conn, stock["produto_nome"], stock["variante_label"],
-        qty_est, agora, skip_vid=nv_vid,
-        pedido_nr=f"ATK-{item['pedido_id']}",
-        sku_origem=stock["sku"]
+    # Unifica o estoque por SKU: todas as variantes com o mesmo SKU ficam com a
+    # quantidade resultante (nova_qty) — mantém o estoque consistente por SKU.
+    sku_real = _resolver_sku_variante(conn, nv_vid, stock["sku"])
+    _sync_sku(
+        conn, sku_real, nova_qty, agora, skip_vid=nv_vid,
+        motivo="Unificação por SKU (saída atacado)",
+        pedido_nr=f"ATK-{item['pedido_id']}"
     )
     conn.execute("UPDATE atacado_itens SET estoque_descontado=1 WHERE id=?", (item["id"],))
     return True, "descontado"
