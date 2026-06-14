@@ -4582,10 +4582,11 @@ def api_compras_registros_add():
                      nv_vid)
                 )
 
-                # Sync por nome+SKU
-                _sync_estoque_por_nome(
-                    conn, produto, var_label, nova_qty, agora,
-                    skip_vid=nv_vid, sku_origem=sku_tam
+                # Unifica o estoque por SKU (todas as variantes com o mesmo SKU)
+                sku_real = _resolver_sku_variante(conn, nv_vid, sku_tam)
+                _sync_sku(
+                    conn, sku_real, nova_qty, agora,
+                    skip_vid=nv_vid, motivo="Unificação por SKU (compra)"
                 )
 
                 estoque_atualizados += 1
