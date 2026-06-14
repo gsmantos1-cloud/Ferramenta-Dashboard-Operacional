@@ -43,6 +43,7 @@
     </button>
 </div>
 
+<div class="d-flex flex-wrap gap-3 mb-3" id="kpisFin"></div>
 <div class="d-flex flex-wrap gap-3 mb-4" id="counters"></div>
 <div id="lista"></div>
 <div id="emptyMsg" style="display:none;text-align:center;padding:60px;color:var(--muted)">
@@ -478,6 +479,7 @@ async function carregar() {
         const r = await fetch('/api/atacado/pedidos?' + params.toString());
         pedidos = await r.json();
         renderContadores();
+        renderKpisFin();
         renderLista();
     } catch(e) { console.error(e); }
     document.getElementById('loadingMsg').style.display = 'none';
@@ -521,9 +523,31 @@ function renderContadores() {
         </div>`).join('');
 }
 
+// KPIs financeiros (faturamento / custo / lucro / nº de vendas) do conjunto carregado
+// — respeita os filtros do servidor (pago, datas, busca). Frete fica de fora do lucro.
+function renderKpisFin() {
+    const fat = pedidos.reduce((s,p)=>s+(p.valor_total||0),0);
+    const cst = pedidos.reduce((s,p)=>s+(p.custo_total||0),0);
+    const luc = fat - cst;
+    const mg  = fat>0 ? (luc/fat*100) : 0;
+    const cards = [
+        {lbl:'Faturamento', val:'R$ '+fmtMoeda(fat), color:'#f0e68c', sub:'produtos (sem frete)'},
+        {lbl:'Custo total', val:'R$ '+fmtMoeda(cst), color:'#f0883e', sub:''},
+        {lbl:'Lucro',       val:'R$ '+fmtMoeda(luc), color:luc>=0?'#3fb950':'#f85149', sub:fat>0?('margem '+mg.toFixed(1)+'%'):''},
+        {lbl:'Vendas',      val:String(pedidos.length), color:'#58a6ff', sub:'pedidos'},
+    ];
+    const el = document.getElementById('kpisFin');
+    if (el) el.innerHTML = cards.map(c=>`
+        <div class="cnt-card" style="border-left:3px solid ${c.color};cursor:default;flex:1;min-width:150px">
+            <div class="val" style="color:${c.color};font-size:1.2rem">${c.val}</div>
+            <div class="lbl">${c.lbl}${c.sub?` · ${c.sub}`:''}</div>
+        </div>`).join('');
+}
+
 // Re-renderiza contadores + lista a partir dos dados em memória (sem buscar no servidor)
 function renderLocal() {
     renderContadores();
+    renderKpisFin();
     renderLista();
 }
 
@@ -607,14 +631,17 @@ function renderLista() {
 }
 
 // ── Catálogo de produtos (com estoque) ───────────────────────────────
+let costMap = new Map();   // nv_variant_id -> CMP vigente (sugere o custo no atacado)
 async function carregarCatalogo() {
     if (catalogoProdutos.length) return;
     try {
-        const [rProd, rStk] = await Promise.all([
+        const [rProd, rStk, rCost] = await Promise.all([
             fetch('/api/nuvemshop/produtos').then(r=>r.json()),
             fetch('/api/estoque/listar').then(r=>r.json()),
+            fetch('/api/sku-costs').then(r=>r.json()).catch(()=>[]),
         ]);
         const stockMap = new Map((rStk||[]).map(s=>[s.nv_variant_id,s]));
+        costMap = new Map((rCost||[]).filter(c=>c.nv_variant_id).map(c=>[Number(c.nv_variant_id), Number(c.cost)||0]));
         catalogoProdutos = (rProd||[]).map(p=>({
             id: p.id,
             name: p.name,
@@ -760,6 +787,10 @@ function _popularVariantes(rowId, prod) {
         atualizarLimiteEstoque(rowId);
         const v = prod.variants.find(x => String(x.id) === String(varSel.value));
         setItemImg(rowId, (v && v.imageUrl) || prod.imageUrl);  // imagem da variante, se houver
+        // Sugere o custo (CMP) da variante se o campo ainda estiver vazio
+        const icu = document.getElementById(`icu-${rowId}`);
+        const cmp = costMap.get(parseInt(varSel.value));
+        if (icu && !icu.value && cmp) icu.value = cmp;
     };
 }
 
@@ -1020,8 +1051,13 @@ function addItem() {
             <span class="inp-num" id="itot-${n}" style="font-weight:700;color:var(--blue);text-align:center;width:50px">0</span>
             <div style="display:flex;flex-direction:column;align-items:center;width:90px">
                 <input type="number" class="inp-num-sm" id="ivu-${n}" value="" min="0" step="0.01" placeholder="0,00"
-                       oninput="atualizarSubtotal('${n}')" title="Valor unitário em R$" style="width:85px">
+                       oninput="atualizarSubtotal('${n}')" title="Valor unitário de venda em R$" style="width:85px">
                 <span id="isub-${n}" style="font-size:.63rem;color:#f0e68c;margin-top:1px"></span>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:center;width:90px">
+                <input type="number" class="inp-num-sm" id="icu-${n}" value="" min="0" step="0.01" placeholder="custo"
+                       title="Custo unitário — puxa o CMP sozinho ao escolher a variante (editável). NÃO aparece no PDF do cliente." style="width:85px">
+                <span style="font-size:.63rem;color:var(--muted);margin-top:1px">custo 🔒</span>
             </div>
             <button onclick="duplicarItem(${n})" style="background:none;border:none;color:#58a6ff;cursor:pointer;flex-shrink:0" title="Duplicar produto">
                 <i class="bi bi-files"></i>
@@ -1070,6 +1106,8 @@ function addItemPreenchido(it) {
     document.getElementById(`iest-${n}`).value  = it.qty_estoque || 0;
     document.getElementById(`iforn-${n}`).value = it.qty_fornecedor || 0;
     document.getElementById(`ivu-${n}`).value   = it.valor_unit || '';
+    const icuEl = document.getElementById(`icu-${n}`);
+    if (icuEl) icuEl.value = (it.custo_unit != null && it.custo_unit > 0) ? it.custo_unit : '';
     const obsEl = document.getElementById(`iobs-${n}`);
     if (obsEl) obsEl.value = it.observacao || '';
     atualizarTotal(`${n}`);
@@ -1094,11 +1132,13 @@ async function salvarPedido() {
         const nvVid = opt?.value && !isNaN(opt.value) ? parseInt(opt.value) : null;
         const vLabel = opt?.dataset?.label || ivar?.value || '';
         const valorUnit = parseFloat(document.getElementById(`ivu-${i}`)?.value||0);
+        const icuVal = document.getElementById(`icu-${i}`)?.value;
+        const custoUnit = (icuVal !== '' && icuVal != null) ? parseFloat(icuVal) : null;  // null → backend puxa o CMP
         const obs = (document.getElementById(`iobs-${i}`)?.value || '').trim();
         const itemRow = document.getElementById(`item-${i}`);
         const itemId = itemRow?.dataset.itemId || null;
         const imagem = itemRow?.dataset.imgManual || '';
-        itens.push({id:itemId, produto:prod, variante:vLabel, qty_estoque:est, qty_fornecedor:forn, nv_variant_id:nvVid, valor_unit:valorUnit, observacao:obs, imagem:imagem});
+        itens.push({id:itemId, produto:prod, variante:vLabel, qty_estoque:est, qty_fornecedor:forn, nv_variant_id:nvVid, valor_unit:valorUnit, custo_unit:custoUnit, observacao:obs, imagem:imagem});
     }
     if (!itens.length) { document.getElementById('erroModal').textContent='Adicione ao menos um item com quantidade.'; return; }
 
@@ -1455,7 +1495,7 @@ function renderDetalhe(pedido, itens) {
 
     // Itens — ordena por nome do produto (A→Z) e, dentro do mesmo produto,
     // por tamanho na ordem natural (P, M, G, GG...).
-    let somaTotal = 0;
+    let somaTotal = 0, custoTotal = 0;
     const itensOrdenados = ordenarItensAtacado(itens);
     document.getElementById('detItens').innerHTML = itensOrdenados.map(item => {
         const est  = item.qty_estoque   || 0;
@@ -1463,6 +1503,7 @@ function renderDetalhe(pedido, itens) {
         const vu   = item.valor_unit    || 0;
         const sub  = vu * item.quantidade;
         somaTotal += sub;
+        custoTotal += (item.custo_unit || 0) * item.quantidade;
 
         const descBtn = est > 0 && !item.estoque_descontado
             ? `<button class="btn btn-sm" style="font-size:.68rem;padding:2px 8px;background:rgba(63,185,80,.12);border:1px solid #3fb95044;color:var(--green)"
@@ -1531,6 +1572,20 @@ function renderDetalhe(pedido, itens) {
                 <td colspan="4"></td>
             </tr>`;
         }
+        // Resumo financeiro INTERNO (não vai para o PDF do cliente)
+        const lucroPedido  = somaTotal - custoTotal;
+        const margemPedido = somaTotal > 0 ? (lucroPedido / somaTotal * 100) : 0;
+        totFoot += `
+            <tr><td colspan="3" style="padding:6px 8px 2px;text-align:right;font-size:.78rem;color:var(--muted)">
+                    <i class="bi bi-lock-fill me-1"></i>Custo dos produtos</td>
+                <td style="padding:6px 8px 2px;text-align:right;font-weight:700;color:#f0883e;font-size:.85rem">R$ ${fmtMoeda(custoTotal)}</td>
+                <td colspan="4"></td></tr>
+            <tr><td colspan="3" style="padding:2px 8px;text-align:right;font-size:.92rem;color:var(--text);font-weight:800">Lucro estimado</td>
+                <td style="padding:2px 8px;text-align:right;font-weight:800;color:${lucroPedido>=0?'#3fb950':'#f85149'};font-size:1.02rem">R$ ${fmtMoeda(lucroPedido)}
+                    <div style="font-size:.66rem;color:var(--muted);font-weight:600">${somaTotal>0?'margem '+margemPedido.toFixed(1)+'%':''}</div></td>
+                <td colspan="4"></td></tr>
+            <tr><td colspan="8" style="padding:0 8px 8px;text-align:right;font-size:.66rem;color:var(--muted)">
+                    <i class="bi bi-eye-slash me-1"></i>Custo e lucro são internos — não entram no PDF do cliente.</td></tr>`;
     }
     document.getElementById('detTotais').innerHTML = totFoot;
 

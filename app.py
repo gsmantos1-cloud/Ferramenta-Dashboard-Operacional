@@ -355,6 +355,7 @@ def init_db():
             "qty_fornecedor INTEGER DEFAULT 0",
             "estoque_descontado INTEGER DEFAULT 0",
             "valor_unit REAL DEFAULT 0",
+            "custo_unit REAL DEFAULT 0",
             "observacao TEXT",
             "imagem TEXT",
         ]:
@@ -4763,7 +4764,8 @@ def api_atacado_list():
                    COUNT(ai.id)                        AS total_itens,
                    SUM(ai.quantidade)                  AS total_qty,
                    SUM(CASE WHEN ai.separado=1 THEN ai.quantidade ELSE 0 END) AS qty_separada,
-                   SUM(COALESCE(ai.valor_unit,0) * ai.quantidade) AS valor_total
+                   SUM(COALESCE(ai.valor_unit,0) * ai.quantidade) AS valor_total,
+                   SUM(COALESCE(ai.custo_unit,0) * ai.quantidade) AS custo_total
             FROM atacado_pedidos ap
             LEFT JOIN atacado_itens ai ON ai.pedido_id = ap.id
         """
@@ -4785,6 +4787,34 @@ def api_atacado_list():
         sql += " GROUP BY ap.id ORDER BY ap.numero DESC, ap.created_at DESC"
         rows = conn.execute(sql, params).fetchall()
     return jsonify([dict(r) for r in rows])
+
+
+def _cmp_vigente(conn, nv_variant_id):
+    """Custo médio ponderado (CMP) vigente de uma variante; 0 se não houver."""
+    if not nv_variant_id:
+        return 0.0
+    r = conn.execute(
+        """SELECT cost FROM sku_costs
+           WHERE nv_variant_id=? AND (effective_to IS NULL OR effective_to >= date('now'))
+           ORDER BY effective_from DESC LIMIT 1""",
+        (nv_variant_id,)
+    ).fetchone()
+    try:
+        return float(r["cost"]) if r and r["cost"] is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _resolver_custo_unit(conn, item, nv_vid):
+    """Custo unitário do item: usa o valor informado (editável); se vier vazio,
+    puxa o CMP vigente da variante. NUNCA aparece no PDF do cliente."""
+    cu = item.get("custo_unit")
+    if cu not in (None, ""):
+        try:
+            return max(float(cu), 0)
+        except (TypeError, ValueError):
+            pass
+    return _cmp_vigente(conn, nv_vid)
 
 
 @app.route("/api/atacado/pedidos", methods=["POST"])
@@ -4837,16 +4867,17 @@ def api_atacado_criar():
             qty_total = qty_est + qty_forn
             nv_vid    = item.get("nv_variant_id") or None
             valor_unit = float(item.get("valor_unit") or 0)
+            custo_unit = _resolver_custo_unit(conn, item, nv_vid)
             obs_item  = (item.get("observacao") or "").strip() or None
             imagem    = (item.get("imagem") or "").strip() or None
             if produto and qty_total > 0:
                 conn.execute(
                     """INSERT INTO atacado_itens
                        (pedido_id, produto, variante, quantidade,
-                        qty_estoque, qty_fornecedor, nv_variant_id, valor_unit, observacao, imagem)
-                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                        qty_estoque, qty_fornecedor, nv_variant_id, valor_unit, custo_unit, observacao, imagem)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                     (pedido_id, produto, variante, qty_total,
-                     qty_est, qty_forn, nv_vid, valor_unit, obs_item, imagem)
+                     qty_est, qty_forn, nv_vid, valor_unit, custo_unit, obs_item, imagem)
                 )
         _log_atacado(conn, pedido_id, "Pedido criado",
                      f"Cliente: {cliente} · {len(itens)} item(ns)", session.get("usuario", ""))
@@ -5074,6 +5105,7 @@ def api_atacado_editar(pid):
             qty_tot  = qty_est + qty_forn
             nv_vid   = item.get("nv_variant_id") or None
             valor    = float(item.get("valor_unit") or 0)
+            custo    = _resolver_custo_unit(conn, item, nv_vid)
             obs_item = (item.get("observacao") or "").strip() or None
             imagem   = (item.get("imagem") or "").strip() or None
             if not produto or qty_tot <= 0:
@@ -5097,15 +5129,15 @@ def api_atacado_editar(pid):
                 conn.execute(
                     """UPDATE atacado_itens SET
                          produto=?, variante=?, quantidade=?, qty_estoque=?, qty_fornecedor=?,
-                         nv_variant_id=?, valor_unit=?, observacao=?, imagem=? WHERE id=?""",
-                    (produto, variante, qty_tot, qty_est, qty_forn, nv_vid, valor, obs_item, imagem, iid))
+                         nv_variant_id=?, valor_unit=?, custo_unit=?, observacao=?, imagem=? WHERE id=?""",
+                    (produto, variante, qty_tot, qty_est, qty_forn, nv_vid, valor, custo, obs_item, imagem, iid))
             else:
                 conn.execute(
                     """INSERT INTO atacado_itens
                          (pedido_id, produto, variante, quantidade, qty_estoque,
-                          qty_fornecedor, nv_variant_id, valor_unit, observacao, imagem)
-                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                    (pid, produto, variante, qty_tot, qty_est, qty_forn, nv_vid, valor, obs_item, imagem))
+                          qty_fornecedor, nv_variant_id, valor_unit, custo_unit, observacao, imagem)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                    (pid, produto, variante, qty_tot, qty_est, qty_forn, nv_vid, valor, custo, obs_item, imagem))
                 mudancas.append(f"Item adicionado: \"{produto}\" ({qty_tot}un)")
 
         for iid, old in existentes.items():
