@@ -329,6 +329,7 @@ async function load(){
                 if (v.id) {
                     priceMap[v.id] = {
                         price:       v.price || 0,
+                        productId:   prod.id || null,
                         productName: prod.name || '',
                         variantLabel: (v.values||[]).join(' / ') || '',
                         imageUrl:    v.imageUrl || prod.imageUrl || null,
@@ -355,6 +356,7 @@ async function load(){
             return {
                 sku:          s.sku || '',
                 nv_variant_id: vid,
+                nv_product_id: (s.nv_product_id != null ? s.nv_product_id : (info ? info.productId : null)),
                 qty,
                 cost,
                 price,
@@ -560,43 +562,110 @@ function renderCharts(){
 }
 
 /* ── Tabela ── */
+/* Badge de margem reutilizável */
+function margemBadgeHtml(m){
+    if(m == null) return '<span style="color:var(--muted)">—</span>';
+    const cor = m>=40 ? 'var(--green)' : m>=20 ? 'var(--yellow)' : 'var(--red)';
+    const bg  = m>=40 ? 'rgba(63,185,80,.12)' : m>=20 ? 'rgba(210,153,34,.12)' : 'rgba(248,81,73,.12)';
+    return `<span style="background:${bg};color:${cor};border:1px solid ${cor}33;border-radius:20px;padding:2px 8px;font-size:.78rem;font-weight:600">${P(m)}</span>`;
+}
+/* Célula de imagem (produto ou variante) */
+function imgCell(url, size){
+    const s = size||36;
+    return url
+        ? `<img src="${url}" style="width:${s}px;height:${s}px;object-fit:cover;border-radius:4px;border:1px solid var(--border);flex-shrink:0" onerror="this.style.display='none'">`
+        : `<div style="width:${s}px;height:${s}px;background:var(--border);border-radius:4px;display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="bi bi-box" style="font-size:.75rem;color:var(--muted)"></i></div>`;
+}
+
+/* Expande/recolhe as variações de um produto */
+function toggleGroup(gi){
+    const det = document.querySelectorAll('.dt-'+gi);
+    if(!det.length) return;
+    const show = det[0].style.display === 'none';
+    det.forEach(r => r.style.display = show ? '' : 'none');
+    const ico = document.querySelector('.gico-'+gi);
+    if(ico) ico.style.transform = show ? 'rotate(90deg)' : 'rotate(0deg)';
+}
+
+/* ── Tabela: agrupada por PRODUTO (camiseta), expansível por variação ──
+   O total soma 1× por SKU — assim "Sem/Com Personalização" que dividem o
+   mesmo SKU (mesmo estoque) não são contados em dobro. */
 function renderTable(){
     const search  = document.getElementById('searchInput').value.trim().toLowerCase();
     const fMargem = document.getElementById('filterMargem').value;
     const sortBy  = document.getElementById('sortBy').value;
 
-    let items = allItems.filter(i => i.qty > 0);
+    const base = allItems.filter(i => i.qty > 0);
 
-    // Filtro de busca
-    if(search){
-        items = items.filter(i =>
-            (i.productName||'').toLowerCase().includes(search) ||
-            (i.variantLabel||'').toLowerCase().includes(search) ||
-            (i.sku||'').toLowerCase().includes(search)
-        );
+    // 1) Agrupa por produto (nv_product_id → nome → sku como fallback)
+    const gmap = new Map();
+    for(const it of base){
+        const key = it.nv_product_id != null ? 'p:'+it.nv_product_id
+                  : it.productName ? 'n:'+it.productName.toLowerCase()
+                  : 's:'+(it.sku||'?');
+        let g = gmap.get(key);
+        if(!g){ g = { key, productName: it.productName||'—', imageUrl: it.imageUrl||null, variants: [] }; gmap.set(key, g); }
+        if(!g.imageUrl && it.imageUrl) g.imageUrl = it.imageUrl;
+        if((g.productName==='—' || !g.productName) && it.productName) g.productName = it.productName;
+        g.variants.push(it);
     }
 
-    // Filtro de margem
-    if(fMargem === 'alta')       items = items.filter(i=>i.margem!=null && i.margem>40);
-    else if(fMargem === 'media') items = items.filter(i=>i.margem!=null && i.margem>=20 && i.margem<=40);
-    else if(fMargem === 'baixa') items = items.filter(i=>i.margem!=null && i.margem<20);
-    else if(fMargem === 'sem_preco') items = items.filter(i=>!i.hasPrice);
-    else if(fMargem === 'sem_custo') items = items.filter(i=>!i.hasCost);
+    // 2) Dedup por SKU dentro do produto + agrega (representante = menor preço c/ preço)
+    let groups = [...gmap.values()].map(g => {
+        const bySku = new Map();
+        for(const v of g.variants){
+            const sk  = (v.sku||'').trim().toUpperCase() || ('VID:'+v.nv_variant_id);
+            const cur = bySku.get(sk);
+            if(!cur) bySku.set(sk, v);
+            else if(v.hasPrice && (!cur.hasPrice || v.price < cur.price)) bySku.set(sk, v);
+        }
+        const reps = [...bySku.values()].sort((a,b)=>
+            (a.variantLabel||a.sku||'').localeCompare(b.variantLabel||b.sku||'', 'pt', {numeric:true}));
+        const totalQty  = reps.reduce((a,v)=>a+(v.qty||0),0);
+        const receita   = reps.reduce((a,v)=>a+(v.receita||0),0);
+        const costTotal = reps.reduce((a,v)=>a+(v.costTotal||0),0);
+        const lucro     = reps.reduce((a,v)=>a+(v.lucro||0),0);
+        const qCusto    = reps.filter(v=>v.hasCost ).reduce((a,v)=>a+v.qty,0);
+        const qPreco    = reps.filter(v=>v.hasPrice).reduce((a,v)=>a+v.qty,0);
+        const custoUnit = qCusto>0 ? costTotal/qCusto : null;   // custo médio ponderado
+        const precoUnit = qPreco>0 ? receita/qPreco   : null;   // preço médio ponderado
+        const hasCost   = reps.some(v=>v.hasCost);
+        const hasPrice  = reps.some(v=>v.hasPrice);
+        const margem    = (receita>0 && hasCost) ? lucro/receita*100 : null;
+        const markup    = (custoUnit && custoUnit>0 && precoUnit!=null) ? (precoUnit-custoUnit)/custoUnit*100 : null;
+        return { ...g, reps, totalQty, receita, costTotal, lucro, custoUnit, precoUnit, margem, markup, hasCost, hasPrice };
+    });
 
-    // Ordenação
-    items.sort((a,b)=>{
+    // 3) Filtros (busca por produto/variação/sku; margem no nível do produto)
+    if(search){
+        groups = groups.filter(g =>
+            (g.productName||'').toLowerCase().includes(search) ||
+            g.reps.some(v => (v.sku||'').toLowerCase().includes(search) ||
+                             (v.variantLabel||'').toLowerCase().includes(search))
+        );
+    }
+    if(fMargem === 'alta')           groups = groups.filter(g=>g.margem!=null && g.margem>40);
+    else if(fMargem === 'media')     groups = groups.filter(g=>g.margem!=null && g.margem>=20 && g.margem<=40);
+    else if(fMargem === 'baixa')     groups = groups.filter(g=>g.margem!=null && g.margem<20);
+    else if(fMargem === 'sem_preco') groups = groups.filter(g=>!g.hasPrice);
+    else if(fMargem === 'sem_custo') groups = groups.filter(g=>!g.hasCost);
+
+    // 4) Ordenação (no nível do produto)
+    groups.sort((a,b)=>{
         if(sortBy==='receita_desc') return (b.receita||0)-(a.receita||0);
         if(sortBy==='margem_desc')  return (b.margem??-999)-(a.margem??-999);
         if(sortBy==='margem_asc')   return (a.margem??999)-(b.margem??999);
         if(sortBy==='lucro_desc')   return (b.lucro||0)-(a.lucro||0);
-        if(sortBy==='estoque_desc') return b.qty-a.qty;
+        if(sortBy==='estoque_desc') return (b.totalQty||0)-(a.totalQty||0);
         if(sortBy==='custo_desc')   return (b.costTotal||0)-(a.costTotal||0);
         return 0;
     });
 
-    document.getElementById('statsLabel').textContent = `${items.length} SKU(s) exibido(s)`;
+    const totalSkus = groups.reduce((a,g)=>a+g.reps.length,0);
+    document.getElementById('statsLabel').textContent =
+        `${groups.length} produto(s) · ${totalSkus} SKU(s)`;
 
-    if(items.length === 0){
+    if(groups.length === 0){
         document.getElementById('tableWrap').style.display = 'none';
         document.getElementById('emptyState').style.display = '';
         return;
@@ -605,76 +674,73 @@ function renderTable(){
     document.getElementById('emptyState').style.display = 'none';
 
     const tbody = document.getElementById('tableBody');
-    tbody.innerHTML = items.map(i => {
-        // Badge de margem
-        let margemBadge = '—';
-        if(i.margem != null){
-            const cor = i.margem>=40 ? 'var(--green)' : i.margem>=20 ? 'var(--yellow)' : 'var(--red)';
-            const bg  = i.margem>=40 ? 'rgba(63,185,80,.12)' : i.margem>=20 ? 'rgba(210,153,34,.12)' : 'rgba(248,81,73,.12)';
-            margemBadge = `<span style="background:${bg};color:${cor};border:1px solid ${cor}33;
-                border-radius:20px;padding:2px 8px;font-size:.78rem;font-weight:600">${P(i.margem)}</span>`;
-        }
+    tbody.innerHTML = groups.map((g, gi) => {
+        const estCor   = g.totalQty<=0 ? 'var(--red)' : 'var(--text)';
+        const lucroCor = g.lucro!=null ? (g.lucro>=0?'var(--green)':'var(--red)') : 'var(--muted)';
+        const markupStr= g.markup!=null ? `<span style="font-size:.78rem;color:var(--muted)">${P(g.markup)}</span>` : '—';
 
-        // Markup
-        const markupStr = i.markup!=null ? `<span style="font-size:.75rem;color:var(--muted)">${P(i.markup)}</span>` : '—';
-
-        // Estoque: colorido se baixo
-        const estoqueColor = i.qty <= 0 ? 'var(--red)' : i.qty <= i.min_quantity ? 'var(--orange)' : 'var(--text)';
-
-        // Imagem
-        const imgHtml = i.imageUrl
-            ? `<img src="${i.imageUrl}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;
-               border:1px solid var(--border);flex-shrink:0" onerror="this.style.display='none'">`
-            : `<div style="width:36px;height:36px;background:var(--border);border-radius:4px;
-               display:flex;align-items:center;justify-content:center;flex-shrink:0">
-               <i class="bi bi-box" style="font-size:.75rem;color:var(--muted)"></i></div>`;
-
-        // Produto + variante
-        const nomeSub = i.variantLabel
-            ? `<small style="color:var(--muted);font-size:.75rem">${escHtml(i.variantLabel)}</small>`
-            : (i.sku ? `<small style="color:var(--muted);font-size:.72rem;font-family:monospace">${escHtml(i.sku)}</small>` : '');
-
-        return `<tr>
+        // Linha do PRODUTO (cabeçalho clicável)
+        const head = `<tr class="proj-group" onclick="toggleGroup(${gi})" style="cursor:pointer">
             <td>
                 <div style="display:flex;align-items:center;gap:10px">
-                    ${imgHtml}
+                    <i class="bi bi-chevron-right gico-${gi}" style="transition:transform .15s;color:var(--muted);font-size:.8rem"></i>
+                    ${imgCell(g.imageUrl, 38)}
                     <div>
-                        <div style="font-size:.87rem;font-weight:500">${escHtml(i.productName)}</div>
-                        ${nomeSub}
+                        <div style="font-size:.9rem;font-weight:600">${escHtml(g.productName)}</div>
+                        <small style="color:var(--muted);font-size:.74rem">${g.reps.length} variação(ões) · clique para detalhar</small>
                     </div>
                 </div>
             </td>
-            <td class="text-end" style="color:${estoqueColor};font-weight:600">${N(i.qty)}</td>
-            <td class="text-end" style="font-size:.87rem">${i.hasCost ? R(i.cost) : '<span style="color:var(--red);font-size:.78rem">sem custo</span>'}</td>
-            <td class="text-end" style="font-size:.87rem">${i.hasPrice ? R(i.price) : '<span style="color:var(--muted);font-size:.78rem">—</span>'}</td>
+            <td class="text-end" style="color:${estCor};font-weight:700">${N(g.totalQty)}</td>
+            <td class="text-end" style="font-size:.87rem">${g.custoUnit!=null ? R(g.custoUnit) : '<span style="color:var(--red);font-size:.78rem">sem custo</span>'}</td>
+            <td class="text-end" style="font-size:.87rem">${g.precoUnit!=null ? R(g.precoUnit) : '<span style="color:var(--muted);font-size:.78rem">—</span>'}</td>
             <td class="text-end">${markupStr}</td>
-            <td class="text-end">${margemBadge}</td>
-            <td class="text-end" style="font-weight:600;color:var(--blue)">${i.receita!=null ? R(i.receita) : '<span style="color:var(--muted)">—</span>'}</td>
-            <td class="text-end" style="font-size:.87rem">${i.costTotal!=null ? R(i.costTotal) : '<span style="color:var(--muted)">—</span>'}</td>
-            <td class="text-end" style="font-weight:700;color:${i.lucro!=null?(i.lucro>=0?'var(--green)':'var(--red)'):'var(--muted)'}">${i.lucro!=null ? R(i.lucro) : '—'}</td>
+            <td class="text-end">${margemBadgeHtml(g.margem)}</td>
+            <td class="text-end" style="font-weight:700;color:var(--blue)">${g.receita ? R(g.receita) : '<span style="color:var(--muted)">—</span>'}</td>
+            <td class="text-end" style="font-size:.87rem">${g.costTotal ? R(g.costTotal) : '<span style="color:var(--muted)">—</span>'}</td>
+            <td class="text-end" style="font-weight:800;color:${lucroCor}">${g.lucro!=null ? R(g.lucro) : '—'}</td>
         </tr>`;
+
+        // Linhas de DETALHE — 1 por SKU/variação (escondidas até clicar)
+        const det = g.reps.map(v => {
+            const eC = v.qty<=0 ? 'var(--red)' : v.qty<=v.min_quantity ? 'var(--orange)' : 'var(--text)';
+            const lC = v.lucro!=null ? (v.lucro>=0?'var(--green)':'var(--red)') : 'var(--muted)';
+            const mk = v.markup!=null ? `<span style="font-size:.74rem;color:var(--muted)">${P(v.markup)}</span>` : '—';
+            const label = v.variantLabel || v.sku || '—';
+            return `<tr class="proj-detail dt-${gi}" style="display:none;background:var(--hover-row,rgba(127,127,127,.06))">
+                <td style="padding-left:54px">
+                    <div style="font-size:.83rem">${escHtml(label)}</div>
+                    ${v.sku ? `<small style="color:var(--muted);font-size:.7rem;font-family:monospace">${escHtml(v.sku)}</small>` : ''}
+                </td>
+                <td class="text-end" style="color:${eC};font-weight:600">${N(v.qty)}</td>
+                <td class="text-end" style="font-size:.84rem">${v.hasCost ? R(v.cost) : '<span style="color:var(--red);font-size:.74rem">sem custo</span>'}</td>
+                <td class="text-end" style="font-size:.84rem">${v.hasPrice ? R(v.price) : '<span style="color:var(--muted);font-size:.74rem">—</span>'}</td>
+                <td class="text-end">${mk}</td>
+                <td class="text-end">${margemBadgeHtml(v.margem)}</td>
+                <td class="text-end" style="color:var(--blue)">${v.receita!=null ? R(v.receita) : '<span style="color:var(--muted)">—</span>'}</td>
+                <td class="text-end" style="font-size:.84rem">${v.costTotal!=null ? R(v.costTotal) : '<span style="color:var(--muted)">—</span>'}</td>
+                <td class="text-end" style="font-weight:600;color:${lC}">${v.lucro!=null ? R(v.lucro) : '—'}</td>
+            </tr>`;
+        }).join('');
+
+        return head + det;
     }).join('');
 
-    // Totais do rodapé (apenas itens filtrados com dados completos)
-    const completos = items.filter(i=>i.receita!=null && i.costTotal!=null);
-    const totReceita = completos.reduce((a,i)=>a+(i.receita||0),0);
-    const totCusto   = completos.reduce((a,i)=>a+(i.costTotal||0),0);
-    const totLucro   = totReceita - totCusto;
+    // Rodapé: total dos produtos exibidos (já deduplicado por SKU)
+    const totReceita = groups.reduce((a,g)=>a+(g.receita  ||0),0);
+    const totCusto   = groups.reduce((a,g)=>a+(g.costTotal||0),0);
+    const totLucro   = groups.reduce((a,g)=>a+(g.lucro    ||0),0);
+    const totQty     = groups.reduce((a,g)=>a+(g.totalQty ||0),0);
     const totMargem  = totReceita>0 ? (totLucro/totReceita*100) : 0;
 
-    const tfoot = document.getElementById('tableFoot');
-    tfoot.innerHTML = `<tr style="background:var(--hover-row)">
-        <td colspan="5" style="font-weight:700;font-size:.82rem;padding:.6rem .75rem">
-            TOTAL FILTRADO (${completos.length} SKUs com dados completos)
-        </td>
-        <td class="text-end" style="font-weight:700">
-            <span style="font-size:.82rem;background:${totMargem>=40?'rgba(63,185,80,.12)':totMargem>=20?'rgba(210,153,34,.12)':'rgba(248,81,73,.12)'};
-            color:${totMargem>=40?'var(--green)':totMargem>=20?'var(--yellow)':'var(--red)'};
-            border-radius:20px;padding:2px 8px">${P(totMargem)}</span>
-        </td>
+    document.getElementById('tableFoot').innerHTML = `<tr style="background:var(--hover-row)">
+        <td style="font-weight:700;font-size:.82rem;padding:.6rem .75rem">TOTAL — ${groups.length} produto(s)</td>
+        <td class="text-end" style="font-weight:700">${N(totQty)}</td>
+        <td colspan="3"></td>
+        <td class="text-end" style="font-weight:700">${margemBadgeHtml(totMargem)}</td>
         <td class="text-end" style="font-weight:700;color:var(--blue)">${R(totReceita)}</td>
         <td class="text-end" style="font-weight:700">${R(totCusto)}</td>
-        <td class="text-end" style="font-weight:700;color:${totLucro>=0?'var(--green)':'var(--red)'}">${R(totLucro)}</td>
+        <td class="text-end" style="font-weight:800;color:${totLucro>=0?'var(--green)':'var(--red)'}">${R(totLucro)}</td>
     </tr>`;
 }
 
