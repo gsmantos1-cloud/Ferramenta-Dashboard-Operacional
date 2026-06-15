@@ -597,11 +597,13 @@ function renderTable(){
 
     const base = allItems.filter(i => i.qty > 0);
 
-    // 1) Agrupa por produto (nv_product_id → nome → sku como fallback)
+    // 1) Agrupa por NOME do produto (junta produtos DUPLICADOS na NuvemShop com o
+    //    mesmo nome); cai pra nv_product_id / sku só quando não há nome.
     const gmap = new Map();
     for(const it of base){
-        const key = it.nv_product_id != null ? 'p:'+it.nv_product_id
-                  : it.productName ? 'n:'+it.productName.toLowerCase()
+        const nomeNorm = (it.productName||'').trim().toLowerCase();
+        const key = (nomeNorm && nomeNorm !== '—') ? 'n:'+nomeNorm
+                  : it.nv_product_id != null ? 'p:'+it.nv_product_id
                   : 's:'+(it.sku||'?');
         let g = gmap.get(key);
         if(!g){ g = { key, productName: it.productName||'—', imageUrl: it.imageUrl||null, variants: [] }; gmap.set(key, g); }
