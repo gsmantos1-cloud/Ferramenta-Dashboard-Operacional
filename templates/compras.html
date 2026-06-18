@@ -180,9 +180,19 @@
           </div>
         </div>
 
+        <!-- Produtos já adicionados a esta mesma compra -->
+        <div id="wrapListaProdutos" style="display:none;margin-top:14px">
+          <label class="flabel d-block mb-2"><i class="bi bi-bag-check me-1" style="color:#3fb950"></i>PRODUTOS NESTA COMPRA</label>
+          <div id="listaProdutosCompra" class="d-flex flex-column gap-2"></div>
+        </div>
+
       </div>
       <div class="modal-footer" style="border-top:1px solid var(--border)">
         <span id="erroCompra" style="color:var(--red);font-size:.8rem;flex:1"></span>
+        <button type="button" class="btn btn-sm" id="btnAdicionarProduto" onclick="adicionarOutroProduto()"
+                style="background:rgba(88,166,255,.12);border:1px solid rgba(88,166,255,.35);color:#58a6ff">
+          <i class="bi bi-plus-lg me-1"></i>Adicionar outro produto
+        </button>
         <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
         <button type="button" class="btn btn-warning btn-sm fw-bold" id="btnSalvarCompra" onclick="salvarCompra()" style="color:#0d1117">
           <i class="bi bi-check2 me-1"></i>Salvar Compra
@@ -242,6 +252,7 @@ let abaAtiva = 'historico';
 let produtoSelecionado = null; // { id, name, variants, sizeMap: { "P": {nv_variant_id, sku, label} } }
 let comprasCarregadas = [];    // compras do histórico atual (para editar)
 let editandoCompraId = null;   // id da compra em edição (null = nova)
+let produtosCompra = [];       // "carrinho": produtos já adicionados à compra atual
 
 const TAMANHOS_PADRAO = ['PP','P','M','G','GG','XGG'];
 
@@ -593,6 +604,9 @@ function abrirModalCompra() {
   document.getElementById('totalValor').textContent = 'R$ 0,00';
   document.getElementById('cAtualizarEstoque').checked = false;
   produtoSelecionado = null;
+  produtosCompra = [];
+  renderListaProdutos();
+  document.getElementById('btnAdicionarProduto').style.display = '';   // multi-produto só ao registrar
   onToggleEstoque();
 
   renderGridTamanhos();
@@ -616,6 +630,10 @@ function abrirEditarCompra(id) {
   // Edição não mexe no estoque (a compra original já ajustou) — esconde o toggle
   document.getElementById('cAtualizarEstoque').checked = false;
   document.getElementById('wrapAtualizarEstoque').style.display = 'none';
+  // Edição é de UM produto só → some o multi-produto
+  produtosCompra = [];
+  renderListaProdutos();
+  document.getElementById('btnAdicionarProduto').style.display = 'none';
 
   document.getElementById('cData').value       = c.data || new Date().toISOString().slice(0,10);
   document.getElementById('cProduto').value    = c.produto_nome || '';
@@ -801,77 +819,167 @@ document.addEventListener('click', e => {
   if (dd && !dd.contains(e.target) && e.target.id !== 'cProduto') dd.style.display = 'none';
 });
 
-// ── Salvar compra ─────────────────────────────────────────────────────────────
-async function salvarCompra() {
+// ── Multi-produto: coletar / adicionar / listar ────────────────────────────────
+// Lê os campos do produto atual. Retorna {vazio:true} se nada preenchido,
+// {erro:'...'} se incompleto, ou o objeto do produto pronto para enviar.
+function coletarProdutoAtual() {
   const produto = document.getElementById('cProduto').value.trim();
   const preco   = parseFloat(document.getElementById('cPreco').value) || 0;
   const tams    = getTamanhos();
-  const erroEl  = document.getElementById('erroCompra');
-
-  if (!produto)         { erroEl.textContent = 'Informe o nome do produto.'; return; }
-  if (!tams.length)     { erroEl.textContent = 'Informe ao menos um tamanho com quantidade.'; return; }
-  if (preco <= 0)       { erroEl.textContent = 'Informe o preço por unidade.'; return; }
-  erroEl.textContent = '';
-
-  const btn = document.getElementById('btnSalvarCompra');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Salvando...';
-
-  const atualizarEst = document.getElementById('cAtualizarEstoque').checked;
-
-  // Monta tamanhos com variant_id quando disponível
+  if (!produto && !tams.length && preco <= 0) return { vazio: true };
+  if (!produto)     return { erro: 'Informe o nome do produto.' };
+  if (!tams.length) return { erro: 'Informe ao menos um tamanho com quantidade.' };
+  if (preco <= 0)   return { erro: 'Informe o preço por unidade.' };
   const tamsComVariant = tams.map(t => {
     const v = produtoSelecionado?.sizeMap?.[t.tamanho.toUpperCase()] || null;
-    return {
-      tamanho:      t.tamanho,
-      quantidade:   t.quantidade,
-      nv_variant_id: v?.nv_variant_id || null,
-      sku:           v?.sku || null,
-      variante_label: v?.label || t.tamanho,
-    };
+    return { tamanho: t.tamanho, quantidade: t.quantidade,
+             nv_variant_id: v?.nv_variant_id || null, sku: v?.sku || null,
+             variante_label: v?.label || t.tamanho };
   });
+  return {
+    produto_nome:  produto,
+    nv_product_id: produtoSelecionado?.id || document.getElementById('cProduto').dataset.prodId || null,
+    preco_unit:    preco,
+    tamanhos:      tamsComVariant,
+    totalPecas:    tams.reduce((s,t)=>s+t.quantidade, 0),
+  };
+}
 
+// Limpa só os campos do produto (mantém data e fornecedor para o próximo)
+function limparCamposProduto() {
+  const cp = document.getElementById('cProduto');
+  cp.value = ''; cp.dataset.prodId = '';
+  document.getElementById('cPreco').value = '';
+  produtoSelecionado = null;
+  renderGridTamanhos();
+  document.getElementById('tamanhosExtras').innerHTML = '';
+  calcularTotal();
+  onToggleEstoque();
+}
+
+// "Adicionar outro produto": guarda o atual na lista e limpa para o próximo
+function adicionarOutroProduto() {
+  const erroEl = document.getElementById('erroCompra');
+  const cur = coletarProdutoAtual();
+  if (cur.vazio) { erroEl.textContent = 'Preencha o produto antes de adicionar outro.'; return; }
+  if (cur.erro)  { erroEl.textContent = cur.erro; return; }
+  erroEl.textContent = '';
+  produtosCompra.push(cur);
+  renderListaProdutos();
+  limparCamposProduto();
+  document.getElementById('cProduto').focus();
+}
+
+function removerProdutoCompra(i) { produtosCompra.splice(i, 1); renderListaProdutos(); }
+
+function renderListaProdutos() {
+  const wrap  = document.getElementById('wrapListaProdutos');
+  const lista = document.getElementById('listaProdutosCompra');
+  if (!wrap || !lista) return;
+  if (!produtosCompra.length) { wrap.style.display = 'none'; lista.innerHTML = ''; return; }
+  wrap.style.display = '';
+  lista.innerHTML = produtosCompra.map((p, i) => `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;
+                background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:8px 12px">
+      <div style="min-width:0">
+        <div style="font-size:.83rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(p.produto_nome)}</div>
+        <div style="font-size:.72rem;color:var(--muted)">${p.totalPecas} peça(s) × ${fmtBRL(p.preco_unit)} = <b style="color:#3fb950">${fmtBRL(p.totalPecas*p.preco_unit)}</b></div>
+      </div>
+      <button onclick="removerProdutoCompra(${i})" title="Remover este produto"
+              style="background:none;border:none;color:var(--red);cursor:pointer;font-size:1rem;flex-shrink:0">
+        <i class="bi bi-trash"></i></button>
+    </div>`).join('');
+}
+
+// ── Salvar compra ─────────────────────────────────────────────────────────────
+async function salvarCompra() {
+  const erroEl   = document.getElementById('erroCompra');
   const editando = editandoCompraId != null;
+  const btn      = document.getElementById('btnSalvarCompra');
+
+  // ── Edição: 1 produto só (PUT) ──
+  if (editando) {
+    const produto = document.getElementById('cProduto').value.trim();
+    const preco   = parseFloat(document.getElementById('cPreco').value) || 0;
+    const tams    = getTamanhos();
+    if (!produto)     { erroEl.textContent = 'Informe o nome do produto.'; return; }
+    if (!tams.length) { erroEl.textContent = 'Informe ao menos um tamanho com quantidade.'; return; }
+    if (preco <= 0)   { erroEl.textContent = 'Informe o preço por unidade.'; return; }
+    erroEl.textContent = '';
+    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Salvando...';
+    const tamsComVariant = tams.map(t => {
+      const v = produtoSelecionado?.sizeMap?.[t.tamanho.toUpperCase()] || null;
+      return { tamanho: t.tamanho, quantidade: t.quantidade,
+               nv_variant_id: v?.nv_variant_id || null, sku: v?.sku || null,
+               variante_label: v?.label || t.tamanho };
+    });
+    try {
+      const r = await fetch(`/api/compras/registros/${editandoCompraId}`, {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          data:          document.getElementById('cData').value,
+          produto_nome:  produto,
+          nv_product_id: produtoSelecionado?.id || document.getElementById('cProduto').dataset.prodId || null,
+          fornecedor:    document.getElementById('cFornecedor').value.trim() || null,
+          preco_unit:    preco,
+          observacao:    document.getElementById('cObs').value.trim() || null,
+          tamanhos:      tamsComVariant,
+        }),
+      });
+      const j = await r.json();
+      if (r.ok) {
+        bootstrap.Modal.getInstance(document.getElementById('modalCompra')).hide();
+        toast('✓ Compra atualizada!');
+        editandoCompraId = null;
+        if (abaAtiva === 'historico') carregarHistorico();
+      } else { erroEl.textContent = j.erro || 'Erro ao salvar.'; }
+    } catch(e) { erroEl.textContent = 'Erro de conexão.'; }
+    finally { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check2 me-1"></i>Salvar Alterações'; }
+    return;
+  }
+
+  // ── Registro novo: 1 ou vários produtos (lista + o que estiver preenchido) ──
+  const itens = produtosCompra.slice();
+  const cur   = coletarProdutoAtual();
+  if (cur.erro) { erroEl.textContent = cur.erro; return; }
+  if (!cur.vazio) itens.push(cur);
+  if (!itens.length) { erroEl.textContent = 'Adicione ao menos um produto.'; return; }
+  erroEl.textContent = '';
+
+  const atualizarEst = document.getElementById('cAtualizarEstoque').checked;
+  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Salvando...';
   try {
-    const url = editando ? `/api/compras/registros/${editandoCompraId}` : '/api/compras/registros';
-    const r = await fetch(url, {
-      method: editando ? 'PUT' : 'POST',
-      headers: {'Content-Type':'application/json'},
+    const r = await fetch('/api/compras/registros', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({
         data:              document.getElementById('cData').value,
-        produto_nome:      produto,
-        nv_product_id:     produtoSelecionado?.id || document.getElementById('cProduto').dataset.prodId || null,
         fornecedor:        document.getElementById('cFornecedor').value.trim() || null,
-        preco_unit:        preco,
         observacao:        document.getElementById('cObs').value.trim() || null,
-        tamanhos:          tamsComVariant,
-        atualizar_estoque: !editando && atualizarEst,
+        atualizar_estoque: atualizarEst,
+        itens: itens.map(p => ({
+          produto_nome:  p.produto_nome,
+          nv_product_id: p.nv_product_id,
+          preco_unit:    p.preco_unit,
+          tamanhos:      p.tamanhos,
+        })),
       }),
     });
     const j = await r.json();
     if (r.ok) {
       bootstrap.Modal.getInstance(document.getElementById('modalCompra')).hide();
-      const total = tams.reduce((s,t)=>s+t.quantidade, 0);
-      if (editando) {
-        toast('✓ Compra atualizada!');
-      } else {
-        let msg = `✓ Compra registrada! ${total} peças × ${fmtBRL(preco)} = ${fmtBRL(total*preco)}`;
-        if (atualizarEst && j.estoque_atualizado) msg += ` · ${j.estoque_atualizado} variante(s) atualizadas no estoque`;
-        toast(msg);
-      }
+      const totPecas = itens.reduce((s,p)=>s+p.totalPecas, 0);
+      const totValor = itens.reduce((s,p)=>s+p.totalPecas*p.preco_unit, 0);
+      let msg = itens.length > 1
+        ? `✓ Compra registrada! ${itens.length} produtos · ${totPecas} peças · ${fmtBRL(totValor)}`
+        : `✓ Compra registrada! ${totPecas} peças · ${fmtBRL(totValor)}`;
+      if (atualizarEst && j.estoque_atualizado) msg += ` · ${j.estoque_atualizado} variante(s) no estoque`;
+      toast(msg);
+      produtosCompra = [];
       editandoCompraId = null;
       if (abaAtiva === 'historico') carregarHistorico();
-    } else {
-      erroEl.textContent = j.erro || 'Erro ao salvar.';
-    }
-  } catch(e) {
-    erroEl.textContent = 'Erro de conexão.';
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = editando
-      ? '<i class="bi bi-check2 me-1"></i>Salvar Alterações'
-      : '<i class="bi bi-check2 me-1"></i>Salvar Compra';
-  }
+    } else { erroEl.textContent = j.erro || 'Erro ao salvar.'; }
+  } catch(e) { erroEl.textContent = 'Erro de conexão.'; }
+  finally { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check2 me-1"></i>Salvar Compra'; }
 }
 
 // ── Alertas SSE ───────────────────────────────────────────────────────────────
