@@ -144,14 +144,16 @@
         </div>
 
         <!-- Cabeçalho da tabela de itens -->
-        <div class="itens-hdr">
-          <div style="flex:3">Produto</div>
-          <div style="flex:2">Variante / Tamanho</div>
-          <div style="width:90px;text-align:center">Do Estoque</div>
-          <div style="width:90px;text-align:center">Do Fornecedor</div>
-          <div style="width:70px;text-align:center">Total</div>
-          <div style="width:90px;text-align:center">Valor Unit. (R$)</div>
-          <div style="width:30px"></div>
+        <div class="itens-hdr itens-grid">
+          <div></div>
+          <div>Produto</div>
+          <div>Variante / Tamanho</div>
+          <div style="text-align:center">Do Estoque</div>
+          <div style="text-align:center">Do Fornecedor</div>
+          <div style="text-align:center">Total</div>
+          <div style="text-align:center">Valor Unit. (R$)</div>
+          <div style="text-align:center">Custo</div>
+          <div></div>
         </div>
         <div id="itensContainer"></div>
         <div id="semItensMsg" class="text-center py-3" style="color:var(--muted);font-size:.83rem;border:1px dashed var(--border);border-radius:8px">
@@ -399,8 +401,11 @@
 .cnt-card .val { font-size:1.5rem;font-weight:700; }
 .cnt-card .lbl { font-size:.72rem;color:var(--muted); }
 
-/* Cabeçalho da tabela de itens no modal novo */
-.itens-hdr { display:flex;align-items:center;gap:8px;padding:0 8px 6px;
+/* Cabeçalho + linha de itens no modal novo — MESMO grid p/ alinhar as colunas */
+.itens-grid { display:grid;
+    grid-template-columns: 40px minmax(0,3fr) minmax(0,2fr) 90px 90px 70px 96px 96px 56px;
+    gap:8px; align-items:center; }
+.itens-hdr { padding:0 8px 6px;
     font-size:.7rem;font-weight:700;color:var(--muted);letter-spacing:.05em;text-transform:uppercase;border-bottom:1px solid var(--border);margin-bottom:4px; }
 .item-form-row { display:flex;align-items:center;gap:8px;padding:6px 8px;
     background:#0d1117;border:1px solid var(--border);border-radius:8px;margin-bottom:5px; }
@@ -1028,7 +1033,7 @@ function addItem() {
     div.style.alignItems = 'stretch';
     div.style.gap = '5px';
     div.innerHTML = `
-        <div style="display:flex;align-items:center;gap:8px">
+        <div class="itens-grid">
             <label id="iimgbox-${n}" title="Clique para colocar/trocar a imagem do produto"
                    style="width:40px;height:40px;flex-shrink:0;border-radius:6px;border:1px solid var(--border);
                           display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;margin:0">
@@ -1041,30 +1046,32 @@ function addItem() {
             <select class="inp-var" id="ivar-${n}" disabled style="flex:2">
                 <option value="">Variante...</option>
             </select>
-            <div style="display:flex;flex-direction:column;align-items:center;width:90px">
+            <div style="display:flex;flex-direction:column;align-items:center">
                 <input type="number" class="inp-num-sm" id="iest-${n}" value="0" min="0" placeholder="Est."
                        oninput="atualizarTotal('${n}')" title="Quantidade do estoque">
                 <span id="iestinfo-${n}" style="font-size:.65rem;color:var(--green)"></span>
             </div>
-            <input type="number" class="inp-num-sm" style="width:80px" id="iforn-${n}" value="0" min="0" placeholder="Forn."
+            <input type="number" class="inp-num-sm" style="justify-self:center" id="iforn-${n}" value="0" min="0" placeholder="Forn."
                    oninput="atualizarTotal('${n}')" title="Quantidade do fornecedor">
-            <span class="inp-num" id="itot-${n}" style="font-weight:700;color:var(--blue);text-align:center;width:50px">0</span>
-            <div style="display:flex;flex-direction:column;align-items:center;width:90px">
+            <span class="inp-num" id="itot-${n}" style="font-weight:700;color:var(--blue);text-align:center;width:50px;justify-self:center">0</span>
+            <div style="display:flex;flex-direction:column;align-items:center">
                 <input type="number" class="inp-num-sm" id="ivu-${n}" value="" min="0" step="0.01" placeholder="0,00"
                        oninput="atualizarSubtotal('${n}')" title="Valor unitário de venda em R$" style="width:85px">
                 <span id="isub-${n}" style="font-size:.63rem;color:#f0e68c;margin-top:1px"></span>
             </div>
-            <div style="display:flex;flex-direction:column;align-items:center;width:90px">
+            <div style="display:flex;flex-direction:column;align-items:center">
                 <input type="number" class="inp-num-sm" id="icu-${n}" value="" min="0" step="0.01" placeholder="custo"
                        title="Custo unitário — puxa o CMP sozinho ao escolher a variante (editável). NÃO aparece no PDF do cliente." style="width:85px">
                 <span style="font-size:.63rem;color:var(--muted);margin-top:1px">custo 🔒</span>
             </div>
-            <button onclick="duplicarItem(${n})" style="background:none;border:none;color:#58a6ff;cursor:pointer;flex-shrink:0" title="Duplicar produto">
+            <div style="display:flex;align-items:center;justify-content:center;gap:4px">
+              <button onclick="duplicarItem(${n})" style="background:none;border:none;color:#58a6ff;cursor:pointer;padding:0" title="Duplicar produto">
                 <i class="bi bi-files"></i>
-            </button>
-            <button onclick="removerItem(${n})" style="background:none;border:none;color:var(--muted);cursor:pointer;flex-shrink:0" title="Remover">
+              </button>
+              <button onclick="removerItem(${n})" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:0" title="Remover">
                 <i class="bi bi-x-lg"></i>
-            </button>
+              </button>
+            </div>
         </div>
         <input type="text" id="iobs-${n}" placeholder="Observação do produto (opcional)" autocomplete="off"
                style="width:100%;background:var(--card-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 8px;font-size:.76rem">
