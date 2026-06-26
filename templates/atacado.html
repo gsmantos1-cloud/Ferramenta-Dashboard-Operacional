@@ -423,6 +423,8 @@
 .vg-card { background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px 6px; height:100%; }
 .vg-card-lbl { font-size:.85rem;font-weight:600;color:var(--text); margin-bottom:6px; }
 .vg-card-val { font-size:1.6rem;font-weight:700; margin-bottom:8px; }
+.vg-card-chart { position:relative; height:60px; width:100%; }
+.vg-card-chart canvas { position:absolute; top:0; left:0; width:100% !important; height:100% !important; }
 
 /* Cabeçalho + linha de itens no modal novo — MESMO grid p/ alinhar as colunas */
 .itens-grid { display:grid;
@@ -585,7 +587,7 @@ function renderVisaoGeral() {
             <div class="vg-card">
                 <div class="vg-card-lbl">${c.lbl}</div>
                 <div class="vg-card-val" style="color:${c.color}">${c.val}</div>
-                <canvas id="${c.id}" height="60"></canvas>
+                <div class="vg-card-chart"><canvas id="${c.id}"></canvas></div>
             </div>
         </div>`).join('');
 
