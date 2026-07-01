@@ -3731,6 +3731,42 @@ def api_sku_costs_get():
     return jsonify([dict(r) for r in rows])
 
 
+def _registrar_custo(conn, nv_variant_id, sku, cost, dia,
+                     name=None, nv_product_id=None, notes=None, type_="product"):
+    """Grava o custo de uma variante garantindo UM registro VIGENTE e UM por DIA.
+    - Fecha o custo vigente de dias ANTERIORES (effective_to = dia-1).
+    - Se já existe custo vigente de `dia`, ATUALIZA no lugar (não duplica) e apaga
+      duplicados do mesmo dia (limpa o bug antigo).
+    - Senão, INSERE um novo registro vigente com effective_from = dia.
+    O custo é SEMPRE por variante (nv_variant_id) — não mexe em outras variantes do
+    mesmo SKU (variantes 'Com Personalização' têm custo próprio). `dia` = 'YYYY-MM-DD'."""
+    if nv_variant_id:
+        cond, key = "nv_variant_id = ?", nv_variant_id
+    else:
+        cond, key = "sku = ? AND nv_variant_id IS NULL", sku
+    # 1) fecha o vigente de dias anteriores
+    conn.execute(
+        f"UPDATE sku_costs SET effective_to = date(?, '-1 day') "
+        f"WHERE {cond} AND effective_to IS NULL AND effective_from < ?",
+        (dia, key, dia))
+    # 2) já há vigente de HOJE? atualiza (e remove duplicados do dia)
+    hoje_rows = conn.execute(
+        f"SELECT id FROM sku_costs WHERE {cond} AND effective_to IS NULL AND effective_from = ? ORDER BY id",
+        (key, dia)).fetchall()
+    if hoje_rows:
+        conn.execute(
+            "UPDATE sku_costs SET cost=?, notes=?, name=COALESCE(?, name), "
+            "nv_product_id=COALESCE(?, nv_product_id) WHERE id=?",
+            (cost, notes, name, nv_product_id, hoje_rows[0]["id"]))
+        for extra in hoje_rows[1:]:
+            conn.execute("DELETE FROM sku_costs WHERE id=?", (extra["id"],))
+    else:
+        conn.execute(
+            "INSERT INTO sku_costs (sku, name, type, cost, effective_from, notes, nv_variant_id, nv_product_id) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (sku, name, type_, cost, dia, notes, nv_variant_id, nv_product_id))
+
+
 @app.route("/api/sku-costs", methods=["POST"])
 @login_required
 def api_sku_costs_post():
@@ -3757,27 +3793,18 @@ def api_sku_costs_post():
         type_ = "product"
 
     with get_conn() as conn:
-        # Fecha registro anterior (preserva histórico)
-        if nv_variant_id:
+        if effective_to:
+            # custo histórico com data de fim explícita (uso raro) — insere direto
             conn.execute(
-                """UPDATE sku_costs SET effective_to = date(?, '-1 day')
-                   WHERE nv_variant_id=? AND effective_to IS NULL AND effective_from < ?""",
-                (effective_from, nv_variant_id, effective_from),
+                """INSERT INTO sku_costs
+                   (sku, name, type, cost, effective_from, effective_to, notes, nv_variant_id, nv_product_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (sku, name, type_, cost, effective_from, effective_to, notes, nv_variant_id, nv_product_id),
             )
         else:
-            conn.execute(
-                """UPDATE sku_costs SET effective_to = date(?, '-1 day')
-                   WHERE sku=? AND nv_variant_id IS NULL
-                     AND effective_to IS NULL AND effective_from < ?""",
-                (effective_from, sku, effective_from),
-            )
-        # Insere novo
-        conn.execute(
-            """INSERT INTO sku_costs
-               (sku, name, type, cost, effective_from, effective_to, notes, nv_variant_id, nv_product_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (sku, name, type_, cost, effective_from, effective_to, notes, nv_variant_id, nv_product_id),
-        )
+            # custo vigente: 1 registro por variante, 1 por dia (sem duplicar)
+            _registrar_custo(conn, nv_variant_id, sku, cost, effective_from,
+                             name=name, nv_product_id=nv_product_id, notes=notes, type_=type_)
 
     return jsonify({"ok": True})
 
@@ -3899,29 +3926,12 @@ def api_estoque_entrada_lote():
              f"Lote: {quantidade}un × R${preco_compra:.2f} | CMP: R${novo_cmp:.2f}", agora)
         )
 
-        # ── Atualiza custo com o novo CMP ────────────────────────────
-        # Fecha registro anterior
-        if nv_variant_id:
-            conn.execute(
-                """UPDATE sku_costs SET effective_to=date(?, '-1 day')
-                   WHERE nv_variant_id=? AND effective_to IS NULL AND effective_from < ?""",
-                (hoje, nv_variant_id, hoje)
-            )
-        conn.execute(
-            """UPDATE sku_costs SET effective_to=date(?, '-1 day')
-               WHERE sku=? AND effective_to IS NULL AND effective_from < ?""",
-            (hoje, sku_custo, hoje)
-        )
-        # Insere novo registro com CMP calculado
+        # ── Atualiza o custo com o novo CMP (1 registro por variante, 1 por dia) ──
         nome_custo = produto_nome or (stock["produto_nome"] if stock else None)
-        conn.execute(
-            """INSERT INTO sku_costs
-               (sku, name, type, cost, effective_from, notes, nv_variant_id, nv_product_id)
-               VALUES (?,?,?,?,?,?,?,?)""",
-            (sku_custo, nome_custo, "product", novo_cmp, hoje,
-             f"CMP: {qty_atual}un×R${custo_atual:.2f} + {quantidade}un×R${preco_compra:.2f} = {nova_qty}un×R${novo_cmp:.2f}",
-             nv_variant_id, nv_product_id)
-        )
+        _registrar_custo(
+            conn, nv_variant_id, sku_custo, novo_cmp, hoje,
+            name=nome_custo, nv_product_id=nv_product_id,
+            notes=f"CMP: {qty_atual}un×R${custo_atual:.2f} + {quantidade}un×R${preco_compra:.2f} = {nova_qty}un×R${novo_cmp:.2f}")
 
         # ── Unifica o estoque por SKU (a quantidade resultante) ──────
         sku_real = _resolver_sku_variante(conn, nv_variant_id, sku)
@@ -4565,23 +4575,10 @@ def api_compras_registros_add():
                      f"Compra registrada #{cid} — CMP: R${novo_cmp:.2f}", agora)
                 )
 
-                # Fecha custo anterior e insere CMP
-                if nv_vid:
-                    conn.execute(
-                        "UPDATE sku_costs SET effective_to=date(?,' -1 day') WHERE nv_variant_id=? AND effective_to IS NULL AND effective_from < ?",
-                        (hoje, nv_vid, hoje)
-                    )
-                conn.execute(
-                    "UPDATE sku_costs SET effective_to=date(?,' -1 day') WHERE sku=? AND effective_to IS NULL AND effective_from < ?",
-                    (hoje, sku_custo, hoje)
-                )
-                conn.execute(
-                    """INSERT INTO sku_costs (sku, name, type, cost, effective_from, notes, nv_variant_id)
-                       VALUES (?,?,?,?,?,?,?)""",
-                    (sku_custo, produto, "product", novo_cmp, hoje,
-                     f"CMP via compra #{cid}: {qty_atual}un×R${custo_atual:.2f} + {qty}un×R${preco_unit:.2f}",
-                     nv_vid)
-                )
+                # Atualiza o custo com o CMP (1 registro por variante, 1 por dia)
+                _registrar_custo(
+                    conn, nv_vid, sku_custo, novo_cmp, hoje, name=produto,
+                    notes=f"CMP via compra #{cid}: {qty_atual}un×R${custo_atual:.2f} + {qty}un×R${preco_unit:.2f}")
 
                 # Unifica o estoque por SKU (todas as variantes com o mesmo SKU)
                 sku_real = _resolver_sku_variante(conn, nv_vid, sku_tam)
