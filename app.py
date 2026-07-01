@@ -4459,50 +4459,31 @@ def api_compras_registros_list():
     return jsonify(compras)
 
 
-@app.route("/api/compras/registros", methods=["POST"])
-@login_required
-def api_compras_registros_add():
-    """Registra uma nova compra com tamanhos."""
-    data    = request.get_json() or {}
-    produto = (data.get("produto_nome") or "").strip()
-    if not produto:
-        return jsonify({"erro": "Nome do produto obrigatório"}), 400
-
-    tamanhos = [t for t in (data.get("tamanhos") or []) if int(t.get("quantidade") or 0) > 0]
-    if not tamanhos:
-        return jsonify({"erro": "Informe ao menos um tamanho com quantidade > 0"}), 400
-
-    preco_unit       = float(data.get("preco_unit") or 0)
-    atualizar_estoque= bool(data.get("atualizar_estoque"))
-    agora            = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    hoje             = date.today().isoformat()
-    data_compra      = data.get("data") or hoje
-    estoque_atualizados = 0
-
-    with get_conn() as conn:
-        cur = conn.execute(
-            """INSERT INTO compras_registros
-               (data, produto_nome, nv_product_id, fornecedor, preco_unit, observacao, criado_por)
-               VALUES (?,?,?,?,?,?,?)""",
-            (data_compra, produto,
-             data.get("nv_product_id") or None,
-             (data.get("fornecedor") or "").strip() or None,
-             preco_unit,
-             (data.get("observacao") or "").strip() or None,
-             session.get("usuario", ""))
+def _inserir_compra_produto(conn, produto, nv_product_id, preco_unit, tamanhos,
+                            data_compra, fornecedor, observacao, atualizar_estoque,
+                            agora, hoje):
+    """Insere UMA compra (1 produto) + seus tamanhos + log e, se pedido, atualiza
+    estoque/CMP. Retorna (compra_id, qtd_variantes_atualizadas no estoque)."""
+    cur = conn.execute(
+        """INSERT INTO compras_registros
+           (data, produto_nome, nv_product_id, fornecedor, preco_unit, observacao, criado_por)
+           VALUES (?,?,?,?,?,?,?)""",
+        (data_compra, produto, nv_product_id or None, fornecedor, preco_unit, observacao,
+         session.get("usuario", ""))
+    )
+    cid = cur.lastrowid
+    for t in tamanhos:
+        conn.execute(
+            "INSERT INTO compras_tamanhos (compra_id, tamanho, quantidade) VALUES (?,?,?)",
+            (cid, str(t["tamanho"]).strip().upper(), int(t["quantidade"]))
         )
-        cid = cur.lastrowid
-        for t in tamanhos:
-            conn.execute(
-                "INSERT INTO compras_tamanhos (compra_id, tamanho, quantidade) VALUES (?,?,?)",
-                (cid, str(t["tamanho"]).strip().upper(), int(t["quantidade"]))
-            )
-        total_q = sum(int(t["quantidade"]) for t in tamanhos)
-        _log_compra(conn, cid, "criada",
-                    f"{produto} · {total_q} peça(s) ({_tamanhos_resumo(tamanhos)}) × R$ {preco_unit:.2f}")
+    total_q = sum(int(t["quantidade"]) for t in tamanhos)
+    _log_compra(conn, cid, "criada",
+                f"{produto} · {total_q} peça(s) ({_tamanhos_resumo(tamanhos)}) × R$ {preco_unit:.2f}")
 
-        # ── Atualiza estoque + CMP se solicitado ──────────────────────────
-        if atualizar_estoque and preco_unit > 0:
+    estoque_atualizados = 0
+    # ── Atualiza estoque + CMP se solicitado ──────────────────────────
+    if atualizar_estoque and preco_unit > 0:
             for t in tamanhos:
                 nv_vid   = t.get("nv_variant_id") or None
                 sku_tam  = t.get("sku") or None
@@ -4589,8 +4570,63 @@ def api_compras_registros_add():
 
                 estoque_atualizados += 1
 
+    return cid, estoque_atualizados
+
+
+@app.route("/api/compras/registros", methods=["POST"])
+@login_required
+def api_compras_registros_add():
+    """Registra uma compra. Aceita 1 produto (campos no topo) OU vários (itens[]).
+    Os campos data/fornecedor/observação/atualizar_estoque são compartilhados."""
+    data = request.get_json() or {}
+
+    # Normaliza para uma lista de itens (cada item = produto + tamanhos + preço)
+    itens_in = data.get("itens")
+    if not isinstance(itens_in, list) or not itens_in:
+        itens_in = [{                                    # compat: produto único no topo
+            "produto_nome":  data.get("produto_nome"),
+            "nv_product_id": data.get("nv_product_id"),
+            "preco_unit":    data.get("preco_unit"),
+            "tamanhos":      data.get("tamanhos"),
+        }]
+
+    # Campos compartilhados por toda a compra
+    fornecedor        = (data.get("fornecedor") or "").strip() or None
+    observacao        = (data.get("observacao") or "").strip() or None
+    atualizar_estoque = bool(data.get("atualizar_estoque"))
+    agora             = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    hoje              = date.today().isoformat()
+    data_compra       = data.get("data") or hoje
+
+    # Valida e normaliza TODOS os itens antes de gravar (tudo ou nada)
+    itens = []
+    for it in itens_in:
+        produto  = (it.get("produto_nome") or "").strip()
+        tamanhos = [t for t in (it.get("tamanhos") or []) if int(t.get("quantidade") or 0) > 0]
+        if not produto:
+            return jsonify({"erro": "Nome do produto obrigatório"}), 400
+        if not tamanhos:
+            return jsonify({"erro": f"Informe ao menos um tamanho com quantidade > 0 para '{produto}'"}), 400
+        itens.append({
+            "produto":       produto,
+            "nv_product_id": it.get("nv_product_id") or None,
+            "preco_unit":    float(it.get("preco_unit") or 0),
+            "tamanhos":      tamanhos,
+        })
+
+    ids, estoque_atualizados = [], 0
+    with get_conn() as conn:
+        for it in itens:
+            cid, n_est = _inserir_compra_produto(
+                conn, it["produto"], it["nv_product_id"], it["preco_unit"], it["tamanhos"],
+                data_compra, fornecedor, observacao, atualizar_estoque, agora, hoje
+            )
+            ids.append(cid)
+            estoque_atualizados += n_est
         conn.commit()
-    return jsonify({"ok": True, "id": cid, "estoque_atualizado": estoque_atualizados}), 201
+
+    return jsonify({"ok": True, "ids": ids, "id": (ids[0] if ids else None),
+                    "produtos": len(ids), "estoque_atualizado": estoque_atualizados}), 201
 
 
 @app.route("/api/compras/registros/<int:cid>", methods=["PUT"])

@@ -12,6 +12,24 @@
     </button>
 </div>
 
+<!-- Visão geral (resumo com tendência diária) -->
+<div class="vg-panel mb-4">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <select id="vgPeriodo" class="form-select form-select-sm" style="width:auto" onchange="onVgPeriodoChange()">
+                <option value="7" selected>Últimos 7 dias</option>
+                <option value="15">Últimos 15 dias</option>
+                <option value="30">Últimos 30 dias</option>
+                <option value="0">Todo período</option>
+            </select>
+        </div>
+        <small id="vgAtualizado" style="color:var(--muted)"><i class="bi bi-clock me-1"></i>Última atualização: —</small>
+    </div>
+    <h6 class="fw-bold mb-1">Visão geral</h6>
+    <small style="color:var(--muted)" class="d-block mb-3">Exibindo dados de acordo com a <b>data de criação</b> do pedido</small>
+    <div class="row g-3" id="vgCards"></div>
+</div>
+
 <!-- Filtros de status -->
 <div class="d-flex flex-wrap gap-2 mb-3" id="filtros">
     <button class="btn btn-sm filter-atk active" data-s="todos"     onclick="filtrar('todos')">Todos</button>
@@ -144,14 +162,16 @@
         </div>
 
         <!-- Cabeçalho da tabela de itens -->
-        <div class="itens-hdr">
-          <div style="flex:3">Produto</div>
-          <div style="flex:2">Variante / Tamanho</div>
-          <div style="width:90px;text-align:center">Do Estoque</div>
-          <div style="width:90px;text-align:center">Do Fornecedor</div>
-          <div style="width:70px;text-align:center">Total</div>
-          <div style="width:90px;text-align:center">Valor Unit. (R$)</div>
-          <div style="width:30px"></div>
+        <div class="itens-hdr itens-grid">
+          <div></div>
+          <div>Produto</div>
+          <div>Variante / Tamanho</div>
+          <div style="text-align:center">Do Estoque</div>
+          <div style="text-align:center">Do Fornecedor</div>
+          <div style="text-align:center">Total</div>
+          <div style="text-align:center">Valor Unit. (R$)</div>
+          <div style="text-align:center">Custo</div>
+          <div></div>
         </div>
         <div id="itensContainer"></div>
         <div id="semItensMsg" class="text-center py-3" style="color:var(--muted);font-size:.83rem;border:1px dashed var(--border);border-radius:8px">
@@ -399,8 +419,18 @@
 .cnt-card .val { font-size:1.5rem;font-weight:700; }
 .cnt-card .lbl { font-size:.72rem;color:var(--muted); }
 
-/* Cabeçalho da tabela de itens no modal novo */
-.itens-hdr { display:flex;align-items:center;gap:8px;padding:0 8px 6px;
+.vg-panel { background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:18px 20px; }
+.vg-card { background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px 6px; height:100%; }
+.vg-card-lbl { font-size:.85rem;font-weight:600;color:var(--text); margin-bottom:6px; }
+.vg-card-val { font-size:1.6rem;font-weight:700; margin-bottom:8px; }
+.vg-card-chart { position:relative; height:60px; width:100%; }
+.vg-card-chart canvas { position:absolute; top:0; left:0; width:100% !important; height:100% !important; }
+
+/* Cabeçalho + linha de itens no modal novo — MESMO grid p/ alinhar as colunas */
+.itens-grid { display:grid;
+    grid-template-columns: 40px minmax(0,3fr) minmax(0,2fr) 90px 90px 70px 96px 96px 56px;
+    gap:8px; align-items:center; }
+.itens-hdr { padding:0 8px 6px;
     font-size:.7rem;font-weight:700;color:var(--muted);letter-spacing:.05em;text-transform:uppercase;border-bottom:1px solid var(--border);margin-bottom:4px; }
 .item-form-row { display:flex;align-items:center;gap:8px;padding:6px 8px;
     background:#0d1117;border:1px solid var(--border);border-radius:8px;margin-bottom:5px; }
@@ -480,9 +510,120 @@ async function carregar() {
         pedidos = await r.json();
         renderContadores();
         renderKpisFin();
+        renderVisaoGeral();
         renderLista();
     } catch(e) { console.error(e); }
     document.getElementById('loadingMsg').style.display = 'none';
+}
+
+// ── Visão geral (cards com tendência diária, estilo "analytics") ───────────
+// Reaproveita os pedidos já carregados em memória (mesma fetch de carregar()),
+// só recorta os últimos N dias no cliente — não gera nenhuma leitura extra no banco.
+let vgCharts = {};
+function onVgPeriodoChange() {
+    const dias = parseInt(document.getElementById('vgPeriodo').value, 10);
+    const hoje = new Date();
+    const fimStr = hoje.toISOString().slice(0,10);
+    document.getElementById('filtroFim').value = fimStr;
+    if (dias > 0) {
+        const ini = new Date(hoje);
+        ini.setDate(ini.getDate() - (dias - 1));
+        document.getElementById('filtroInicio').value = ini.toISOString().slice(0,10);
+    } else {
+        document.getElementById('filtroInicio').value = '';
+    }
+    carregar();
+}
+
+function renderVisaoGeral() {
+    const dias = parseInt(document.getElementById('vgPeriodo')?.value || '7', 10);
+    const hoje = new Date();
+    hoje.setHours(0,0,0,0);
+
+    // monta os N dias do período (ou todo o range presente nos pedidos, se "Todo período")
+    let diasLista = [];
+    if (dias > 0) {
+        for (let i = dias - 1; i >= 0; i--) {
+            const d = new Date(hoje);
+            d.setDate(d.getDate() - i);
+            diasLista.push(d.toISOString().slice(0,10));
+        }
+    } else {
+        const datasUnicas = [...new Set(pedidos.map(p => (p.created_at||'').slice(0,10)).filter(Boolean))].sort();
+        diasLista = datasUnicas.length ? datasUnicas : [hoje.toISOString().slice(0,10)];
+    }
+
+    const porDia = {};
+    diasLista.forEach(d => porDia[d] = {fat:0, cst:0, vendas:0});
+    pedidos.forEach(p => {
+        const d = (p.created_at||'').slice(0,10);
+        if (!porDia[d]) return; // fora do período exibido
+        porDia[d].fat    += (p.valor_total||0);
+        porDia[d].cst    += (p.custo_total||0);
+        porDia[d].vendas += 1;
+    });
+
+    const serieFat    = diasLista.map(d => porDia[d].fat);
+    const serieVendas = diasLista.map(d => porDia[d].vendas);
+    const serieLucro  = diasLista.map(d => porDia[d].fat - porDia[d].cst);
+    const serieTicket = diasLista.map(d => porDia[d].vendas > 0 ? porDia[d].fat / porDia[d].vendas : 0);
+
+    const totFat    = serieFat.reduce((a,b)=>a+b,0);
+    const totVendas = serieVendas.reduce((a,b)=>a+b,0);
+    const totLucro  = serieLucro.reduce((a,b)=>a+b,0);
+    const ticketMed = totVendas > 0 ? totFat / totVendas : 0;
+
+    const cards = [
+        {id:'vgFat',    lbl:'Receita',       val:'R$ '+fmtMoeda(totFat),    color:'#f0e68c', serie:serieFat},
+        {id:'vgVendas', lbl:'Vendas',        val:String(totVendas),         color:'#58a6ff', serie:serieVendas},
+        {id:'vgLucro',  lbl:'Lucro',         val:'R$ '+fmtMoeda(totLucro),  color: totLucro>=0?'#3fb950':'#f85149', serie:serieLucro},
+        {id:'vgTicket', lbl:'Ticket médio',  val:'R$ '+fmtMoeda(ticketMed), color:'#bc8cff', serie:serieTicket},
+    ];
+
+    const el = document.getElementById('vgCards');
+    if (!el) return;
+    el.innerHTML = cards.map(c => `
+        <div class="col-12 col-md-6 col-lg-3">
+            <div class="vg-card">
+                <div class="vg-card-lbl">${c.lbl}</div>
+                <div class="vg-card-val" style="color:${c.color}">${c.val}</div>
+                <div class="vg-card-chart"><canvas id="${c.id}"></canvas></div>
+            </div>
+        </div>`).join('');
+
+    cards.forEach(c => {
+        const canvas = document.getElementById(c.id);
+        if (!canvas) return;
+        if (vgCharts[c.id]) { vgCharts[c.id].destroy(); }
+        vgCharts[c.id] = new Chart(canvas, {
+            type: 'line',
+            data: {
+                labels: diasLista,
+                datasets: [{
+                    data: c.serie,
+                    borderColor: c.color,
+                    backgroundColor: c.color + '33',
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 0,
+                    borderWidth: 2,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: {display:false}, tooltip: {enabled:true} },
+                scales: { x: {display:false}, y: {display:false} },
+            }
+        });
+    });
+
+    const agora = new Date();
+    const hh = String(agora.getHours()).padStart(2,'0');
+    const mm = String(agora.getMinutes()).padStart(2,'0');
+    const ddmm = agora.toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit'});
+    const elAt = document.getElementById('vgAtualizado');
+    if (elAt) elAt.innerHTML = `<i class="bi bi-clock me-1"></i>Última atualização: ${ddmm} - ${hh}:${mm}`;
 }
 
 let _buscaTimer = null;
@@ -1028,7 +1169,7 @@ function addItem() {
     div.style.alignItems = 'stretch';
     div.style.gap = '5px';
     div.innerHTML = `
-        <div style="display:flex;align-items:center;gap:8px">
+        <div class="itens-grid">
             <label id="iimgbox-${n}" title="Clique para colocar/trocar a imagem do produto"
                    style="width:40px;height:40px;flex-shrink:0;border-radius:6px;border:1px solid var(--border);
                           display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;margin:0">
@@ -1041,30 +1182,32 @@ function addItem() {
             <select class="inp-var" id="ivar-${n}" disabled style="flex:2">
                 <option value="">Variante...</option>
             </select>
-            <div style="display:flex;flex-direction:column;align-items:center;width:90px">
+            <div style="display:flex;flex-direction:column;align-items:center">
                 <input type="number" class="inp-num-sm" id="iest-${n}" value="0" min="0" placeholder="Est."
                        oninput="atualizarTotal('${n}')" title="Quantidade do estoque">
                 <span id="iestinfo-${n}" style="font-size:.65rem;color:var(--green)"></span>
             </div>
-            <input type="number" class="inp-num-sm" style="width:80px" id="iforn-${n}" value="0" min="0" placeholder="Forn."
+            <input type="number" class="inp-num-sm" style="justify-self:center" id="iforn-${n}" value="0" min="0" placeholder="Forn."
                    oninput="atualizarTotal('${n}')" title="Quantidade do fornecedor">
-            <span class="inp-num" id="itot-${n}" style="font-weight:700;color:var(--blue);text-align:center;width:50px">0</span>
-            <div style="display:flex;flex-direction:column;align-items:center;width:90px">
+            <span class="inp-num" id="itot-${n}" style="font-weight:700;color:var(--blue);text-align:center;width:50px;justify-self:center">0</span>
+            <div style="display:flex;flex-direction:column;align-items:center">
                 <input type="number" class="inp-num-sm" id="ivu-${n}" value="" min="0" step="0.01" placeholder="0,00"
                        oninput="atualizarSubtotal('${n}')" title="Valor unitário de venda em R$" style="width:85px">
                 <span id="isub-${n}" style="font-size:.63rem;color:#f0e68c;margin-top:1px"></span>
             </div>
-            <div style="display:flex;flex-direction:column;align-items:center;width:90px">
+            <div style="display:flex;flex-direction:column;align-items:center">
                 <input type="number" class="inp-num-sm" id="icu-${n}" value="" min="0" step="0.01" placeholder="custo"
                        title="Custo unitário — puxa o CMP sozinho ao escolher a variante (editável). NÃO aparece no PDF do cliente." style="width:85px">
                 <span style="font-size:.63rem;color:var(--muted);margin-top:1px">custo 🔒</span>
             </div>
-            <button onclick="duplicarItem(${n})" style="background:none;border:none;color:#58a6ff;cursor:pointer;flex-shrink:0" title="Duplicar produto">
+            <div style="display:flex;align-items:center;justify-content:center;gap:4px">
+              <button onclick="duplicarItem(${n})" style="background:none;border:none;color:#58a6ff;cursor:pointer;padding:0" title="Duplicar produto">
                 <i class="bi bi-files"></i>
-            </button>
-            <button onclick="removerItem(${n})" style="background:none;border:none;color:var(--muted);cursor:pointer;flex-shrink:0" title="Remover">
+              </button>
+              <button onclick="removerItem(${n})" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:0" title="Remover">
                 <i class="bi bi-x-lg"></i>
-            </button>
+              </button>
+            </div>
         </div>
         <input type="text" id="iobs-${n}" placeholder="Observação do produto (opcional)" autocomplete="off"
                style="width:100%;background:var(--card-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 8px;font-size:.76rem">
