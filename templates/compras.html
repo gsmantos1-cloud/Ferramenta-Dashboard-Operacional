@@ -487,8 +487,67 @@ function renderRelatorio(d) {
   const maxMensal = Math.max(...d.mensal.map(m => m.total_valor||0), 1);
   const maxSemanal = Math.max(...d.semanal.map(m => m.total_valor||0), 1);
 
+  // ── Custo médio da camisa por dia (fev → hoje) ──────────────────────
+  const serie = d.custo_diario || [];
+  const totalPecasPeriodo = serie.reduce((s,x) => s + (x.total_pecas||0), 0);
+  const totalValorPeriodo = serie.reduce((s,x) => s + (x.total_valor||0), 0);
+  // Média geral do período, ponderada pela quantidade (custo real por camisa)
+  const mediaPeriodo = totalPecasPeriodo > 0 ? totalValorPeriodo / totalPecasPeriodo : 0;
+  const custoAtual   = serie.length ? (serie[serie.length-1].custo_medio||0) : 0;
+  const custoInicial = serie.length ? (serie[0].custo_medio||0) : 0;
+  const varVsMedia   = mediaPeriodo > 0 ? ((custoAtual - mediaPeriodo)/mediaPeriodo*100) : 0;
+  const varDesdeFev  = custoInicial > 0 ? ((custoAtual - custoInicial)/custoInicial*100) : 0;
+  const maisCara     = varVsMedia > 0.05;
+  const corVar       = maisCara ? '#f85149' : (varVsMedia < -0.05 ? '#3fb950' : '#8b949e');
+  const setaVar      = maisCara ? '▲' : (varVsMedia < -0.05 ? '▼' : '■');
+  const txtVar       = maisCara ? 'mais cara' : (varVsMedia < -0.05 ? 'mais barata' : 'na média');
+
   document.getElementById('relatorioConteudo').innerHTML = `
     <div class="row g-3">
+
+      <!-- Custo médio da camisa por dia -->
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <small class="fw-bold text-uppercase" style="letter-spacing:.05em">
+              <i class="bi bi-graph-up me-1" style="color:#58a6ff"></i>Custo Médio da Camisa por Dia
+              <span style="color:var(--muted);font-weight:400;text-transform:none;margin-left:6px">fevereiro → hoje</span>
+            </small>
+          </div>
+          <div style="padding:16px">
+            ${serie.length ? `
+              <div class="d-flex align-items-end flex-wrap gap-4 mb-3">
+                <div>
+                  <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Custo médio atual</div>
+                  <div style="font-size:1.7rem;font-weight:800;line-height:1.1">${fmtBRL(custoAtual)}</div>
+                  <div style="font-size:.72rem;color:var(--muted)">na última compra registrada</div>
+                </div>
+                <div>
+                  <span style="display:inline-flex;align-items:center;gap:5px;background:${corVar}1a;color:${corVar};
+                               font-weight:800;font-size:1rem;padding:6px 12px;border-radius:8px">
+                    ${setaVar} ${Math.abs(varVsMedia).toFixed(1)}% ${txtVar}
+                  </span>
+                  <div style="font-size:.72rem;color:var(--muted);margin-top:4px">vs. média do período (${fmtBRL(mediaPeriodo)})</div>
+                </div>
+                <div>
+                  <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Desde fevereiro</div>
+                  <div style="font-size:1rem;font-weight:700;color:${varDesdeFev>0?'#f85149':(varDesdeFev<0?'#3fb950':'#8b949e')}">
+                    ${varDesdeFev>0?'▲':(varDesdeFev<0?'▼':'■')} ${Math.abs(varDesdeFev).toFixed(1)}%
+                  </div>
+                  <div style="font-size:.72rem;color:var(--muted)">${fmtBRL(custoInicial)} → ${fmtBRL(custoAtual)}</div>
+                </div>
+              </div>
+              <div style="position:relative;height:280px"><canvas id="chartCustoDia"></canvas></div>
+              <div style="font-size:.72rem;color:var(--muted);margin-top:8px">
+                <span style="color:#3fb950">● abaixo da média</span> &nbsp;
+                <span style="color:#f85149">● acima da média</span> &nbsp;
+                — a linha tracejada é a média do período (${fmtBRL(mediaPeriodo)}).
+                Média ponderada pela quantidade comprada em cada dia.
+              </div>
+            ` : '<div class="text-center text-muted py-4" style="font-size:.85rem">Nenhuma compra registrada de fevereiro até agora.</div>'}
+          </div>
+        </div>
+      </div>
 
       <!-- Mensal -->
       <div class="col-lg-6">
@@ -582,6 +641,95 @@ function renderRelatorio(d) {
       </div>
 
     </div>`;
+
+  // Renderiza o gráfico de custo médio por dia (depois do innerHTML existir)
+  if (serie.length) renderChartCustoDia(serie, mediaPeriodo);
+}
+
+let chartCustoDiaInst = null;
+function renderChartCustoDia(serie, mediaPeriodo) {
+  const el = document.getElementById('chartCustoDia');
+  if (!el || typeof Chart === 'undefined') return;
+  if (chartCustoDiaInst) { chartCustoDiaInst.destroy(); chartCustoDiaInst = null; }
+
+  const labels  = serie.map(x => fmtDiaCurto(x.dia));
+  const valores = serie.map(x => x.custo_medio || 0);
+  // Verde se o dia ficou abaixo/igual à média do período, vermelho se acima
+  const cores   = serie.map(x => (x.custo_medio||0) > mediaPeriodo ? '#f85149' : '#3fb950');
+
+  // Plugin da linha tracejada da média (escopo só desta instância)
+  const mediaLine = {
+    id: 'mediaLine',
+    afterDraw(chart) {
+      if (!(mediaPeriodo > 0)) return;
+      const y = chart.scales.y.getPixelForValue(mediaPeriodo);
+      const { left, right } = chart.chartArea;
+      const ctx = chart.ctx;
+      ctx.save();
+      ctx.setLineDash([6, 5]);
+      ctx.strokeStyle = '#f0c43e';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke();
+      ctx.restore();
+    }
+  };
+
+  chartCustoDiaInst = new Chart(el, {
+    type: 'line',
+    plugins: [mediaLine],
+    data: {
+      labels,
+      datasets: [{
+        label: 'Custo médio/camisa',
+        data: valores,
+        borderColor: '#58a6ff',
+        backgroundColor: 'rgba(88,166,255,.08)',
+        borderWidth: 2,
+        fill: true,
+        tension: 0.25,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        pointBackgroundColor: cores,
+        pointBorderColor: cores,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => 'Dia ' + items[0].label,
+            label: (item) => {
+              const p = serie[item.dataIndex];
+              return [
+                'Custo médio: ' + fmtBRL(p.custo_medio),
+                (p.total_pecas||0) + ' peças · ' + fmtBRL(p.total_valor),
+              ];
+            }
+          }
+        },
+      },
+      scales: {
+        y: {
+          ticks: { callback: (v) => 'R$ ' + Number(v).toFixed(0), color: '#8b949e', font: { size: 11 } },
+          grid: { color: 'rgba(139,148,158,.12)' },
+        },
+        x: {
+          ticks: { color: '#8b949e', font: { size: 10 }, maxRotation: 60, minRotation: 0, autoSkip: true, maxTicksLimit: 16 },
+          grid: { display: false },
+        }
+      }
+    }
+  });
+}
+
+// Formata 'YYYY-MM-DD' → 'DD/MM'
+function fmtDiaCurto(iso) {
+  if (!iso) return '';
+  const p = String(iso).split('-');
+  return p.length === 3 ? `${p[2]}/${p[1]}` : iso;
 }
 
 // ── Modal Registrar Compra ─────────────────────────────────────────────────────

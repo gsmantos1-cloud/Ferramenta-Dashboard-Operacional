@@ -459,6 +459,7 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_atacado_anexo_pedido  ON atacado_anexos(pedido_id)",
             "CREATE INDEX IF NOT EXISTS idx_compras_tam_compra    ON compras_tamanhos(compra_id)",
             "CREATE INDEX IF NOT EXISTS idx_compras_hist_compra   ON compras_historico(compra_id)",
+            "CREATE INDEX IF NOT EXISTS idx_compras_reg_data      ON compras_registros(data)",
         ]
         for idx in indices:
             try: conn.execute(idx)
@@ -4767,11 +4768,30 @@ def api_compras_relatorio():
             ORDER BY total_valor DESC
         """).fetchall()
 
+        # Custo médio da camisa por dia (ponderado pela quantidade) —
+        # de 1º de fevereiro do ano vigente até hoje.
+        inicio_fev = date(date.today().year, 2, 1).isoformat()
+        custo_diario = conn.execute("""
+            SELECT r.data                              AS dia,
+                   SUM(t.quantidade)                   AS total_pecas,
+                   SUM(t.quantidade * r.preco_unit)    AS total_valor,
+                   ROUND(SUM(t.quantidade * r.preco_unit)
+                         / NULLIF(SUM(t.quantidade), 0), 2) AS custo_medio
+            FROM compras_registros r
+            JOIN compras_tamanhos t ON t.compra_id = r.id
+            WHERE r.data >= ?
+            GROUP BY r.data
+            HAVING SUM(t.quantidade) > 0
+            ORDER BY r.data ASC
+        """, (inicio_fev,)).fetchall()
+
     return jsonify({
         "semanal":       [dict(r) for r in semanal],
         "mensal":        [dict(r) for r in mensal],
         "por_produto":   [dict(r) for r in por_produto],
         "por_fornecedor":[dict(r) for r in por_fornecedor],
+        "custo_diario":  [dict(r) for r in custo_diario],
+        "custo_desde":   inicio_fev,
     })
 
 
