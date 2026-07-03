@@ -538,11 +538,13 @@ function renderRelatorio(d) {
                 </div>
               </div>
               <div style="position:relative;height:280px"><canvas id="chartCustoDia"></canvas></div>
-              <div style="font-size:.72rem;color:var(--muted);margin-top:8px">
+              <div style="font-size:.72rem;color:var(--muted);margin-top:8px;line-height:1.6">
                 <span style="color:#3fb950">● abaixo da média</span> &nbsp;
-                <span style="color:#f85149">● acima da média</span> &nbsp;
-                — a linha tracejada é a média do período (${fmtBRL(mediaPeriodo)}).
-                Média ponderada pela quantidade comprada em cada dia.
+                <span style="color:#f85149">● acima da média</span> &nbsp;·&nbsp;
+                <span style="color:#f0883e">▬ tendência</span> (média móvel de 5 compras, mostra a direção real) &nbsp;·&nbsp;
+                <span style="color:#f0c43e">┅ média do período</span> (${fmtBRL(mediaPeriodo)})<br>
+                O <b>tamanho de cada ponto</b> reflete a quantidade comprada no dia — pontos grandes = compras maiores.
+                Custo médio ponderado pela quantidade.
               </div>
             ` : '<div class="text-center text-muted py-4" style="font-size:.85rem">Nenhuma compra registrada de fevereiro até agora.</div>'}
           </div>
@@ -657,6 +659,18 @@ function renderChartCustoDia(serie, mediaPeriodo) {
   // Verde se o dia ficou abaixo/igual à média do período, vermelho se acima
   const cores   = serie.map(x => (x.custo_medio||0) > mediaPeriodo ? '#f85149' : '#3fb950');
 
+  // Tendência: média móvel dos últimos 5 dias de compra (corta o ruído do dia a dia)
+  const JANELA = 5;
+  const tendencia = valores.map((_, i) => {
+    const ini = Math.max(0, i - JANELA + 1);
+    const janela = valores.slice(ini, i + 1);
+    return janela.reduce((s, v) => s + v, 0) / janela.length;
+  });
+
+  // Tamanho do ponto proporcional à quantidade comprada no dia (3 a 9 px)
+  const maxQty = Math.max(...serie.map(x => x.total_pecas || 0), 1);
+  const raios  = serie.map(x => 3 + Math.round(((x.total_pecas || 0) / maxQty) * 6));
+
   // Plugin da linha tracejada da média (escopo só desta instância)
   const mediaLine = {
     id: 'mediaLine',
@@ -679,29 +693,50 @@ function renderChartCustoDia(serie, mediaPeriodo) {
     plugins: [mediaLine],
     data: {
       labels,
-      datasets: [{
-        label: 'Custo médio/camisa',
-        data: valores,
-        borderColor: '#58a6ff',
-        backgroundColor: 'rgba(88,166,255,.08)',
-        borderWidth: 2,
-        fill: true,
-        tension: 0.25,
-        pointRadius: 4,
-        pointHoverRadius: 6,
-        pointBackgroundColor: cores,
-        pointBorderColor: cores,
-      }]
+      datasets: [
+        {
+          label: 'Custo médio/camisa',
+          data: valores,
+          borderColor: 'rgba(88,166,255,.55)',
+          backgroundColor: 'rgba(88,166,255,.06)',
+          borderWidth: 1.5,
+          fill: true,
+          tension: 0.25,
+          pointRadius: raios,
+          pointHoverRadius: raios.map(r => r + 2),
+          pointBackgroundColor: cores,
+          pointBorderColor: cores,
+          order: 2,
+        },
+        {
+          label: 'Tendência (média móvel 5 dias)',
+          data: tendencia,
+          borderColor: '#f0883e',
+          borderWidth: 2.5,
+          fill: false,
+          tension: 0.35,
+          pointRadius: 0,
+          pointHoverRadius: 0,
+          order: 1,
+        }
+      ]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { display: false },
+        legend: {
+          display: true,
+          position: 'top',
+          align: 'end',
+          labels: { color: '#8b949e', font: { size: 11 }, boxWidth: 14, usePointStyle: true },
+        },
         tooltip: {
           callbacks: {
             title: (items) => 'Dia ' + items[0].label,
             label: (item) => {
+              if (item.datasetIndex === 1) return 'Tendência: ' + fmtBRL(item.raw);
               const p = serie[item.dataIndex];
               return [
                 'Custo médio: ' + fmtBRL(p.custo_medio),
