@@ -341,6 +341,13 @@ def init_db():
             except Exception:
                 pass
 
+        # compras migrations (idempotent)
+        for col in [
+            "ignorar_custo INTEGER DEFAULT 0",   # 1 = "indiferente": não entra no custo médio
+        ]:
+            try: conn.execute(f"ALTER TABLE compras_registros ADD COLUMN {col}")
+            except Exception: pass
+
         # atacado migrations (idempotent)
         for col in [
             "cep TEXT", "cpf TEXT", "cidade TEXT", "nome TEXT",
@@ -4713,6 +4720,25 @@ def api_compras_registros_delete(cid):
     return jsonify({"ok": True})
 
 
+@app.route("/api/compras/registros/<int:cid>/ignorar-custo", methods=["POST"])
+@login_required
+def api_compras_ignorar_custo(cid):
+    """Marca/desmarca uma compra como 'indiferente' — não entra no custo médio.
+    Body: { ignorar: true|false }."""
+    d = request.get_json() or {}
+    ignorar = 1 if d.get("ignorar") else 0
+    with get_conn() as conn:
+        reg = conn.execute("SELECT produto_nome FROM compras_registros WHERE id=?", (cid,)).fetchone()
+        if not reg:
+            return jsonify({"erro": "Compra não encontrada"}), 404
+        conn.execute("UPDATE compras_registros SET ignorar_custo=? WHERE id=?", (ignorar, cid))
+        _log_compra(conn, cid, "editada",
+                    ("Marcada como indiferente (fora do custo médio)" if ignorar
+                     else "Reincluída no custo médio"))
+        conn.commit()
+    return jsonify({"ok": True, "ignorar_custo": ignorar})
+
+
 @app.route("/api/compras/relatorio", methods=["GET"])
 @login_required
 def api_compras_relatorio():
@@ -4781,6 +4807,7 @@ def api_compras_relatorio():
             FROM compras_registros r
             JOIN compras_tamanhos t ON t.compra_id = r.id
             WHERE r.data >= ?
+              AND COALESCE(r.ignorar_custo, 0) = 0
             GROUP BY UPPER(TRIM(r.produto_nome)), r.data
             HAVING SUM(t.quantidade) > 0
             ORDER BY produto ASC, r.data ASC

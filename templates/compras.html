@@ -389,14 +389,18 @@ function renderHistorico(compras) {
 function renderCardCompra(c) {
   const tams = (c.tamanhos||[]).filter(t => t.quantidade>0)
     .map(t => `<span class="tam-chip">${t.tamanho}×${t.quantidade}</span>`).join(' ');
+  const ignorado = !!c.ignorar_custo;
 
-  return `<div class="compra-card">
+  return `<div class="compra-card" style="${ignorado ? 'opacity:.6' : ''}">
     <div class="d-flex align-items-start justify-content-between gap-3">
       <div class="flex-grow-1">
         <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
           <span class="fw-bold" style="font-size:.9rem">${escHtml(c.produto_nome)}</span>
           ${c.fornecedor ? `<span style="font-size:.72rem;color:var(--muted);background:var(--border);border-radius:6px;padding:1px 7px">
             <i class="bi bi-truck me-1"></i>${escHtml(c.fornecedor)}</span>` : ''}
+          ${ignorado ? `<span title="Não entra no cálculo de custo médio"
+            style="font-size:.68rem;color:#f0c43e;background:rgba(240,196,62,.12);border:1px solid rgba(240,196,62,.3);border-radius:6px;padding:1px 7px">
+            <i class="bi bi-eye-slash me-1"></i>fora do custo</span>` : ''}
         </div>
         <div class="d-flex flex-wrap gap-1 mb-1">${tams || '<span style="font-size:.72rem;color:var(--muted)">—</span>'}</div>
         ${c.observacao ? `<div style="font-size:.74rem;color:var(--muted)"><i class="bi bi-chat-left-text me-1"></i>${escHtml(c.observacao)}</div>` : ''}
@@ -406,6 +410,11 @@ function renderCardCompra(c) {
         <div style="font-size:.8rem;color:var(--muted)">× ${fmtBRL(c.preco_unit)}</div>
         <div style="font-size:1rem;font-weight:700;color:#3fb950">${fmtBRL(c.total_valor)}</div>
         <div class="d-flex gap-1 justify-content-end" style="margin-top:4px">
+          <button onclick="toggleIgnorarCusto(${c.id}, ${ignorado ? 'false' : 'true'})"
+                  title="${ignorado ? 'Reincluir no custo médio' : 'Marcar como indiferente (não conta no custo médio)'}"
+                  style="background:none;border:1px solid ${ignorado ? 'rgba(240,196,62,.5)' : 'var(--border)'};color:${ignorado ? '#f0c43e' : 'var(--muted)'};border-radius:4px;padding:1px 7px;font-size:.68rem;cursor:pointer">
+            <i class="bi ${ignorado ? 'bi-eye' : 'bi-eye-slash'}"></i>
+          </button>
           <button onclick="abrirEditarCompra(${c.id})" title="Editar"
                   style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:1px 7px;font-size:.68rem;cursor:pointer">
             <i class="bi bi-pencil"></i>
@@ -467,6 +476,19 @@ async function deletarCompra(id) {
   await fetch(`/api/compras/registros/${id}`, {method:'DELETE'});
   toast('Compra removida');
   carregarHistorico();
+}
+
+// Marca/desmarca compra como "indiferente" (não conta no custo médio)
+async function toggleIgnorarCusto(id, ignorar) {
+  try {
+    const r = await fetch(`/api/compras/registros/${id}/ignorar-custo`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ ignorar }),
+    });
+    if (!r.ok) throw 0;
+    toast(ignorar ? '✓ Compra marcada como indiferente (fora do custo)' : '✓ Compra reincluída no custo');
+    carregarHistorico();
+  } catch(e) { toast('Erro ao atualizar.', false); }
 }
 
 // ── Relatórios ────────────────────────────────────────────────────────────────
