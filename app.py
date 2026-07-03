@@ -4771,26 +4771,49 @@ def api_compras_relatorio():
         # Custo médio da camisa por dia (ponderado pela quantidade) —
         # de 1º de fevereiro do ano vigente até hoje.
         inicio_fev = date(date.today().year, 2, 1).isoformat()
-        custo_diario = conn.execute("""
-            SELECT r.data                              AS dia,
-                   SUM(t.quantidade)                   AS total_pecas,
-                   SUM(t.quantidade * r.preco_unit)    AS total_valor,
-                   ROUND(SUM(t.quantidade * r.preco_unit)
-                         / NULLIF(SUM(t.quantidade), 0), 2) AS custo_medio
+        # Custo por PRODUTO por dia — 1 consulta só; a média geral por dia
+        # é derivada em Python (sem leitura extra no Turso).
+        prod_dia_rows = conn.execute("""
+            SELECT MAX(r.produto_nome)               AS produto,
+                   r.data                            AS dia,
+                   SUM(t.quantidade)                 AS total_pecas,
+                   SUM(t.quantidade * r.preco_unit)  AS total_valor
             FROM compras_registros r
             JOIN compras_tamanhos t ON t.compra_id = r.id
             WHERE r.data >= ?
-            GROUP BY r.data
+            GROUP BY UPPER(TRIM(r.produto_nome)), r.data
             HAVING SUM(t.quantidade) > 0
-            ORDER BY r.data ASC
+            ORDER BY produto ASC, r.data ASC
         """, (inicio_fev,)).fetchall()
+
+    # Monta série por produto e a média geral (blended) por dia, em memória
+    custo_por_produto_dia = []
+    blended = {}  # dia -> [soma_valor, soma_pecas]
+    for r in prod_dia_rows:
+        pecas = int(r["total_pecas"] or 0)
+        valor = float(r["total_valor"] or 0)
+        cm    = round(valor / pecas, 2) if pecas else 0
+        custo_por_produto_dia.append({
+            "produto": r["produto"], "dia": r["dia"],
+            "total_pecas": pecas, "total_valor": round(valor, 2), "custo_medio": cm,
+        })
+        b = blended.setdefault(r["dia"], [0.0, 0])
+        b[0] += valor
+        b[1] += pecas
+
+    custo_diario = [
+        {"dia": dia, "total_valor": round(v, 2), "total_pecas": p,
+         "custo_medio": round(v / p, 2) if p else 0}
+        for dia, (v, p) in sorted(blended.items())
+    ]
 
     return jsonify({
         "semanal":       [dict(r) for r in semanal],
         "mensal":        [dict(r) for r in mensal],
         "por_produto":   [dict(r) for r in por_produto],
         "por_fornecedor":[dict(r) for r in por_fornecedor],
-        "custo_diario":  [dict(r) for r in custo_diario],
+        "custo_diario":  custo_diario,
+        "custo_por_produto_dia": custo_por_produto_dia,
         "custo_desde":   inicio_fev,
     })
 

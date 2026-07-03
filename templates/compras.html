@@ -487,66 +487,41 @@ function renderRelatorio(d) {
   const maxMensal = Math.max(...d.mensal.map(m => m.total_valor||0), 1);
   const maxSemanal = Math.max(...d.semanal.map(m => m.total_valor||0), 1);
 
-  // ── Custo médio da camisa por dia (fev → hoje) ──────────────────────
-  const serie = d.custo_diario || [];
-  const totalPecasPeriodo = serie.reduce((s,x) => s + (x.total_pecas||0), 0);
-  const totalValorPeriodo = serie.reduce((s,x) => s + (x.total_valor||0), 0);
-  // Média geral do período, ponderada pela quantidade (custo real por camisa)
-  const mediaPeriodo = totalPecasPeriodo > 0 ? totalValorPeriodo / totalPecasPeriodo : 0;
-  const custoAtual   = serie.length ? (serie[serie.length-1].custo_medio||0) : 0;
-  const custoInicial = serie.length ? (serie[0].custo_medio||0) : 0;
-  const varVsMedia   = mediaPeriodo > 0 ? ((custoAtual - mediaPeriodo)/mediaPeriodo*100) : 0;
-  const varDesdeFev  = custoInicial > 0 ? ((custoAtual - custoInicial)/custoInicial*100) : 0;
-  const maisCara     = varVsMedia > 0.05;
-  const corVar       = maisCara ? '#f85149' : (varVsMedia < -0.05 ? '#3fb950' : '#8b949e');
-  const setaVar      = maisCara ? '▲' : (varVsMedia < -0.05 ? '▼' : '■');
-  const txtVar       = maisCara ? 'mais cara' : (varVsMedia < -0.05 ? 'mais barata' : 'na média');
+  // ── Custo por produto/dia (fev → hoje): guarda dados p/ o seletor ────
+  custoBlended = d.custo_diario || [];
+  custoPorProduto = new Map();          // produto → [ {dia, custo_medio, ...} ]
+  (d.custo_por_produto_dia || []).forEach(r => {
+    if (!custoPorProduto.has(r.produto)) custoPorProduto.set(r.produto, []);
+    custoPorProduto.get(r.produto).push(r);
+  });
+  // Ordena produtos por total de peças comprado (mais relevantes primeiro)
+  custoProdutos = [...custoPorProduto.entries()]
+    .map(([nome, arr]) => ({ nome, pecas: arr.reduce((s,x)=>s+(x.total_pecas||0),0) }))
+    .sort((a,b) => b.pecas - a.pecas)
+    .map(x => x.nome);
+  const temDados = custoBlended.length > 0;
 
   document.getElementById('relatorioConteudo').innerHTML = `
     <div class="row g-3">
 
-      <!-- Custo médio da camisa por dia -->
+      <!-- Custo por produto / dia -->
       <div class="col-12">
         <div class="card">
           <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
             <small class="fw-bold text-uppercase" style="letter-spacing:.05em">
-              <i class="bi bi-graph-up me-1" style="color:#58a6ff"></i>Custo Médio da Camisa por Dia
+              <i class="bi bi-graph-up me-1" style="color:#58a6ff"></i>Custo por Produto · dia a dia
               <span style="color:var(--muted);font-weight:400;text-transform:none;margin-left:6px">fevereiro → hoje</span>
             </small>
+            ${temDados ? `
+              <select id="selProdCusto" onchange="updateCustoDia(this.value)"
+                      style="background:#0d1117;border:1px solid var(--border);color:var(--text);
+                             border-radius:6px;padding:5px 10px;font-size:.82rem;max-width:320px">
+                <option value="__todos__">Todas as camisas (média geral)</option>
+                ${custoProdutos.map(p => `<option value="${escHtml(p)}">${escHtml(p)}</option>`).join('')}
+              </select>` : ''}
           </div>
-          <div style="padding:16px">
-            ${serie.length ? `
-              <div class="d-flex align-items-end flex-wrap gap-4 mb-3">
-                <div>
-                  <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Custo médio atual</div>
-                  <div style="font-size:1.7rem;font-weight:800;line-height:1.1">${fmtBRL(custoAtual)}</div>
-                  <div style="font-size:.72rem;color:var(--muted)">na última compra registrada</div>
-                </div>
-                <div>
-                  <span style="display:inline-flex;align-items:center;gap:5px;background:${corVar}1a;color:${corVar};
-                               font-weight:800;font-size:1rem;padding:6px 12px;border-radius:8px">
-                    ${setaVar} ${Math.abs(varVsMedia).toFixed(1)}% ${txtVar}
-                  </span>
-                  <div style="font-size:.72rem;color:var(--muted);margin-top:4px">vs. média do período (${fmtBRL(mediaPeriodo)})</div>
-                </div>
-                <div>
-                  <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Desde fevereiro</div>
-                  <div style="font-size:1rem;font-weight:700;color:${varDesdeFev>0?'#f85149':(varDesdeFev<0?'#3fb950':'#8b949e')}">
-                    ${varDesdeFev>0?'▲':(varDesdeFev<0?'▼':'■')} ${Math.abs(varDesdeFev).toFixed(1)}%
-                  </div>
-                  <div style="font-size:.72rem;color:var(--muted)">${fmtBRL(custoInicial)} → ${fmtBRL(custoAtual)}</div>
-                </div>
-              </div>
-              <div style="position:relative;height:280px"><canvas id="chartCustoDia"></canvas></div>
-              <div style="font-size:.72rem;color:var(--muted);margin-top:8px;line-height:1.6">
-                <span style="color:#3fb950">● abaixo da média</span> &nbsp;
-                <span style="color:#f85149">● acima da média</span> &nbsp;·&nbsp;
-                <span style="color:#f0883e">▬ tendência</span> (média móvel de 5 compras, mostra a direção real) &nbsp;·&nbsp;
-                <span style="color:#f0c43e">┅ média do período</span> (${fmtBRL(mediaPeriodo)})<br>
-                O <b>tamanho de cada ponto</b> reflete a quantidade comprada no dia — pontos grandes = compras maiores.
-                Custo médio ponderado pela quantidade.
-              </div>
-            ` : '<div class="text-center text-muted py-4" style="font-size:.85rem">Nenhuma compra registrada de fevereiro até agora.</div>'}
+          <div id="custoDiaBox" style="padding:16px">
+            ${temDados ? '' : '<div class="text-center text-muted py-4" style="font-size:.85rem">Nenhuma compra registrada de fevereiro até agora.</div>'}
           </div>
         </div>
       </div>
@@ -644,8 +619,78 @@ function renderRelatorio(d) {
 
     </div>`;
 
-  // Renderiza o gráfico de custo médio por dia (depois do innerHTML existir)
-  if (serie.length) renderChartCustoDia(serie, mediaPeriodo);
+  // Renderiza a visão inicial (média de todas) depois do innerHTML existir
+  if (custoBlended.length) updateCustoDia('__todos__');
+}
+
+// ── Estado dos dados de custo (para o seletor de produto) ──────────────
+let custoBlended = [];
+let custoPorProduto = new Map();
+let custoProdutos = [];
+
+// KPIs de uma série (média ponderada, custo atual, variações)
+function computeCustoKpis(serie) {
+  const totalPecas = serie.reduce((s,x) => s + (x.total_pecas||0), 0);
+  const totalValor = serie.reduce((s,x) => s + (x.total_valor||0), 0);
+  const mediaPeriodo = totalPecas > 0 ? totalValor / totalPecas : 0;
+  const custoAtual   = serie.length ? (serie[serie.length-1].custo_medio||0) : 0;
+  const custoInicial = serie.length ? (serie[0].custo_medio||0) : 0;
+  const varVsMedia   = mediaPeriodo > 0 ? ((custoAtual - mediaPeriodo)/mediaPeriodo*100) : 0;
+  const varDesdeFev  = custoInicial > 0 ? ((custoAtual - custoInicial)/custoInicial*100) : 0;
+  return { mediaPeriodo, custoAtual, custoInicial, varVsMedia, varDesdeFev, totalPecas };
+}
+
+// Troca a série exibida (todas ou um produto) e redesenha KPIs + gráfico
+function updateCustoDia(sel) {
+  const serie = (sel === '__todos__') ? custoBlended : (custoPorProduto.get(sel) || []);
+  const box = document.getElementById('custoDiaBox');
+  if (!box) return;
+  if (!serie.length) {
+    box.innerHTML = '<div class="text-center text-muted py-4" style="font-size:.85rem">Sem compras desse produto no período.</div>';
+    return;
+  }
+  const k = computeCustoKpis(serie);
+  const maisCara = k.varVsMedia > 0.05;
+  const corVar   = maisCara ? '#f85149' : (k.varVsMedia < -0.05 ? '#3fb950' : '#8b949e');
+  const setaVar  = maisCara ? '▲' : (k.varVsMedia < -0.05 ? '▼' : '■');
+  const txtVar   = maisCara ? 'mais cara' : (k.varVsMedia < -0.05 ? 'mais barata' : 'na média');
+  const contexto = (sel === '__todos__')
+    ? 'Média de todas as camisas (ponderada pela quantidade). Pode misturar modelos de preços diferentes.'
+    : `Somente <b>${escHtml(sel)}</b> — comparação limpa da mesma camisa ao longo do tempo.`;
+
+  box.innerHTML = `
+    <div class="d-flex align-items-end flex-wrap gap-4 mb-2">
+      <div>
+        <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Custo médio atual</div>
+        <div style="font-size:1.7rem;font-weight:800;line-height:1.1">${fmtBRL(k.custoAtual)}</div>
+        <div style="font-size:.72rem;color:var(--muted)">na última compra registrada</div>
+      </div>
+      <div>
+        <span style="display:inline-flex;align-items:center;gap:5px;background:${corVar}1a;color:${corVar};
+                     font-weight:800;font-size:1rem;padding:6px 12px;border-radius:8px">
+          ${setaVar} ${Math.abs(k.varVsMedia).toFixed(1)}% ${txtVar}
+        </span>
+        <div style="font-size:.72rem;color:var(--muted);margin-top:4px">vs. média do período (${fmtBRL(k.mediaPeriodo)})</div>
+      </div>
+      <div>
+        <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Desde fevereiro</div>
+        <div style="font-size:1rem;font-weight:700;color:${k.varDesdeFev>0?'#f85149':(k.varDesdeFev<0?'#3fb950':'#8b949e')}">
+          ${k.varDesdeFev>0?'▲':(k.varDesdeFev<0?'▼':'■')} ${Math.abs(k.varDesdeFev).toFixed(1)}%
+        </div>
+        <div style="font-size:.72rem;color:var(--muted)">${fmtBRL(k.custoInicial)} → ${fmtBRL(k.custoAtual)}</div>
+      </div>
+    </div>
+    <div style="font-size:.72rem;color:var(--muted);margin-bottom:10px">${contexto}</div>
+    <div style="position:relative;height:280px"><canvas id="chartCustoDia"></canvas></div>
+    <div style="font-size:.72rem;color:var(--muted);margin-top:8px;line-height:1.6">
+      <span style="color:#3fb950">● abaixo da média</span> &nbsp;
+      <span style="color:#f85149">● acima da média</span> &nbsp;·&nbsp;
+      <span style="color:#f0883e">▬ tendência</span> (média móvel de 5 compras) &nbsp;·&nbsp;
+      <span style="color:#f0c43e">┅ média do período</span> (${fmtBRL(k.mediaPeriodo)})<br>
+      O <b>tamanho de cada ponto</b> reflete a quantidade comprada no dia. Custo médio ponderado pela quantidade.
+    </div>`;
+
+  renderChartCustoDia(serie, k.mediaPeriodo);
 }
 
 let chartCustoDiaInst = null;
