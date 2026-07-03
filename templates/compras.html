@@ -384,6 +384,38 @@ function renderHistorico(compras) {
         ${items.map(c => renderCardCompra(c)).join('')}
       </div>`;
     }).join('');
+
+  // Carrega as fotos dos produtos em segundo plano (não trava a lista)
+  preencherImagensProdutos();
+}
+
+// Normaliza nome para casar compra ↔ catálogo
+function normNomeProd(s) {
+  return String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+// Busca o catálogo (cacheado) e injeta a miniatura de cada produto nos cards
+async function preencherImagensProdutos() {
+  try { await carregarCatalogo(); } catch(e) { return; }
+  if (!catalogoProdutos || !catalogoProdutos.length) return;
+
+  const byId = new Map(), byNome = new Map();
+  catalogoProdutos.forEach(p => {
+    if (p.id != null && p.imageUrl) byId.set(String(p.id), p.imageUrl);
+    if (p.name && p.imageUrl) byNome.set(normNomeProd(p.name), p.imageUrl);
+  });
+
+  (comprasCarregadas || []).forEach(c => {
+    const slot = document.getElementById(`prodimg-${c.id}`);
+    if (!slot) return;
+    let url = null;
+    if (c.nv_product_id != null && byId.has(String(c.nv_product_id))) url = byId.get(String(c.nv_product_id));
+    if (!url && c.produto_nome) url = byNome.get(normNomeProd(c.produto_nome)) || null;
+    if (url) {
+      slot.innerHTML = `<img src="${escHtml(url)}" loading="lazy"
+        style="width:100%;height:100%;object-fit:cover" alt="${escHtml(c.produto_nome)}">`;
+    }
+  });
 }
 
 function renderCardCompra(c) {
@@ -393,7 +425,13 @@ function renderCardCompra(c) {
 
   return `<div class="compra-card" style="${ignorado ? 'opacity:.6' : ''}">
     <div class="d-flex align-items-start justify-content-between gap-3">
-      <div class="flex-grow-1">
+      <div class="d-flex align-items-start gap-2 flex-grow-1" style="min-width:0">
+      <div id="prodimg-${c.id}"
+           style="width:46px;height:46px;border-radius:8px;flex-shrink:0;background:#21262d;overflow:hidden;
+                  display:flex;align-items:center;justify-content:center;border:1px solid var(--border)">
+        <i class="bi bi-image" style="color:var(--muted);font-size:1rem"></i>
+      </div>
+      <div style="min-width:0;flex:1">
         <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
           <span class="fw-bold" style="font-size:.9rem">${escHtml(c.produto_nome)}</span>
           ${c.fornecedor ? `<span style="font-size:.72rem;color:var(--muted);background:var(--border);border-radius:6px;padding:1px 7px">
@@ -404,6 +442,7 @@ function renderCardCompra(c) {
         </div>
         <div class="d-flex flex-wrap gap-1 mb-1">${tams || '<span style="font-size:.72rem;color:var(--muted)">—</span>'}</div>
         ${c.observacao ? `<div style="font-size:.74rem;color:var(--muted)"><i class="bi bi-chat-left-text me-1"></i>${escHtml(c.observacao)}</div>` : ''}
+      </div>
       </div>
       <div style="text-align:right;min-width:110px">
         <div style="font-size:.72rem;color:var(--muted)">${c.total_qty} peças</div>
