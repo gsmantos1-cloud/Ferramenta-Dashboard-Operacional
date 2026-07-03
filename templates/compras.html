@@ -574,12 +574,22 @@ function renderRelatorio(d) {
               <span style="color:var(--muted);font-weight:400;text-transform:none;margin-left:6px">fevereiro → hoje</span>
             </small>
             ${temDados ? `
-              <select id="selProdCusto" onchange="updateCustoDia(this.value)"
-                      style="background:#0d1117;border:1px solid var(--border);color:var(--text);
-                             border-radius:6px;padding:5px 10px;font-size:.82rem;max-width:320px">
-                <option value="__todos__">Todas as camisas (média geral)</option>
-                ${custoProdutos.map(p => `<option value="${escHtml(p)}">${escHtml(p)}</option>`).join('')}
-              </select>` : ''}
+              <div id="selProdWrap" style="position:relative">
+                <button type="button" onclick="toggleProdMenu(event)"
+                  style="display:flex;align-items:center;gap:8px;background:#0d1117;border:1px solid var(--border);
+                         color:var(--text);border-radius:6px;padding:4px 10px;font-size:.82rem;
+                         min-width:240px;max-width:340px;cursor:pointer">
+                  <span id="selProdThumb" style="width:28px;height:28px;border-radius:5px;background:#21262d;flex-shrink:0;
+                        display:flex;align-items:center;justify-content:center;overflow:hidden">
+                    <i class="bi bi-grid" style="color:var(--muted);font-size:.85rem"></i>
+                  </span>
+                  <span id="selProdLabel" style="flex:1;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Todas as camisas (média geral)</span>
+                  <i class="bi bi-chevron-down" style="color:var(--muted);font-size:.7rem"></i>
+                </button>
+                <div id="selProdMenu" style="display:none;position:absolute;right:0;top:calc(100% + 4px);z-index:60;
+                     background:#0d1117;border:1px solid var(--border);border-radius:8px;min-width:280px;max-width:360px;
+                     max-height:340px;overflow:auto;box-shadow:0 8px 24px rgba(0,0,0,.5)"></div>
+              </div>` : ''}
           </div>
           <div id="custoDiaBox" style="padding:16px">
             ${temDados ? '' : '<div class="text-center text-muted py-4" style="font-size:.85rem">Nenhuma compra registrada de fevereiro até agora.</div>'}
@@ -681,13 +691,92 @@ function renderRelatorio(d) {
     </div>`;
 
   // Renderiza a visão inicial (média de todas) depois do innerHTML existir
-  if (custoBlended.length) updateCustoDia('__todos__');
+  if (custoBlended.length) { updateCustoDia('__todos__'); montarSeletorProdutos(); }
 }
 
 // ── Estado dos dados de custo (para o seletor de produto) ──────────────
 let custoBlended = [];
 let custoPorProduto = new Map();
 let custoProdutos = [];
+let custoImgMap = new Map();   // normNome → url da foto
+
+// Monta o menu (com nomes na hora) e carrega as fotos em 2º plano
+async function montarSeletorProdutos() {
+  buildProdMenu();
+  try { await carregarCatalogo(); } catch(e) {}
+  buildCustoImgMap();
+  fillMenuThumbs();
+  aplicarThumbSelecionado('__todos__');
+}
+
+function buildCustoImgMap() {
+  custoImgMap = new Map();
+  (catalogoProdutos || []).forEach(p => {
+    if (p.name && p.imageUrl) custoImgMap.set(normNomeProd(p.name), p.imageUrl);
+  });
+}
+
+function toggleProdMenu(e) {
+  if (e) e.stopPropagation();
+  const m = document.getElementById('selProdMenu');
+  if (m) m.style.display = (m.style.display === 'none' || !m.style.display) ? 'block' : 'none';
+}
+
+function buildProdMenu() {
+  const m = document.getElementById('selProdMenu');
+  if (!m) return;
+  const row = (val, label, isAll) => `
+    <div class="prod-opt" data-val="${escHtml(val)}"
+         style="display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;border-bottom:1px solid #21262d"
+         onmouseover="this.style.background='rgba(88,166,255,.08)'" onmouseout="this.style.background=''">
+      <span class="prodopt-thumb" data-nome="${escHtml(normNomeProd(label))}"
+            style="width:34px;height:34px;border-radius:6px;background:#21262d;flex-shrink:0;overflow:hidden;
+                   display:flex;align-items:center;justify-content:center">
+        <i class="bi ${isAll ? 'bi-grid' : 'bi-image'}" style="color:var(--muted);font-size:.9rem"></i>
+      </span>
+      <span style="font-size:.83rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(label)}</span>
+    </div>`;
+  m.innerHTML = row('__todos__', 'Todas as camisas (média geral)', true)
+    + custoProdutos.map(p => row(p, p, false)).join('');
+  m.onclick = (e) => {
+    const el = e.target.closest('.prod-opt');
+    if (el) escolherProduto(el.dataset.val);
+  };
+}
+
+function fillMenuThumbs() {
+  document.querySelectorAll('#selProdMenu .prodopt-thumb').forEach(sp => {
+    const url = custoImgMap.get(sp.dataset.nome);
+    if (url) sp.innerHTML = `<img src="${escHtml(url)}" loading="lazy" style="width:100%;height:100%;object-fit:cover">`;
+  });
+}
+
+// Atualiza a miniatura do botão conforme o produto escolhido
+function aplicarThumbSelecionado(val) {
+  const thumb = document.getElementById('selProdThumb');
+  if (!thumb) return;
+  const url = (val !== '__todos__') ? custoImgMap.get(normNomeProd(val)) : null;
+  thumb.innerHTML = url
+    ? `<img src="${escHtml(url)}" style="width:100%;height:100%;object-fit:cover">`
+    : `<i class="bi ${val==='__todos__'?'bi-grid':'bi-image'}" style="color:var(--muted);font-size:.85rem"></i>`;
+}
+
+function escolherProduto(val) {
+  const label = (val === '__todos__') ? 'Todas as camisas (média geral)' : val;
+  const lblEl = document.getElementById('selProdLabel');
+  if (lblEl) lblEl.textContent = label;
+  aplicarThumbSelecionado(val);
+  const m = document.getElementById('selProdMenu');
+  if (m) m.style.display = 'none';
+  updateCustoDia(val);
+}
+
+// Fecha o menu ao clicar fora
+document.addEventListener('click', (e) => {
+  const wrap = document.getElementById('selProdWrap');
+  const m = document.getElementById('selProdMenu');
+  if (m && wrap && !wrap.contains(e.target)) m.style.display = 'none';
+});
 
 // KPIs de uma série (média ponderada, custo atual, variações)
 function computeCustoKpis(serie) {
@@ -721,6 +810,11 @@ function updateCustoDia(sel) {
 
   box.innerHTML = `
     <div class="d-flex align-items-end flex-wrap gap-4 mb-2">
+      ${sel !== '__todos__' ? `
+      <div id="custoHeaderImg" style="width:64px;height:64px;border-radius:10px;background:#21262d;overflow:hidden;
+           display:flex;align-items:center;justify-content:center;flex-shrink:0;border:1px solid var(--border)">
+        <i class="bi bi-image" style="color:var(--muted);font-size:1.3rem"></i>
+      </div>` : ''}
       <div>
         <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Custo médio atual</div>
         <div style="font-size:1.7rem;font-weight:800;line-height:1.1">${fmtBRL(k.custoAtual)}</div>
@@ -752,6 +846,13 @@ function updateCustoDia(sel) {
     </div>`;
 
   renderChartCustoDia(serie, k.mediaPeriodo);
+
+  // Foto do produto selecionado no topo do gráfico
+  if (sel !== '__todos__') {
+    const url = custoImgMap.get(normNomeProd(sel));
+    const hi = document.getElementById('custoHeaderImg');
+    if (url && hi) hi.innerHTML = `<img src="${escHtml(url)}" style="width:100%;height:100%;object-fit:cover" alt="${escHtml(sel)}">`;
+  }
 }
 
 let chartCustoDiaInst = null;
