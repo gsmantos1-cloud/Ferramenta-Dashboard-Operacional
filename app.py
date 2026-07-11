@@ -5008,6 +5008,40 @@ def api_atacado_detalhe(pid):
                     "anexos": [dict(a) for a in anexos]})
 
 
+@app.route("/api/atacado/pedidos/lote", methods=["POST"])
+@login_required
+def api_atacado_lote():
+    """Retorna vários pedidos + seus itens de uma vez, para gerar um PDF em lote
+    (1 pedido por página). Usa só 2 queries (pedidos + itens IN(...)) para não
+    disparar leituras em loop — respeita a regra de economia do Turso."""
+    data = request.get_json() or {}
+    try:
+        ids = [int(x) for x in (data.get("ids") or [])][:300]   # limite de segurança
+    except (TypeError, ValueError):
+        return jsonify({"erro": "ids inválidos"}), 400
+    if not ids:
+        return jsonify([])
+
+    marks = ",".join(["?"] * len(ids))
+    with get_conn() as conn:
+        peds  = conn.execute(
+            f"SELECT * FROM atacado_pedidos WHERE id IN ({marks})", ids
+        ).fetchall()
+        itens = conn.execute(
+            f"""SELECT * FROM atacado_itens WHERE pedido_id IN ({marks})
+                ORDER BY produto COLLATE NOCASE, variante COLLATE NOCASE""", ids
+        ).fetchall()
+
+    por_pedido = {}
+    for i in itens:
+        por_pedido.setdefault(i["pedido_id"], []).append(dict(i))
+    ped_map = {p["id"]: dict(p) for p in peds}
+    # devolve na MESMA ordem em que os ids foram pedidos (= ordem da tela)
+    saida = [{"pedido": ped_map[pid], "itens": por_pedido.get(pid, [])}
+             for pid in ids if pid in ped_map]
+    return jsonify(saida)
+
+
 @app.route("/api/atacado/pedidos/<int:pid>/anexos", methods=["POST"])
 @login_required
 def api_atacado_anexo_upload(pid):

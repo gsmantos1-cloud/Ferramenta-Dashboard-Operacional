@@ -7,9 +7,16 @@
         <h5 class="mb-0 fw-bold">Pedidos Atacado</h5>
         <small style="color:var(--muted)">Gerencie pedidos de atacado · separação · envio</small>
     </div>
-    <button class="btn btn-primary btn-sm" onclick="abrirModal()">
-        <i class="bi bi-plus-lg me-1"></i>Novo Pedido
-    </button>
+    <div class="d-flex gap-2">
+        <button class="btn btn-sm" id="btnPdfLote" onclick="gerarPdfLote()"
+                title="Baixar um PDF com todos os pedidos do filtro atual — 1 pedido por página"
+                style="background:rgba(88,166,255,.12);border:1px solid rgba(88,166,255,.3);color:var(--blue)">
+            <i class="bi bi-filetype-pdf me-1"></i>Baixar PDF
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="abrirModal()">
+            <i class="bi bi-plus-lg me-1"></i>Novo Pedido
+        </button>
+    </div>
 </div>
 
 <!-- Visão geral (resumo com tendência diária) -->
@@ -392,6 +399,9 @@
 .pdf-tam-tbl .tam-sz { font-weight:700; }
 .pdf-grupo-tot { margin-top:7px; font-size:11px; color:#1a3a5c; font-weight:700; text-align:right; }
 .pdf-total-geral { display:flex; justify-content:space-between; border-top:2px solid #1a3a5c; margin-top:6px; padding-top:10px; font-size:15px; font-weight:800; color:#1a3a5c; }
+/* PDF em lote: cada pedido ocupa a sua própria folha */
+.pdf-folha { page-break-after: always; break-after: page; }
+.pdf-folha:last-child { page-break-after: auto; break-after: auto; }
 
 
 .filter-atk { background:transparent;border:1px solid var(--border);color:var(--muted);font-size:.8rem;padding:4px 12px;border-radius:20px; }
@@ -1987,6 +1997,63 @@ async function gerarPdfPedido() {
         area.style.zoom = '';
     } catch(e) {
         alert('Erro ao gerar PDF.');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = txtOrig;
+    }
+}
+
+// Gera UM PDF com todos os pedidos do filtro atual — 1 pedido por página
+async function gerarPdfLote() {
+    const btn = document.getElementById('btnPdfLote');
+    const txtOrig = btn.innerHTML;
+    // Mesmo critério do renderLista: respeita o filtro de status ativo
+    const visiveis = (filtroAtual === 'todos') ? pedidos : pedidos.filter(p => p.status === filtroAtual);
+    if (!visiveis.length) { alert('Nenhum pedido neste filtro para gerar o PDF.'); return; }
+    const ids = visiveis.map(p => p.id);
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Gerando...';
+    try {
+        await carregarCatalogo();   // garante as imagens das variantes
+        const r = await fetch('/api/atacado/pedidos/lote', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ ids })
+        });
+        const lista = await r.json();
+        if (!Array.isArray(lista) || !lista.length) { alert('Nenhum pedido para gerar.'); return; }
+
+        const area = document.getElementById('pdfArea');
+        area.innerHTML = lista.map(({pedido, itens}) =>
+            `<div class="pdf-folha">${buildPdfHtml(pedido, itens)}</div>`
+        ).join('');
+
+        // Espera as imagens carregarem antes de imprimir
+        const imgs = Array.from(area.querySelectorAll('img'));
+        await Promise.all(imgs.map(img => (img.complete && img.naturalWidth)
+            ? Promise.resolve()
+            : new Promise(res => { img.onload = img.onerror = res; setTimeout(res, 4000); })));
+
+        // Escala CADA folha p/ caber em uma página A4 (mede escondida, na largura da página)
+        const PAGE_W = 733, PAGE_H = 1030;
+        const folhas = Array.from(area.querySelectorAll('.pdf-folha'));
+        const estiloOrig = area.style.cssText;
+        area.style.cssText = 'display:block;position:fixed;left:-10000px;top:0;visibility:hidden;'
+                           + 'width:' + PAGE_W + 'px;padding:0;box-sizing:border-box;background:#fff;'
+                           + 'font-family:Arial,Helvetica,sans-serif';
+        folhas.forEach(f => { f.style.zoom = ''; });
+        const zooms = folhas.map(f => Math.min(1, PAGE_H / Math.max(f.scrollHeight, 1)));
+        area.style.cssText = estiloOrig;
+        folhas.forEach((f, i) => { f.style.zoom = zooms[i]; });
+
+        const tituloOrig = document.title;
+        document.title = `FutDrop - Pedidos Atacado (${lista.length})`;
+        window.print();
+        document.title = tituloOrig;
+        folhas.forEach(f => { f.style.zoom = ''; });
+        area.innerHTML = '';
+    } catch(e) {
+        alert('Erro ao gerar o PDF.');
     } finally {
         btn.disabled = false;
         btn.innerHTML = txtOrig;
