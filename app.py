@@ -3779,7 +3779,7 @@ def _tirar_snapshot_estoque(force=False):
 
 @app.route("/api/cron/snapshot-estoque", methods=["GET", "POST"])
 def cron_snapshot_estoque():
-    """Chamado pelo Vercel Cron às 00h (Brasília = 03:00 UTC). Protegido por
+    """Chamado pelo Vercel Cron às 23h (Brasília = 02:00 UTC). Protegido por
     CRON_SECRET quando a variável estiver configurada no Vercel."""
     secret = os.getenv("CRON_SECRET", "")
     if secret:

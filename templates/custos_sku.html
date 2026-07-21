@@ -22,7 +22,7 @@
         </button>
         <button class="btn btn-sm" id="btnRelDiario"
                 style="background:rgba(63,185,80,.12);border:1px solid #3fb95044;color:#3fb950"
-                onclick="abrirRelatoriosDiarios()" title="PDF do estoque com foto — de hoje ou de dias anteriores (snapshot automático às 00h)">
+                onclick="abrirRelatoriosDiarios()" title="PDF do estoque com foto — de hoje ou de dias anteriores (snapshot automático às 23h)">
             <i class="bi bi-file-earmark-pdf me-1"></i>Relatório diário
         </button>
         <button class="btn btn-sm" id="btnMovs"
@@ -82,8 +82,8 @@
           </div>
         </div>
         <div class="d-flex align-items-center justify-content-between mb-2">
-          <div style="font-size:.78rem;font-weight:700;color:var(--muted);letter-spacing:.04em">DIAS SALVOS (00h automático)</div>
-          <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:.72rem" onclick="gerarSnapshotAgora()" title="Salvar o snapshot de hoje agora (sem esperar as 00h)">
+          <div style="font-size:.78rem;font-weight:700;color:var(--muted);letter-spacing:.04em">DIAS SALVOS (23h automático)</div>
+          <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:.72rem" onclick="gerarSnapshotAgora()" title="Salvar o snapshot de hoje agora (sem esperar as 23h)">
             <i class="bi bi-camera me-1"></i>Salvar hoje agora
           </button>
         </div>
@@ -725,7 +725,7 @@ async function carregarSnapshots() {
     try {
         const dias = await fetch('/api/estoque/snapshots').then(r => r.json());
         if (!Array.isArray(dias) || !dias.length) {
-            box.innerHTML = '<div class="text-center py-3" style="color:var(--muted);font-size:.82rem">Nenhum dia salvo ainda.<br>O primeiro será gerado automaticamente às 00h — ou clique em "Salvar hoje agora".</div>';
+            box.innerHTML = '<div class="text-center py-3" style="color:var(--muted);font-size:.82rem">Nenhum dia salvo ainda.<br>O primeiro será gerado automaticamente às 23h — ou clique em "Salvar hoje agora".</div>';
             return;
         }
         box.innerHTML = dias.map(d => `

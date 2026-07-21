@@ -14,7 +14,7 @@
   "crons": [
     {
       "path": "/api/cron/snapshot-estoque",
-      "schedule": "0 3 * * *"
+      "schedule": "0 2 * * *"
     }
   ]
 }
