@@ -25,6 +25,11 @@
                 onclick="abrirRelatoriosDiarios()" title="PDF do estoque com foto — de hoje ou de dias anteriores (snapshot automático às 00h)">
             <i class="bi bi-file-earmark-pdf me-1"></i>Relatório diário
         </button>
+        <button class="btn btn-sm" id="btnMovs"
+                style="background:rgba(88,166,255,.12);border:1px solid #58a6ff44;color:#58a6ff"
+                onclick="abrirMovs()" title="Histórico de entradas e saídas por dia/período (geral ou por produto)">
+            <i class="bi bi-arrow-down-up me-1"></i>Entradas/Saídas
+        </button>
     </div>
 </div>
 
@@ -89,6 +94,42 @@
     </div>
   </div>
 </div>
+
+<!-- Modal: Entradas e Saídas (histórico por período) -->
+<div class="modal fade" id="modalMovs" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border)">
+      <div class="modal-header" style="border-bottom:1px solid var(--border)">
+        <h6 class="modal-title fw-bold"><i class="bi bi-arrow-down-up me-2" style="color:#58a6ff"></i>Entradas e Saídas</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+          <button class="btn btn-sm mov-preset" data-p="7"   onclick="movPreset(7)">7 dias</button>
+          <button class="btn btn-sm mov-preset" data-p="15"  onclick="movPreset(15)">15 dias</button>
+          <button class="btn btn-sm mov-preset" data-p="30"  onclick="movPreset(30)">30 dias</button>
+          <button class="btn btn-sm mov-preset" data-p="mes" onclick="movPreset('mes')">Mês atual</button>
+        </div>
+        <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+          <input type="date" id="movDe"  class="form-control form-control-sm" style="width:150px">
+          <span style="color:var(--muted)">→</span>
+          <input type="date" id="movAte" class="form-control form-control-sm" style="width:150px">
+          <button class="btn btn-sm btn-primary" onclick="movAplicarCustom()" title="Aplicar período personalizado"><i class="bi bi-search"></i></button>
+          <select id="movProduto" class="form-select form-select-sm" style="width:auto;min-width:170px" onchange="carregarMovs()">
+            <option value="">Todos os produtos</option>
+          </select>
+        </div>
+        <div id="movResultado"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+.mov-preset { background:transparent;border:1px solid var(--border);color:var(--muted);font-size:.8rem;padding:3px 12px;border-radius:20px; }
+.mov-preset:hover { color:var(--text);border-color:var(--muted); }
+.mov-preset.active { background:var(--blue);border-color:var(--blue);color:#fff; }
+</style>
 
 <!-- Cards de resumo de estoque -->
 <div id="stockSummary" class="d-flex flex-wrap gap-3 mb-4"></div>
@@ -789,6 +830,98 @@ async function imprimirEstoquePdf(titulo, itens) {
     window.print();
     document.title = tituloOrig;
     area.innerHTML = '';
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  RELATÓRIO DE ENTRADAS E SAÍDAS (histórico por período)
+// ══════════════════════════════════════════════════════════════════════════════
+function _ymdLocal(dt) { const z = new Date(dt.getTime() - dt.getTimezoneOffset()*60000); return z.toISOString().slice(0,10); }
+
+function abrirMovs() {
+    const sel = document.getElementById('movProduto');
+    if (sel && sel.options.length <= 1) {   // popula produtos uma vez
+        const nomes = [...new Set((products||[]).map(p => p.name).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt'));
+        sel.innerHTML = '<option value="">Todos os produtos</option>' +
+            nomes.map(n => `<option value="${escHtml(n)}">${escHtml(n)}</option>`).join('');
+    }
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalMovs')).show();
+    movPreset(7);
+}
+
+function movPreset(dias) {
+    const fim = new Date();
+    let ini = new Date();
+    if (dias === 'mes') ini = new Date(fim.getFullYear(), fim.getMonth(), 1);
+    else ini.setDate(fim.getDate() - (Number(dias) - 1));
+    document.getElementById('movDe').value  = _ymdLocal(ini);
+    document.getElementById('movAte').value = _ymdLocal(fim);
+    document.querySelectorAll('.mov-preset').forEach(b => b.classList.toggle('active', b.dataset.p == String(dias)));
+    carregarMovs();
+}
+
+function movAplicarCustom() {
+    const de = document.getElementById('movDe').value, ate = document.getElementById('movAte').value;
+    if (!de || !ate) { toast('Escolha as duas datas.', false); return; }
+    if (de > ate)    { toast('A data inicial está depois da final.', false); return; }
+    document.querySelectorAll('.mov-preset').forEach(b => b.classList.remove('active'));
+    carregarMovs();
+}
+
+async function carregarMovs() {
+    const de = document.getElementById('movDe').value, ate = document.getElementById('movAte').value;
+    if (!de || !ate) return;
+    const box = document.getElementById('movResultado');
+    box.innerHTML = '<div class="text-center py-4" style="color:var(--muted)"><span class="spinner-border spinner-border-sm me-1"></span>Carregando…</div>';
+    try {
+        const params = new URLSearchParams({ inicio: de, fim: ate });
+        const prod = document.getElementById('movProduto').value;
+        if (prod) params.set('produto', prod);
+        const d = await fetch('/api/estoque/movimentos/relatorio?' + params.toString()).then(r => r.json());
+        renderMovs(d);
+    } catch { box.innerHTML = '<div class="text-center py-4" style="color:var(--red)">Erro ao carregar.</div>'; }
+}
+
+function renderMovs(d) {
+    const box = document.getElementById('movResultado');
+    const ent = d.total_entrou||0, sai = d.total_saiu||0, saldo = ent - sai;
+    const fmtD = s => { try { const [a,m,dd] = s.split('-'); return `${dd}/${m}`; } catch { return s; } };
+    const cards = `
+      <div class="d-flex flex-wrap gap-2 mb-3">
+        <div style="flex:1;min-width:110px;background:rgba(63,185,80,.1);border:1px solid #3fb95033;border-radius:8px;padding:10px 14px">
+          <div style="font-size:1.4rem;font-weight:700;color:#3fb950">+${ent}</div>
+          <div style="font-size:.72rem;color:var(--muted)">ENTROU (peças)</div></div>
+        <div style="flex:1;min-width:110px;background:rgba(248,81,73,.1);border:1px solid #f8514933;border-radius:8px;padding:10px 14px">
+          <div style="font-size:1.4rem;font-weight:700;color:#f85149">−${sai}</div>
+          <div style="font-size:.72rem;color:var(--muted)">SAIU (peças)</div></div>
+        <div style="flex:1;min-width:110px;background:var(--hover-row);border:1px solid var(--border);border-radius:8px;padding:10px 14px">
+          <div style="font-size:1.4rem;font-weight:700;color:${saldo>=0?'#3fb950':'#f85149'}">${saldo>=0?'+':''}${saldo}</div>
+          <div style="font-size:.72rem;color:var(--muted)">SALDO</div></div>
+      </div>`;
+    const linhasDia = (d.por_dia||[]).length ? d.por_dia.map(r => `<tr>
+        <td>${fmtD(r.dia)}</td>
+        <td style="text-align:right;color:#3fb950;font-weight:600">${r.entrou?('+'+r.entrou):'—'}</td>
+        <td style="text-align:right;color:#f85149;font-weight:600">${r.saiu?('−'+r.saiu):'—'}</td></tr>`).join('')
+      : '<tr><td colspan="3" class="text-center py-2" style="color:var(--muted)">Sem movimentos no período.</td></tr>';
+    const linhasProd = (d.por_produto||[]).length ? d.por_produto.map(r => `<tr>
+        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(r.produto)}">${escHtml(r.produto)}</td>
+        <td style="text-align:right;color:#3fb950;font-weight:600">${r.entrou?('+'+r.entrou):'—'}</td>
+        <td style="text-align:right;color:#f85149;font-weight:600">${r.saiu?('−'+r.saiu):'—'}</td></tr>`).join('')
+      : '<tr><td colspan="3" class="text-center py-2" style="color:var(--muted)">Sem movimentos no período.</td></tr>';
+    box.innerHTML = cards + `
+      <div class="row g-3">
+        <div class="col-12 col-lg-5">
+          <div style="font-size:.74rem;font-weight:700;color:var(--muted);letter-spacing:.04em;margin-bottom:6px">POR DIA</div>
+          <div class="table-responsive" style="max-height:300px;overflow-y:auto">
+            <table class="table table-sm mb-0" style="font-size:.83rem">
+              <thead><tr><th>Dia</th><th style="text-align:right">Entrou</th><th style="text-align:right">Saiu</th></tr></thead>
+              <tbody>${linhasDia}</tbody></table></div></div>
+        <div class="col-12 col-lg-7">
+          <div style="font-size:.74rem;font-weight:700;color:var(--muted);letter-spacing:.04em;margin-bottom:6px">POR PRODUTO</div>
+          <div class="table-responsive" style="max-height:300px;overflow-y:auto">
+            <table class="table table-sm mb-0" style="font-size:.83rem">
+              <thead><tr><th>Produto</th><th style="text-align:right">Entrou</th><th style="text-align:right">Saiu</th></tr></thead>
+              <tbody>${linhasProd}</tbody></table></div></div>
+      </div>`;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

@@ -467,6 +467,7 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_costs_variant         ON sku_costs(nv_variant_id)",
             "CREATE INDEX IF NOT EXISTS idx_costs_sku             ON sku_costs(sku)",
             "CREATE INDEX IF NOT EXISTS idx_movs_variant          ON sku_stock_movements(nv_variant_id)",
+            "CREATE INDEX IF NOT EXISTS idx_movs_created          ON sku_stock_movements(created_at)",
             "CREATE INDEX IF NOT EXISTS idx_pedidos_romaneio      ON pedidos(romaneio_id)",
             "CREATE INDEX IF NOT EXISTS idx_pedidos_status        ON pedidos(status)",
             "CREATE INDEX IF NOT EXISTS idx_atacado_itens_pedido  ON atacado_itens(pedido_id)",
@@ -3453,16 +3454,23 @@ def api_estoque_ajustar():
                  produto_nome, variante_label, agora),
             )
 
-        # Registra o movimento no histórico. Para 'ajuste' (definição de valor
-        # absoluto) registra sempre que o valor MUDOU de fato — inclusive ao ZERAR
-        # o estoque (ex.: 5→0), caso que o guard antigo (quantidade!=0) ignorava.
+        # Registra o movimento no histórico. A edição direta ('ajuste' = valor
+        # absoluto) é convertida em ENTRADA/SAÍDA pela diferença, para entrar certo
+        # no relatório de entradas/saídas (ex.: 5→8 = entrada 3; 8→5 = saída 3).
+        # Entrada e saída manual gravam o próprio delta, como antes.
         valor_anterior = existing["quantity"] if existing else 0
-        if tipo != "ajuste" or nova_qty != valor_anterior:
+        mov_tipo, mov_qtd = tipo, abs(int(quantidade))
+        if tipo == "ajuste":
+            delta = nova_qty - valor_anterior
+            if   delta > 0: mov_tipo, mov_qtd = "entrada", delta
+            elif delta < 0: mov_tipo, mov_qtd = "saida_manual", -delta
+            else:           mov_qtd = 0
+        if mov_qtd > 0:
             conn.execute(
                 """INSERT INTO sku_stock_movements
                    (nv_variant_id, sku, tipo, quantidade, observacao, created_at)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (nv_variant_id, sku, tipo, abs(quantidade), observacao, agora),
+                (nv_variant_id, sku, mov_tipo, mov_qtd, observacao, agora),
             )
 
         # ── Unifica o estoque por SKU (todas as variantes com o mesmo SKU) ──
@@ -3681,6 +3689,63 @@ def api_estoque_movimentos():
             ).fetchall()
 
     return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/estoque/movimentos/relatorio", methods=["GET"])
+@login_required
+def api_estoque_movimentos_relatorio():
+    """Relatório de ENTRADAS e SAÍDAS por período. Retorna os totais, a quebra
+    por dia e a quebra por produto. Filtra por intervalo de datas (usa o índice
+    em created_at) e, opcionalmente, por um produto. 2 queries — barato no Turso.
+
+    ENTROU = movimentos 'entrada'. SAIU = 'saida_manual' + 'saida_venda'.
+    A edição direta de estoque já entra aqui como entrada/saída (pela diferença)."""
+    from datetime import timedelta as _td
+    hoje    = date.today()
+    inicio  = (request.args.get("inicio") or "").strip() or (hoje - _td(days=6)).isoformat()
+    fim     = (request.args.get("fim") or "").strip() or hoje.isoformat()
+    produto = (request.args.get("produto") or "").strip()
+    ini_ts, fim_ts = inicio + " 00:00:00", fim + " 23:59:59"
+
+    IN  = "m.tipo='entrada'"
+    OUT = "m.tipo IN ('saida_manual','saida_venda')"
+
+    params = [ini_ts, fim_ts]
+    cond_prod = ""
+    if produto:
+        cond_prod = " AND s.produto_nome = ?"
+        params.append(produto)
+
+    with get_conn() as conn:
+        por_dia = conn.execute(f"""
+            SELECT date(m.created_at) AS dia,
+                   SUM(CASE WHEN {IN}  THEN m.quantidade ELSE 0 END) AS entrou,
+                   SUM(CASE WHEN {OUT} THEN m.quantidade ELSE 0 END) AS saiu
+            FROM sku_stock_movements m
+            LEFT JOIN sku_stock s ON s.nv_variant_id = m.nv_variant_id
+            WHERE m.created_at >= ? AND m.created_at <= ?{cond_prod}
+            GROUP BY dia ORDER BY dia DESC
+        """, params).fetchall()
+
+        por_produto = conn.execute(f"""
+            SELECT COALESCE(s.produto_nome, m.sku, 'Sem nome') AS produto,
+                   SUM(CASE WHEN {IN}  THEN m.quantidade ELSE 0 END) AS entrou,
+                   SUM(CASE WHEN {OUT} THEN m.quantidade ELSE 0 END) AS saiu
+            FROM sku_stock_movements m
+            LEFT JOIN sku_stock s ON s.nv_variant_id = m.nv_variant_id
+            WHERE m.created_at >= ? AND m.created_at <= ?{cond_prod}
+            GROUP BY produto ORDER BY (entrou + saiu) DESC
+        """, params).fetchall()
+
+    dias  = [dict(r) for r in por_dia]
+    prods = [dict(r) for r in por_produto if (r["entrou"] or 0) or (r["saiu"] or 0)]
+    return jsonify({
+        "inicio": inicio, "fim": fim, "produto": produto or None,
+        "total_entrou": sum(d["entrou"] or 0 for d in dias),
+        "total_saiu":   sum(d["saiu"]   or 0 for d in dias),
+        "por_dia": dias,
+        "por_produto": prods,
+    })
 
 
 # ── Snapshot diário do estoque (para o PDF diário na página Custos SKU) ───────
