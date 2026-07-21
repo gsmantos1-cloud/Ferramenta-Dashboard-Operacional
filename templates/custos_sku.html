@@ -115,9 +115,22 @@
           <span style="color:var(--muted)">→</span>
           <input type="date" id="movAte" class="form-control form-control-sm" style="width:150px">
           <button class="btn btn-sm btn-primary" onclick="movAplicarCustom()" title="Aplicar período personalizado"><i class="bi bi-search"></i></button>
-          <select id="movProduto" class="form-select form-select-sm" style="width:auto;min-width:170px" onchange="carregarMovs()">
-            <option value="">Todos os produtos</option>
-          </select>
+          <div id="movProdWrap" style="position:relative;flex:1;min-width:200px;max-width:340px">
+            <div class="d-flex align-items-center gap-2">
+              <img id="movProdImg" src="" alt="" onclick="expandirImgMov()" title="Clique para ampliar"
+                   style="display:none;width:32px;height:32px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:zoom-in;flex-shrink:0">
+              <div style="position:relative;flex:1">
+                <input id="movProdBusca" type="text" class="form-control form-control-sm" autocomplete="off"
+                       placeholder="Todos os produtos — digite p/ filtrar…"
+                       oninput="movBuscarProduto()" onfocus="movBuscarProduto()">
+                <div id="movProdDropdown" style="display:none;position:absolute;left:0;right:0;top:100%;margin-top:4px;
+                     z-index:9999;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;
+                     max-height:280px;overflow-y:auto;box-shadow:0 8px 32px var(--shadow)"></div>
+              </div>
+              <button id="movProdClear" onclick="movLimparProduto()" title="Mostrar todos os produtos"
+                      style="display:none;background:none;border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer;padding:1px 9px;flex-shrink:0">×</button>
+            </div>
+          </div>
         </div>
         <div id="movResultado"></div>
       </div>
@@ -130,6 +143,14 @@
 .mov-preset:hover { color:var(--text);border-color:var(--muted); }
 .mov-preset.active { background:var(--blue);border-color:var(--blue);color:#fff; }
 </style>
+
+<!-- Lightbox: imagem do produto ampliada -->
+<div id="movLightbox" onclick="fecharImgMov()"
+     style="display:none;position:fixed;inset:0;z-index:20000;background:rgba(0,0,0,.85);
+            align-items:center;justify-content:center;cursor:zoom-out;padding:20px">
+  <img id="movLightboxImg" src="" alt=""
+       style="max-width:92vw;max-height:92vh;object-fit:contain;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.6)">
+</div>
 
 <!-- Cards de resumo de estoque -->
 <div id="stockSummary" class="d-flex flex-wrap gap-3 mb-4"></div>
@@ -837,16 +858,89 @@ async function imprimirEstoquePdf(titulo, itens) {
 // ══════════════════════════════════════════════════════════════════════════════
 function _ymdLocal(dt) { const z = new Date(dt.getTime() - dt.getTimezoneOffset()*60000); return z.toISOString().slice(0,10); }
 
+let movProdutoSel = '';   // nome do produto filtrado ('' = todos)
+let movProdutoImg = '';   // url da imagem do produto selecionado
+
 function abrirMovs() {
-    const sel = document.getElementById('movProduto');
-    if (sel && sel.options.length <= 1) {   // popula produtos uma vez
-        const nomes = [...new Set((products||[]).map(p => p.name).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt'));
-        sel.innerHTML = '<option value="">Todos os produtos</option>' +
-            nomes.map(n => `<option value="${escHtml(n)}">${escHtml(n)}</option>`).join('');
-    }
     bootstrap.Modal.getOrCreateInstance(document.getElementById('modalMovs')).show();
+    movLimparProduto(false);   // começa em "Todos os produtos"
     movPreset(7);
 }
+
+// Produtos do catálogo (nome único + imagem), ordenados por nome
+function _movProdutos() {
+    const vistos = new Map();
+    for (const p of (products || [])) {
+        const n = (p.name || '').trim();
+        if (n && !vistos.has(n)) vistos.set(n, p.imageUrl || '');
+    }
+    return [...vistos.entries()].map(([nome, img]) => ({ nome, img }))
+        .sort((a, b) => a.nome.localeCompare(b.nome, 'pt'));
+}
+
+// Dropdown de busca: miniatura + nome. Clicar na foto amplia; clicar no nome seleciona.
+function movBuscarProduto() {
+    const inp = document.getElementById('movProdBusca');
+    const dd  = document.getElementById('movProdDropdown');
+    const q   = inp.value.trim().toLowerCase();
+    let lista = _movProdutos();
+    if (q) lista = lista.filter(p => p.nome.toLowerCase().includes(q));
+    lista = lista.slice(0, 60);
+    dd.innerHTML =
+        `<div onclick="movLimparProduto()" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:.85rem;color:var(--blue);font-weight:600">
+           <i class="bi bi-grid me-1"></i>Todos os produtos
+         </div>` +
+        (lista.length ? lista.map(p => {
+            const img = p.img
+              ? `<img src="${escHtml(p.img)}" onclick="event.stopPropagation();abrirImgMov('${escJs(p.img)}')" title="Clique para ampliar"
+                     style="width:40px;height:40px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:zoom-in;flex-shrink:0">`
+              : `<div style="width:40px;height:40px;border-radius:6px;background:var(--input-bg2);display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="bi bi-image" style="color:var(--muted)"></i></div>`;
+            return `<div onclick="movSelecionarProduto('${escJs(p.nome)}','${escJs(p.img)}')"
+                 style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px"
+                 onmouseover="this.style.background='var(--hover-row)'" onmouseout="this.style.background=''">
+                 ${img}<span style="font-size:.85rem;font-weight:500;line-height:1.25">${escHtml(p.nome)}</span>
+               </div>`;
+        }).join('') : `<div style="padding:10px 12px;color:var(--muted);font-size:.82rem;text-align:center">Nenhum produto encontrado</div>`);
+    dd.style.display = 'block';
+}
+
+function movSelecionarProduto(nome, img) {
+    movProdutoSel = nome;
+    movProdutoImg = img || '';
+    document.getElementById('movProdBusca').value = nome;
+    document.getElementById('movProdDropdown').style.display = 'none';
+    const imgEl = document.getElementById('movProdImg');
+    if (movProdutoImg) { imgEl.src = movProdutoImg; imgEl.style.display = ''; } else imgEl.style.display = 'none';
+    document.getElementById('movProdClear').style.display = '';
+    carregarMovs();
+}
+
+function movLimparProduto(recarregar = true) {
+    movProdutoSel = ''; movProdutoImg = '';
+    const inp   = document.getElementById('movProdBusca');    if (inp)   inp.value = '';
+    const dd    = document.getElementById('movProdDropdown'); if (dd)    dd.style.display = 'none';
+    const imgEl = document.getElementById('movProdImg');      if (imgEl) imgEl.style.display = 'none';
+    const clr   = document.getElementById('movProdClear');    if (clr)   clr.style.display = 'none';
+    if (recarregar) carregarMovs();
+}
+
+// Lightbox (ampliar imagem)
+function abrirImgMov(url) {
+    if (!url) return;
+    document.getElementById('movLightboxImg').src = url;
+    document.getElementById('movLightbox').style.display = 'flex';
+}
+function expandirImgMov() { abrirImgMov(movProdutoImg); }
+function fecharImgMov() { document.getElementById('movLightbox').style.display = 'none'; }
+
+// Fecha o dropdown de produtos ao clicar fora dele
+document.addEventListener('click', e => {
+    const wrap = document.getElementById('movProdWrap');
+    if (wrap && !wrap.contains(e.target)) {
+        const dd = document.getElementById('movProdDropdown');
+        if (dd) dd.style.display = 'none';
+    }
+});
 
 function movPreset(dias) {
     const fim = new Date();
@@ -874,8 +968,7 @@ async function carregarMovs() {
     box.innerHTML = '<div class="text-center py-4" style="color:var(--muted)"><span class="spinner-border spinner-border-sm me-1"></span>Carregando…</div>';
     try {
         const params = new URLSearchParams({ inicio: de, fim: ate });
-        const prod = document.getElementById('movProduto').value;
-        if (prod) params.set('produto', prod);
+        if (movProdutoSel) params.set('produto', movProdutoSel);
         const d = await fetch('/api/estoque/movimentos/relatorio?' + params.toString()).then(r => r.json());
         renderMovs(d);
     } catch { box.innerHTML = '<div class="text-center py-4" style="color:var(--red)">Erro ao carregar.</div>'; }
