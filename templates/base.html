@@ -185,6 +185,33 @@
         }
         .tema-btn:hover { color: var(--text); background: var(--hover-btn); border-color: var(--muted); }
         html.light .tema-btn { color: var(--muted); }
+
+        /* ── Responsivo: celular / tablet ─────────────────────────────────── */
+        /* Menu colapsado (abaixo de 992px vira hambúrguer) */
+        @media (max-width: 991.98px) {
+            .navbar-collapse { padding: .5rem 0 .25rem; }
+            .navbar-nav { gap: 2px !important; margin-bottom: .5rem; }
+            .nav-link { padding: .6rem .5rem !important; font-size: .95rem; }
+            #notifWrap { margin-left: 0 !important; margin-top: .25rem; }
+            #temaToggle, .navbar-collapse .btn { margin-left: 0 !important; margin-top: .35rem; }
+            .tema-btn { width: fit-content; }
+            /* Dropdown de alertas nunca mais largo que a tela */
+            .notif-dropdown { width: min(320px, calc(100vw - 24px)); }
+        }
+        /* Ajustes de celular */
+        @media (max-width: 768px) {
+            .container-xl { padding-left: 12px; padding-right: 12px; }
+            .container-xl.py-4 { padding-top: 1rem !important; padding-bottom: 1.5rem !important; }
+            .stat-num { font-size: 1.55rem; }
+            .stat-label { font-size: .68rem; }
+            /* Modais quase em tela cheia, sem desperdício de margem */
+            .modal-dialog { margin: .4rem auto; }
+            .modal-body { padding: .85rem; }
+            /* Tabelas dentro de card já rolam via .table-responsive; garante a rolagem por toque */
+            .table-responsive { -webkit-overflow-scrolling: touch; }
+            /* Cabeçalhos de página um pouco menores */
+            h5 { font-size: 1.05rem; }
+        }
     </style>
 </head>
 <body>

@@ -168,19 +168,21 @@
           </button>
         </div>
 
-        <!-- Cabeçalho da tabela de itens -->
-        <div class="itens-hdr itens-grid">
-          <div></div>
-          <div>Produto</div>
-          <div>Variante / Tamanho</div>
-          <div style="text-align:center">Do Estoque</div>
-          <div style="text-align:center">Do Fornecedor</div>
-          <div style="text-align:center">Total</div>
-          <div style="text-align:center">Valor Unit. (R$)</div>
-          <div style="text-align:center">Custo</div>
-          <div></div>
+        <!-- Cabeçalho + linhas rolam juntos na horizontal no celular (mantém o alinhamento) -->
+        <div class="itens-scroll">
+          <div class="itens-hdr itens-grid">
+            <div></div>
+            <div>Produto</div>
+            <div>Variante / Tamanho</div>
+            <div style="text-align:center">Do Estoque</div>
+            <div style="text-align:center">Do Fornecedor</div>
+            <div style="text-align:center">Total</div>
+            <div style="text-align:center">Valor Unit. (R$)</div>
+            <div style="text-align:center">Custo</div>
+            <div></div>
+          </div>
+          <div id="itensContainer"></div>
         </div>
-        <div id="itensContainer"></div>
         <div id="semItensMsg" class="text-center py-3" style="color:var(--muted);font-size:.83rem;border:1px dashed var(--border);border-radius:8px">
           <i class="bi bi-box-seam me-1"></i>Nenhum item. Clique em "Adicionar item".
         </div>
@@ -442,6 +444,11 @@
     gap:8px; align-items:center; }
 .itens-hdr { padding:0 8px 6px;
     font-size:.7rem;font-weight:700;color:var(--muted);letter-spacing:.05em;text-transform:uppercase;border-bottom:1px solid var(--border);margin-bottom:4px; }
+/* No celular, a área de itens rola na horizontal (colunas continuam alinhadas) */
+@media (max-width: 768px) {
+  .itens-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
+  .itens-scroll .itens-grid { min-width: 600px; }
+}
 .item-form-row { display:flex;align-items:center;gap:8px;padding:6px 8px;
     background:#0d1117;border:1px solid var(--border);border-radius:8px;margin-bottom:5px; }
 .item-form-row input, .item-form-row select {
