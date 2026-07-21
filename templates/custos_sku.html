@@ -20,7 +20,74 @@
                 onclick="sincronizarPorNome()" title="Sincroniza o estoque de todos os produtos com o mesmo nome">
             <i class="bi bi-arrow-repeat me-1"></i>Sync por Nome
         </button>
+        <button class="btn btn-sm" id="btnRelDiario"
+                style="background:rgba(63,185,80,.12);border:1px solid #3fb95044;color:#3fb950"
+                onclick="abrirRelatoriosDiarios()" title="PDF do estoque com foto — de hoje ou de dias anteriores (snapshot automático às 00h)">
+            <i class="bi bi-file-earmark-pdf me-1"></i>Relatório diário
+        </button>
     </div>
+</div>
+
+<!-- Área de impressão do PDF de estoque (some da tela, aparece só na impressão) -->
+<div id="pdfAreaEstoque"></div>
+
+<style>
+#pdfAreaEstoque { display:none; }
+@media print {
+  body * { visibility:hidden !important; }
+  #pdfAreaEstoque, #pdfAreaEstoque * { visibility:visible !important; }
+  #pdfAreaEstoque { display:block !important; position:absolute; left:0; top:0; width:100%;
+    background:#fff; color:#000; font-family:Arial,Helvetica,sans-serif; }
+  @page { size:A4 portrait; margin:10mm; }
+}
+.est-header { display:flex; justify-content:space-between; align-items:flex-start;
+  border-bottom:2px solid #1a3a5c; padding-bottom:8px; margin-bottom:12px; }
+.est-marca { font-size:20px; font-weight:800; color:#1a3a5c; }
+.est-titulo { font-size:12px; color:#555; }
+.est-total { font-size:18px; font-weight:800; color:#1a3a5c; text-align:right; }
+.est-sub2 { font-size:11px; color:#555; text-align:right; }
+.est-grupo { display:flex; gap:12px; align-items:flex-start; border:1px solid #e2e2e2;
+  border-radius:8px; padding:10px; margin-bottom:10px; page-break-inside:avoid; }
+.est-img { width:78px; height:78px; object-fit:cover; border-radius:6px; border:1px solid #ccc; flex-shrink:0; }
+.est-noimg { width:78px; height:78px; border:1px dashed #ccc; border-radius:6px; display:flex;
+  align-items:center; justify-content:center; color:#bbb; font-size:26px; flex-shrink:0; }
+.est-nome { font-size:14px; font-weight:800; color:#1a3a5c; margin-bottom:5px; }
+.est-tbl { border-collapse:collapse; width:240px; max-width:100%; }
+.est-tbl th { background:#1a3a5c; color:#fff; font-size:10px; text-transform:uppercase;
+  letter-spacing:.04em; padding:4px 8px; text-align:left; }
+.est-tbl td { border-bottom:1px solid #eee; padding:4px 8px; font-size:12px; color:#000; }
+.est-tbl tr:last-child td { border-bottom:none; }
+.est-sub { font-size:11px; color:#1a3a5c; font-weight:700; margin-top:5px; }
+.est-rodape { margin-top:18px; font-size:10px; color:#999; text-align:center; }
+</style>
+
+<!-- Modal: Relatórios diários de estoque -->
+<div class="modal fade" id="modalSnapshots" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border)">
+      <div class="modal-header" style="border-bottom:1px solid var(--border)">
+        <h6 class="modal-title fw-bold"><i class="bi bi-file-earmark-pdf me-2" style="color:#3fb950"></i>Relatório de estoque (PDF)</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div style="background:rgba(63,185,80,.07);border:1px solid #3fb95033;border-radius:8px;padding:10px 12px;margin-bottom:12px">
+          <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">
+            <div style="font-size:.83rem"><b>Estoque de agora</b><div style="font-size:.72rem;color:var(--muted)">A quantidade que está no sistema neste momento</div></div>
+            <button class="btn btn-sm btn-primary" onclick="baixarEstoqueAtualPdf()"><i class="bi bi-download me-1"></i>Baixar PDF</button>
+          </div>
+        </div>
+        <div class="d-flex align-items-center justify-content-between mb-2">
+          <div style="font-size:.78rem;font-weight:700;color:var(--muted);letter-spacing:.04em">DIAS SALVOS (00h automático)</div>
+          <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:.72rem" onclick="gerarSnapshotAgora()" title="Salvar o snapshot de hoje agora (sem esperar as 00h)">
+            <i class="bi bi-camera me-1"></i>Salvar hoje agora
+          </button>
+        </div>
+        <div id="snapshotsLista" style="font-size:.85rem">
+          <div class="text-center py-3" style="color:var(--muted)"><span class="spinner-border spinner-border-sm me-1"></span>Carregando…</div>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- Cards de resumo de estoque -->
@@ -597,6 +664,132 @@ function escHtml(str) {
 function escJs(str) { return escHtml(str).replace(/'/g, "\\'"); }
 
 function fmtQty(n) { return Number.isInteger(n) ? n : 0; }
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  RELATÓRIO DIÁRIO DE ESTOQUE (PDF com foto, nome e quantidade)
+// ══════════════════════════════════════════════════════════════════════════════
+function fmtDataBR(s) {
+    if (!s) return '';
+    try { const [a, m, d] = s.split('-'); return `${d}/${m}/${a}`; } catch { return s; }
+}
+
+function abrirRelatoriosDiarios() {
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalSnapshots')).show();
+    carregarSnapshots();
+}
+
+async function carregarSnapshots() {
+    const box = document.getElementById('snapshotsLista');
+    box.innerHTML = '<div class="text-center py-3" style="color:var(--muted)"><span class="spinner-border spinner-border-sm me-1"></span>Carregando…</div>';
+    try {
+        const dias = await fetch('/api/estoque/snapshots').then(r => r.json());
+        if (!Array.isArray(dias) || !dias.length) {
+            box.innerHTML = '<div class="text-center py-3" style="color:var(--muted);font-size:.82rem">Nenhum dia salvo ainda.<br>O primeiro será gerado automaticamente às 00h — ou clique em "Salvar hoje agora".</div>';
+            return;
+        }
+        box.innerHTML = dias.map(d => `
+            <div class="d-flex align-items-center justify-content-between gap-2"
+                 style="border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:6px">
+              <div style="min-width:0">
+                <div style="font-weight:600">${fmtDataBR(d.data)}</div>
+                <div style="font-size:.72rem;color:var(--muted)">${d.total_pecas||0} peça(s) · ${d.total_variantes||0} variante(s)</div>
+              </div>
+              <button class="btn btn-sm btn-outline-secondary" onclick="baixarSnapshotDia('${d.data}')">
+                <i class="bi bi-download me-1"></i>PDF
+              </button>
+            </div>`).join('');
+    } catch {
+        box.innerHTML = '<div class="text-center py-3" style="color:var(--red);font-size:.82rem">Erro ao carregar.</div>';
+    }
+}
+
+async function gerarSnapshotAgora() {
+    try {
+        const j = await fetch('/api/estoque/snapshot-agora', { method: 'POST' }).then(r => r.json());
+        if (j.ok) { toast('✓ Snapshot de hoje salvo.', true); carregarSnapshots(); }
+        else toast(j.erro || 'Erro ao salvar.', false);
+    } catch { toast('Erro de conexão.', false); }
+}
+
+async function baixarSnapshotDia(data) {
+    try {
+        const d = await fetch('/api/estoque/snapshots/' + encodeURIComponent(data)).then(r => r.json());
+        if (d.erro) { toast(d.erro, false); return; }
+        await imprimirEstoquePdf('Estoque de ' + fmtDataBR(data), d.itens || []);
+    } catch { toast('Erro ao gerar o PDF.', false); }
+}
+
+function baixarEstoqueAtualPdf() {
+    const itens = [];
+    for (const [vid, s] of stockMap.entries()) {
+        itens.push({ nv_variant_id: vid, produto_nome: s.produto_nome || '',
+                     variante_label: s.variante_label || '', quantity: s.quantity || 0 });
+    }
+    if (!itens.length) { toast('Nenhum estoque cadastrado.', false); return; }
+    imprimirEstoquePdf('Estoque atual — ' + new Date().toLocaleDateString('pt-BR'), itens);
+}
+
+// Monta o HTML do PDF: agrupa por produto (uma foto + nome + tamanhos/quantidades)
+function buildEstoquePdfHtml(titulo, itens) {
+    const imgMap  = new Map();      // variantId -> {img, prod}
+    const prodImg = new Map();      // nomeProduto(lower) -> img
+    for (const p of products) {
+        for (const v of (p.variants || [])) imgMap.set(v.id, { img: v.imageUrl || p.imageUrl || '', prod: p.name });
+        if (p.imageUrl) prodImg.set((p.name || '').trim().toLowerCase(), p.imageUrl);
+    }
+    const ordT = t => { const o = {PP:0,P:1,M:2,G:3,GG:4,XGG:5}; const k = (t||'').toUpperCase().split(',')[0].trim(); return (k in o) ? o[k] : 99; };
+
+    const grupos = []; const idx = {};
+    itens.forEach(it => {
+        const nome  = (it.produto_nome || (imgMap.get(it.nv_variant_id) || {}).prod || 'Sem nome').trim();
+        const chave = nome.toLowerCase();
+        if (!(chave in idx)) { idx[chave] = grupos.length; grupos.push({ nome, img: '', itens: [] }); }
+        const g = grupos[idx[chave]];
+        if (!g.img) g.img = (imgMap.get(it.nv_variant_id) || {}).img || prodImg.get(chave) || '';
+        g.itens.push(it);
+    });
+    grupos.sort((a, b) => a.nome.localeCompare(b.nome, 'pt'));
+
+    let totalGeral = 0;
+    const blocos = grupos.map(g => {
+        g.itens.sort((a, b) => ordT(a.variante_label) - ordT(b.variante_label));
+        let sub = 0;
+        const linhas = g.itens.map(it => {
+            const q = it.quantity || 0; if (q > 0) sub += q;
+            const cor = q <= 0 ? '#c0392b' : (q <= 3 ? '#b9770e' : '#1a7f37');
+            const tam = (it.variante_label || '').split(',')[0].trim() || '—';
+            return `<tr><td>${escHtml(tam)}</td><td style="text-align:right;font-weight:700;color:${cor}">${q}</td></tr>`;
+        }).join('');
+        totalGeral += sub;
+        const imgCell = g.img ? `<img class="est-img" src="${escHtml(g.img)}">` : `<div class="est-noimg">&#128247;</div>`;
+        return `<div class="est-grupo">${imgCell}
+            <div style="flex:1;min-width:0">
+              <div class="est-nome">${escHtml(g.nome)}</div>
+              <table class="est-tbl"><thead><tr><th>Tamanho</th><th style="text-align:right">Qtd</th></tr></thead><tbody>${linhas}</tbody></table>
+              <div class="est-sub">Total do produto: ${sub} peça(s)</div>
+            </div></div>`;
+    }).join('');
+
+    return `<div class="est-header">
+        <div><div class="est-marca">GS Mantos — Estoque</div><div class="est-titulo">${escHtml(titulo)}</div></div>
+        <div><div class="est-total">${totalGeral} peça(s)</div><div class="est-sub2">${grupos.length} produto(s)</div></div>
+      </div>${blocos || '<div style="color:#777;font-size:13px;text-align:center;padding:20px">Sem itens de estoque.</div>'}
+      <div class="est-rodape">Gerado pelo sistema GS Mantos · ${totalGeral} peça(s) em ${grupos.length} produto(s)</div>`;
+}
+
+async function imprimirEstoquePdf(titulo, itens) {
+    if (!products.length) { try { await loadProducts(); } catch {} }
+    const area = document.getElementById('pdfAreaEstoque');
+    area.innerHTML = buildEstoquePdfHtml(titulo, itens);
+    const imgs = Array.from(area.querySelectorAll('img'));
+    await Promise.all(imgs.map(img => (img.complete && img.naturalWidth) ? Promise.resolve()
+        : new Promise(res => { img.onload = img.onerror = res; setTimeout(res, 4000); })));
+    const tituloOrig = document.title;
+    document.title = 'GS Mantos - ' + titulo;
+    window.print();
+    document.title = tituloOrig;
+    area.innerHTML = '';
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  CACHE

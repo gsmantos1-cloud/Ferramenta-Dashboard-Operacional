@@ -10,5 +10,11 @@
       "src": "/(.*)",
       "dest": "app.py"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/snapshot-estoque",
+      "schedule": "0 3 * * *"
+    }
   ]
 }

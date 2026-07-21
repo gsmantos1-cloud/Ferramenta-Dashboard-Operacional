@@ -330,6 +330,14 @@ def init_db():
                 usuario     TEXT,
                 created_at  TEXT DEFAULT (datetime('now','localtime'))
             );
+
+            CREATE TABLE IF NOT EXISTS estoque_snapshots (
+                data            TEXT PRIMARY KEY,        -- 'YYYY-MM-DD' (Brasília)
+                itens           TEXT NOT NULL,           -- JSON dos itens do estoque
+                total_pecas     INTEGER DEFAULT 0,
+                total_variantes INTEGER DEFAULT 0,
+                created_at      TEXT DEFAULT (datetime('now','localtime'))
+            );
         """)
         for col, coltype in [
             ("cliente", "TEXT"), ("total", "TEXT"), ("pagamento", "TEXT"),
@@ -3673,6 +3681,94 @@ def api_estoque_movimentos():
             ).fetchall()
 
     return jsonify([dict(r) for r in rows])
+
+
+# ── Snapshot diário do estoque (para o PDF diário na página Custos SKU) ───────
+
+def _tirar_snapshot_estoque(force=False):
+    """Salva a 'foto' do estoque do dia (nome, variante, quantidade) em
+    estoque_snapshots. Faz 1 leitura de sku_stock por dia (idempotente por data
+    em Brasília) — respeita a regra de economia do Turso."""
+    from datetime import timedelta as _td
+    data = (datetime.utcnow() - _td(hours=3)).strftime("%Y-%m-%d")   # data em Brasília
+    with get_conn() as conn:
+        if not force:
+            if conn.execute("SELECT 1 FROM estoque_snapshots WHERE data=?", (data,)).fetchone():
+                return {"ok": True, "data": data, "ja_existia": True}
+        rows = conn.execute(
+            """SELECT nv_variant_id, sku, produto_nome, variante_label, quantity
+               FROM sku_stock
+               ORDER BY produto_nome COLLATE NOCASE, variante_label COLLATE NOCASE"""
+        ).fetchall()
+        itens = [dict(r) for r in rows]
+        total_pecas = sum(int(r["quantity"] or 0) for r in rows if (r["quantity"] or 0) > 0)
+        conn.execute(
+            """INSERT OR REPLACE INTO estoque_snapshots
+               (data, itens, total_pecas, total_variantes, created_at)
+               VALUES (?,?,?,?,?)""",
+            (data, json.dumps(itens, ensure_ascii=False), total_pecas, len(itens),
+             datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        )
+    return {"ok": True, "data": data, "total_pecas": total_pecas, "total_variantes": len(itens)}
+
+
+@app.route("/api/cron/snapshot-estoque", methods=["GET", "POST"])
+def cron_snapshot_estoque():
+    """Chamado pelo Vercel Cron às 00h (Brasília = 03:00 UTC). Protegido por
+    CRON_SECRET quando a variável estiver configurada no Vercel."""
+    secret = os.getenv("CRON_SECRET", "")
+    if secret:
+        auth = request.headers.get("Authorization", "")
+        if auth != f"Bearer {secret}" and request.args.get("key", "") != secret:
+            return jsonify({"erro": "não autorizado"}), 401
+    # 'force' (re-ler o estoque no mesmo dia) só é aceito quando há segredo — sem
+    # ele, o endpoint só cria o snapshot do dia se ainda não existir (evita abuso).
+    force = (request.args.get("force") == "1") and bool(secret)
+    try:
+        return jsonify(_tirar_snapshot_estoque(force=force))
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+
+@app.route("/api/estoque/snapshot-agora", methods=["POST"])
+@login_required
+def api_estoque_snapshot_agora():
+    """Gera/atualiza o snapshot de hoje na hora (botão manual na página)."""
+    try:
+        return jsonify(_tirar_snapshot_estoque(force=True))
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+
+@app.route("/api/estoque/snapshots", methods=["GET"])
+@login_required
+def api_estoque_snapshots_list():
+    """Lista os dias com snapshot salvo (sem o JSON pesado)."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT data, total_pecas, total_variantes, created_at
+               FROM estoque_snapshots ORDER BY data DESC LIMIT 120"""
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/estoque/snapshots/<data>", methods=["GET"])
+@login_required
+def api_estoque_snapshot_get(data):
+    """Retorna os itens de um dia (para montar o PDF no navegador)."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT data, itens, total_pecas, total_variantes FROM estoque_snapshots WHERE data=?",
+            (data,),
+        ).fetchone()
+    if not row:
+        return jsonify({"erro": "Snapshot não encontrado"}), 404
+    try:
+        itens = json.loads(row["itens"])
+    except Exception:
+        itens = []
+    return jsonify({"data": row["data"], "total_pecas": row["total_pecas"],
+                    "total_variantes": row["total_variantes"], "itens": itens})
 
 
 # ── Helper: extrai texto multilíngue da NuvemShop ────────────────────────────
