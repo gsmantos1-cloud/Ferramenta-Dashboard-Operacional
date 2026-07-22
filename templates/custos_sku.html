@@ -777,7 +777,7 @@ async function baixarSnapshotDia(data) {
     try {
         const d = await fetch('/api/estoque/snapshots/' + encodeURIComponent(data)).then(r => r.json());
         if (d.erro) { toast(d.erro, false); return; }
-        await imprimirEstoquePdf('Estoque de ' + fmtDataBR(data), d.itens || []);
+        await imprimirEstoquePdf('Estoque de ' + fmtDataBR(data), d.itens || [], data);
     } catch { toast('Erro ao gerar o PDF.', false); }
 }
 
@@ -788,11 +788,13 @@ function baixarEstoqueAtualPdf() {
                      variante_label: s.variante_label || '', quantity: s.quantity || 0 });
     }
     if (!itens.length) { toast('Nenhum estoque cadastrado.', false); return; }
-    imprimirEstoquePdf('Estoque atual — ' + new Date().toLocaleDateString('pt-BR'), itens);
+    imprimirEstoquePdf('Estoque atual — ' + new Date().toLocaleDateString('pt-BR'), itens, _ymdLocal(new Date()));
 }
 
-// Monta o HTML do PDF: agrupa por produto (uma foto + nome + tamanhos/quantidades)
-function buildEstoquePdfHtml(titulo, itens) {
+// Monta o HTML do PDF: agrupa por produto (foto + nome + tamanhos/quantidades)
+// e inclui as ENTRADAS e SAÍDAS do dia (por produto e no total) — registro completo.
+function buildEstoquePdfHtml(titulo, itens, movMap, movTotais) {
+    movMap = movMap || {};
     const imgMap  = new Map();      // variantId -> {img, prod}
     const prodImg = new Map();      // nomeProduto(lower) -> img
     for (const p of products) {
@@ -805,7 +807,7 @@ function buildEstoquePdfHtml(titulo, itens) {
     itens.forEach(it => {
         const nome  = (it.produto_nome || (imgMap.get(it.nv_variant_id) || {}).prod || 'Sem nome').trim();
         const chave = nome.toLowerCase();
-        if (!(chave in idx)) { idx[chave] = grupos.length; grupos.push({ nome, img: '', itens: [] }); }
+        if (!(chave in idx)) { idx[chave] = grupos.length; grupos.push({ nome, chave, img: '', itens: [] }); }
         const g = grupos[idx[chave]];
         if (!g.img) g.img = (imgMap.get(it.nv_variant_id) || {}).img || prodImg.get(chave) || '';
         g.itens.push(it);
@@ -823,26 +825,51 @@ function buildEstoquePdfHtml(titulo, itens) {
             return `<tr><td>${escHtml(tam)}</td><td style="text-align:right;font-weight:700;color:${cor}">${q}</td></tr>`;
         }).join('');
         totalGeral += sub;
+        const mov = movMap[g.chave];
+        const movLine = (mov && (mov.entrou || mov.saiu))
+          ? `<div style="font-size:10.5px;margin-top:3px">
+               <span style="color:#1a7f37;font-weight:700">Entrou hoje: +${mov.entrou||0}</span>
+               &nbsp;·&nbsp;
+               <span style="color:#c0392b;font-weight:700">Saiu hoje: &#8722;${mov.saiu||0}</span>
+             </div>` : '';
         const imgCell = g.img ? `<img class="est-img" src="${escHtml(g.img)}">` : `<div class="est-noimg">&#128247;</div>`;
         return `<div class="est-grupo">${imgCell}
             <div style="flex:1;min-width:0">
               <div class="est-nome">${escHtml(g.nome)}</div>
               <table class="est-tbl"><thead><tr><th>Tamanho</th><th style="text-align:right">Qtd</th></tr></thead><tbody>${linhas}</tbody></table>
               <div class="est-sub">Total do produto: ${sub} peça(s)</div>
+              ${movLine}
             </div></div>`;
     }).join('');
+
+    const resumoDia = movTotais
+      ? `<div style="display:flex;gap:20px;flex-wrap:wrap;font-size:12px;margin:0 0 12px;padding:8px 12px;background:#f2f5f8;border:1px solid #e2e6ea;border-radius:6px">
+           <span style="color:#1a7f37;font-weight:700">&#9650; Entradas do dia: +${movTotais.entrou||0} peça(s)</span>
+           <span style="color:#c0392b;font-weight:700">&#9660; Saídas do dia: &#8722;${movTotais.saiu||0} peça(s)</span>
+         </div>` : '';
 
     return `<div class="est-header">
         <div><div class="est-marca">GS Mantos — Estoque</div><div class="est-titulo">${escHtml(titulo)}</div></div>
         <div><div class="est-total">${totalGeral} peça(s)</div><div class="est-sub2">${grupos.length} produto(s)</div></div>
-      </div>${blocos || '<div style="color:#777;font-size:13px;text-align:center;padding:20px">Sem itens de estoque.</div>'}
+      </div>${resumoDia}${blocos || '<div style="color:#777;font-size:13px;text-align:center;padding:20px">Sem itens de estoque.</div>'}
       <div class="est-rodape">Gerado pelo sistema GS Mantos · ${totalGeral} peça(s) em ${grupos.length} produto(s)</div>`;
 }
 
-async function imprimirEstoquePdf(titulo, itens) {
+async function imprimirEstoquePdf(titulo, itens, dia) {
     if (!products.length) { try { await loadProducts(); } catch {} }
+    // Busca as entradas/saídas do dia para o PDF ter o registro completo
+    let movMap = {}, movTotais = null;
+    if (dia) {
+        try {
+            const rel = await fetch(`/api/estoque/movimentos/relatorio?inicio=${dia}&fim=${dia}`).then(r => r.json());
+            (rel.por_produto || []).forEach(p => {
+                movMap[(p.produto || '').trim().toLowerCase()] = { entrou: p.entrou || 0, saiu: p.saiu || 0 };
+            });
+            movTotais = { entrou: rel.total_entrou || 0, saiu: rel.total_saiu || 0 };
+        } catch {}
+    }
     const area = document.getElementById('pdfAreaEstoque');
-    area.innerHTML = buildEstoquePdfHtml(titulo, itens);
+    area.innerHTML = buildEstoquePdfHtml(titulo, itens, movMap, movTotais);
     const imgs = Array.from(area.querySelectorAll('img'));
     await Promise.all(imgs.map(img => (img.complete && img.naturalWidth) ? Promise.resolve()
         : new Promise(res => { img.onload = img.onerror = res; setTimeout(res, 4000); })));
