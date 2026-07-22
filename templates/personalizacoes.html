@@ -546,10 +546,10 @@ async function verHistorico(id) {
 
 carregar();
 
-// Verifica a cada 7s se outra pessoa mudou algo (só com a aba visível, para
-// não gastar leituras à toa). A checagem lê só 1 linha; recarrega a lista
-// inteira apenas quando o contador muda.
-setInterval(() => { if (!document.hidden) checarVersao(); }, 7000);
+// Verifica a cada 15s se outra pessoa mudou algo (só com a aba visível, para
+// não gastar leituras/invocações à toa). A checagem lê só 1 linha; recarrega a
+// lista inteira apenas quando o contador muda. Ao voltar para a aba, checa na hora.
+setInterval(() => { if (!document.hidden) checarVersao(); }, 15000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checarVersao(); });
 </script>
 {% endblock %}

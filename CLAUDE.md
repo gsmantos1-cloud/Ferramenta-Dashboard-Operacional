@@ -44,6 +44,20 @@ O consumo normal da ferramenta hoje é de ~**0,1% do limite mensal** mesmo nos d
 
 ---
 
+## ⚡ PRIORIDADE Nº 2 — NÃO ESTOURAR O PLANO GRÁTIS DO VERCEL
+
+O app roda como função **serverless** no Vercel (plano Hobby). Aqui o que consome cota é **cada requisição** (invocação de função) + **tempo de compute**. Práticas obrigatórias:
+
+1. **Nada de conexão aberta (SSE/WebSocket).** Serverless não segura conexão viva: a função reconecta em loop e queima invocações. Use **polling de carga única** (busca ao abrir a aba / botão "Atualizar"), **nunca** `EventSource`/WebSocket. (Já foi removido o SSE de `/api/stream/alertas` — os alertas de estoque usam `/api/alertas/poll`, 1 leitura ao abrir a aba.)
+2. **Polling recorrente no mínimo e pausado com a aba oculta** (`document.hidden`). Referências atuais: Dashboard 5 min; Personalizações (colaboração em 2 PCs) 15 s. Não reduza esses intervalos sem necessidade real, e sempre com o guard de visibilidade.
+3. **Cron: 1x/dia.** O Hobby permite ~2 crons e só rodam 1x/dia. Hoje há **1** (`/api/cron/snapshot-estoque`, `0 2 * * *` = 23h BRT, em `vercel.json`). Não adicione crons frequentes.
+4. **Função rápida (< 10 s).** O sync da NuvemShop é fatiado em ~6 s e retomado pelo front. Não crie endpoints que demorem/segurem a função.
+5. **Sem threads e sem estado em memória entre requests** (cada invocação é isolada) e **sem gravar em disco** (FS efêmero) — persista tudo no Turso.
+
+Regra prática: antes de subir, pergunte "isso abre conexão viva, faz polling curto, ou roda demais?". Se sim, reduza.
+
+---
+
 ## Ferramentas administrativas (pelo navegador, sem CLI)
 
 - `/admin/migrar` → backup/restauração em JSON (`/api/admin/export`, `/api/admin/import`).

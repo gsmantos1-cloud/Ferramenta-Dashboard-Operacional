@@ -66,17 +66,17 @@
   <div class="card">
     <div class="card-header d-flex align-items-center justify-content-between">
       <small class="fw-bold text-uppercase" style="letter-spacing:.05em">
-        <i class="bi bi-bell-fill me-1" style="color:#f0883e"></i>Alertas em Tempo Real
+        <i class="bi bi-bell-fill me-1" style="color:#f0883e"></i>Alertas de Estoque Baixo
       </small>
       <div class="d-flex align-items-center gap-2">
         <span id="sse-status" style="width:8px;height:8px;border-radius:50%;background:#8b949e;display:inline-block"></span>
-        <button class="btn btn-sm py-0 px-2" style="font-size:.75rem;border:1px solid var(--border);background:none;color:var(--muted)" onclick="limparAlertas()">Limpar</button>
+        <button class="btn btn-sm py-0 px-2" style="font-size:.75rem;border:1px solid var(--border);background:none;color:var(--muted)" onclick="carregarAlertasEstoque()"><i class="bi bi-arrow-clockwise me-1"></i>Atualizar</button>
       </div>
     </div>
     <div id="alertas-container" style="min-height:300px;padding:12px">
       <div id="alertas-vazio" class="text-center text-muted py-5">
         <i class="bi bi-bell" style="font-size:2rem;opacity:.3;display:block;margin-bottom:8px"></i>
-        Aguardando vendas com estoque baixo...
+        Produtos com estoque no mínimo aparecem aqui.
       </div>
     </div>
   </div>
@@ -287,7 +287,7 @@ function mudarAba(nome) {
   });
   abaAtiva = nome;
   if (nome === 'relatorio') carregarRelatorio();
-  if (nome === 'alertas')   conectarSSE();
+  if (nome === 'alertas')   carregarAlertasEstoque();
 }
 
 // ── Período ───────────────────────────────────────────────────────────────────
@@ -1372,39 +1372,40 @@ async function salvarCompra() {
   finally { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check2 me-1"></i>Salvar Compra'; }
 }
 
-// ── Alertas SSE ───────────────────────────────────────────────────────────────
-let sseSource = null;
-function conectarSSE() {
-  if (sseSource && sseSource.readyState !== 2) return;
-  sseSource = new EventSource('/api/stream/alertas');
-  sseSource.onopen = () => { document.getElementById('sse-status').style.background = '#3fb950'; };
-  sseSource.onerror = () => { document.getElementById('sse-status').style.background = '#f85149'; setTimeout(conectarSSE,5000); };
-  sseSource.onmessage = (e) => {
-    const d = JSON.parse(e.data);
-    if (d.type === 'alerta_venda') receberAlerta(d);
-  };
-}
-
-function receberAlerta(a) {
-  document.getElementById('alertas-vazio')?.remove();
-  const isSem = a.status === 'sem_estoque';
-  const cor   = isSem ? '#f85149' : '#f0883e';
-  const div   = document.createElement('div');
-  div.style.cssText = `background:rgba(${isSem?'248,81,73':'240,136,62'},.08);border:1px solid rgba(${isSem?'248,81,73':'240,136,62'},.3);border-radius:8px;padding:10px 12px;margin-bottom:8px`;
-  div.innerHTML = `
-    <div class="d-flex justify-content-between mb-1">
-      <span style="font-size:.68rem;font-weight:700;color:${cor}">${isSem?'SEM ESTOQUE':'ESTOQUE BAIXO'}</span>
-      <span style="font-size:.65rem;color:var(--muted)">${a.timestamp}</span>
-    </div>
-    <div style="font-size:.82rem;font-weight:600">${a.produto}${a.variante?' — '+a.variante:''}</div>
-    <div style="font-size:.73rem;color:var(--muted)">Pedido #${a.numero_pedido} · ${a.cliente||'—'}</div>
-    <div style="font-size:.73rem;margin-top:3px"><span style="color:${cor}">Estoque: ${a.qty_atual}</span> · Pedido: ${a.qty_pedida}un</div>`;
-  document.getElementById('alertas-container').prepend(div);
+// ── Alertas de estoque baixo (carga ÚNICA ao abrir a aba — sem SSE/polling) ─────
+// Antes usava EventSource(SSE), mas no Vercel serverless a rota /api/stream/alertas
+// nem existe: ficava reconectando a cada 5s → invocações desperdiçadas. Agora busca
+// 1x ao abrir a aba (e no botão Atualizar). /api/alertas/poll devolve os itens com
+// estoque <= mínimo.
+async function carregarAlertasEstoque() {
+  const cont = document.getElementById('alertas-container');
+  const dot  = document.getElementById('sse-status');
+  cont.innerHTML = '<div class="text-center text-muted py-5"><span class="spinner-border spinner-border-sm me-1"></span>Carregando…</div>';
+  try {
+    const alertas = await fetch('/api/alertas/poll').then(r => r.json());
+    if (dot) dot.style.background = '#3fb950';
+    if (!Array.isArray(alertas) || !alertas.length) { limparAlertas(); return; }
+    cont.innerHTML = alertas.map(a => {
+      const isSem = a.status === 'sem_estoque';
+      const cor   = isSem ? '#f85149' : '#f0883e';
+      return `<div style="background:rgba(${isSem?'248,81,73':'240,136,62'},.08);border:1px solid rgba(${isSem?'248,81,73':'240,136,62'},.3);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+        <div class="d-flex justify-content-between mb-1">
+          <span style="font-size:.68rem;font-weight:700;color:${cor}">${isSem?'SEM ESTOQUE':'ESTOQUE BAIXO'}</span>
+          <span style="font-size:.65rem;color:var(--muted)">${escHtml(a.sku||'')}</span>
+        </div>
+        <div style="font-size:.82rem;font-weight:600">${escHtml(a.produto||'—')}${a.variante?' — '+escHtml(a.variante):''}</div>
+        <div style="font-size:.73rem;margin-top:3px"><span style="color:${cor}">Estoque: ${a.qty_atual}</span> · Mínimo: ${a.min_qty}</div>
+      </div>`;
+    }).join('');
+  } catch {
+    if (dot) dot.style.background = '#f85149';
+    cont.innerHTML = '<div class="text-center text-danger py-5">Erro ao carregar alertas.</div>';
+  }
 }
 
 function limparAlertas() {
   document.getElementById('alertas-container').innerHTML =
-    '<div id="alertas-vazio" class="text-center text-muted py-5"><i class="bi bi-bell" style="font-size:2rem;opacity:.3;display:block;margin-bottom:8px"></i>Aguardando vendas com estoque baixo...</div>';
+    '<div id="alertas-vazio" class="text-center text-muted py-5"><i class="bi bi-check-circle" style="font-size:2rem;opacity:.4;display:block;margin-bottom:8px;color:#3fb950"></i>Nenhum produto com estoque baixo.</div>';
 }
 
 function escHtml(s) {
