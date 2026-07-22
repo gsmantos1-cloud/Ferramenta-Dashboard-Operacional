@@ -3796,18 +3796,17 @@ def _tirar_snapshot_estoque(force=False):
 
 @app.route("/api/cron/snapshot-estoque", methods=["GET", "POST"])
 def cron_snapshot_estoque():
-    """Chamado pelo Vercel Cron às 23h (Brasília = 02:00 UTC). Protegido por
-    CRON_SECRET quando a variável estiver configurada no Vercel."""
+    """Chamado pelo Vercel Cron às 23h (Brasília = 02:00 UTC). É a captura OFICIAL
+    do dia: SEMPRE sobrescreve o snapshot de hoje (mesmo que 'Salvar hoje agora'
+    tenha sido clicado antes), para o registro refletir o estoque no FIM do dia.
+    Protegido por CRON_SECRET quando a variável estiver configurada no Vercel."""
     secret = os.getenv("CRON_SECRET", "")
     if secret:
         auth = request.headers.get("Authorization", "")
         if auth != f"Bearer {secret}" and request.args.get("key", "") != secret:
             return jsonify({"erro": "não autorizado"}), 401
-    # 'force' (re-ler o estoque no mesmo dia) só é aceito quando há segredo — sem
-    # ele, o endpoint só cria o snapshot do dia se ainda não existir (evita abuso).
-    force = (request.args.get("force") == "1") and bool(secret)
     try:
-        return jsonify(_tirar_snapshot_estoque(force=force))
+        return jsonify(_tirar_snapshot_estoque(force=True))
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
