@@ -1823,45 +1823,62 @@ def importar_confirmar():
 @app.route("/api/notificacoes")
 @login_required
 def get_notificacoes():
-    hoje = date.today()
-
-    # Próximo dia útil
-    feriados = holidays.Brazil(years=[hoje.year, hoje.year + 1])
-    proximo_du = hoje + timedelta(days=1)
-    while proximo_du.weekday() >= 5 or proximo_du in feriados:
-        proximo_du += timedelta(days=1)
+    # Roda em TODO carregamento de página (sininho). Calcular feriados + varrer os
+    # pedidos ativos a cada chamada gasta CPU no Vercel à toa, já que o resultado só
+    # muda na virada do dia (ou quando entram/mudam pedidos). Cache leve de 30 min.
+    import time as _time
+    hoje     = date.today()
+    hoje_iso = hoje.isoformat()
 
     with get_conn() as conn:
+        crow = conn.execute("SELECT valor FROM config WHERE chave='notif_cache'").fetchone()
+        if crow and crow["valor"]:
+            try:
+                c = json.loads(crow["valor"])
+                if c.get("_dia") == hoje_iso and (_time.time() - c.get("_ts", 0)) < 1800:
+                    return jsonify({"total": c["total"], "grupos": c["grupos"]})
+            except Exception:
+                pass
+
+        # Próximo dia útil
+        feriados = holidays.Brazil(years=[hoje.year, hoje.year + 1])
+        proximo_du = hoje + timedelta(days=1)
+        while proximo_du.weekday() >= 5 or proximo_du in feriados:
+            proximo_du += timedelta(days=1)
+
         rows = conn.execute(
             "SELECT id, numero, data_pedido, categoria, status FROM pedidos WHERE ativo = 1"
         ).fetchall()
 
-    alertas = []
-    for r in rows:
-        dp           = date.fromisoformat(r["data_pedido"])
-        status_hoje  = determinar_status(calcular_dias_uteis(dp, hoje),      r["categoria"])
-        status_amanha= determinar_status(calcular_dias_uteis(dp, proximo_du), r["categoria"])
-        if status_amanha != status_hoje:
-            alertas.append({
-                "id":           r["id"],
-                "numero":       r["numero"],
-                "status_atual": status_hoje,
-                "status_novo":  status_amanha,
-            })
+        alertas = []
+        for r in rows:
+            dp            = date.fromisoformat(r["data_pedido"])
+            status_hoje   = determinar_status(calcular_dias_uteis(dp, hoje),      r["categoria"])
+            status_amanha = determinar_status(calcular_dias_uteis(dp, proximo_du), r["categoria"])
+            if status_amanha != status_hoje:
+                alertas.append({"numero": r["numero"], "status_novo": status_amanha})
 
-    STATUS_PRIO = ["Atraso crítico", "Atraso moderado", "Atraso leve"]
-    grupos: dict = {}
-    for a in alertas:
-        s = a["status_novo"]
-        grupos.setdefault(s, []).append(a["numero"])
+        STATUS_PRIO = ["Atraso crítico", "Atraso moderado", "Atraso leve"]
+        grupos: dict = {}
+        for a in alertas:
+            grupos.setdefault(a["status_novo"], []).append(a["numero"])
 
-    return jsonify({
-        "total": len(alertas),
-        "grupos": [
-            {"status": s, "total": len(grupos[s]), "numeros": grupos[s]}
-            for s in STATUS_PRIO if s in grupos
-        ],
-    })
+        resultado = {
+            "total": len(alertas),
+            "grupos": [
+                {"status": s, "total": len(grupos[s]), "numeros": grupos[s]}
+                for s in STATUS_PRIO if s in grupos
+            ],
+        }
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO config (chave, valor) VALUES ('notif_cache', ?)",
+                (json.dumps({**resultado, "_dia": hoje_iso, "_ts": _time.time()}),),
+            )
+        except Exception:
+            pass
+
+    return jsonify(resultado)
 
 
 # ── Personalizações ──────────────────────────────────────────────────────────
