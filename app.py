@@ -352,6 +352,7 @@ def init_db():
         # compras migrations (idempotent)
         for col in [
             "ignorar_custo INTEGER DEFAULT 0",   # 1 = "indiferente": não entra no custo médio
+            "categoria TEXT",                    # camisas | brindes | embalagens
         ]:
             try: conn.execute(f"ALTER TABLE compras_registros ADD COLUMN {col}")
             except Exception: pass
@@ -4646,15 +4647,15 @@ def api_compras_registros_list():
 
 def _inserir_compra_produto(conn, produto, nv_product_id, preco_unit, tamanhos,
                             data_compra, fornecedor, observacao, atualizar_estoque,
-                            agora, hoje):
+                            agora, hoje, categoria=None):
     """Insere UMA compra (1 produto) + seus tamanhos + log e, se pedido, atualiza
     estoque/CMP. Retorna (compra_id, qtd_variantes_atualizadas no estoque)."""
     cur = conn.execute(
         """INSERT INTO compras_registros
-           (data, produto_nome, nv_product_id, fornecedor, preco_unit, observacao, criado_por)
-           VALUES (?,?,?,?,?,?,?)""",
+           (data, produto_nome, nv_product_id, fornecedor, preco_unit, observacao, criado_por, categoria)
+           VALUES (?,?,?,?,?,?,?,?)""",
         (data_compra, produto, nv_product_id or None, fornecedor, preco_unit, observacao,
-         session.get("usuario", ""))
+         session.get("usuario", ""), categoria)
     )
     cid = cur.lastrowid
     for t in tamanhos:
@@ -4773,6 +4774,7 @@ def api_compras_registros_add():
             "nv_product_id": data.get("nv_product_id"),
             "preco_unit":    data.get("preco_unit"),
             "tamanhos":      data.get("tamanhos"),
+            "categoria":     data.get("categoria"),
         }]
 
     # Campos compartilhados por toda a compra
@@ -4784,19 +4786,23 @@ def api_compras_registros_add():
     data_compra       = data.get("data") or hoje
 
     # Valida e normaliza TODOS os itens antes de gravar (tudo ou nada)
+    CAT_LABEL = {"camisas": "Camisa", "brindes": "Brindes", "embalagens": "Embalagens"}
     itens = []
     for it in itens_in:
-        produto  = (it.get("produto_nome") or "").strip()
-        tamanhos = [t for t in (it.get("tamanhos") or []) if int(t.get("quantidade") or 0) > 0]
+        produto   = (it.get("produto_nome") or "").strip()
+        categoria = (it.get("categoria") or "").strip().lower() or None
+        tamanhos  = [t for t in (it.get("tamanhos") or []) if int(t.get("quantidade") or 0) > 0]
+        # Nome do produto é opcional para brindes/embalagens → usa o rótulo da categoria.
         if not produto:
-            return jsonify({"erro": "Nome do produto obrigatório"}), 400
+            produto = CAT_LABEL.get(categoria, "Produto")
         if not tamanhos:
-            return jsonify({"erro": f"Informe ao menos um tamanho com quantidade > 0 para '{produto}'"}), 400
+            return jsonify({"erro": f"Informe ao menos uma quantidade para '{produto}'"}), 400
         itens.append({
             "produto":       produto,
             "nv_product_id": it.get("nv_product_id") or None,
             "preco_unit":    float(it.get("preco_unit") or 0),
             "tamanhos":      tamanhos,
+            "categoria":     categoria,
         })
 
     ids, estoque_atualizados = [], 0
@@ -4804,7 +4810,8 @@ def api_compras_registros_add():
         for it in itens:
             cid, n_est = _inserir_compra_produto(
                 conn, it["produto"], it["nv_product_id"], it["preco_unit"], it["tamanhos"],
-                data_compra, fornecedor, observacao, atualizar_estoque, agora, hoje
+                data_compra, fornecedor, observacao, atualizar_estoque, agora, hoje,
+                categoria=it["categoria"]
             )
             ids.append(cid)
             estoque_atualizados += n_est
@@ -4818,13 +4825,13 @@ def api_compras_registros_add():
 @login_required
 def api_compras_registros_update(cid):
     """Edita uma compra (corrige o registro; NÃO re-aplica estoque). Registra o histórico."""
-    data    = request.get_json() or {}
-    produto = (data.get("produto_nome") or "").strip()
-    if not produto:
-        return jsonify({"erro": "Nome do produto obrigatório"}), 400
-    tamanhos = [t for t in (data.get("tamanhos") or []) if int(t.get("quantidade") or 0) > 0]
+    data      = request.get_json() or {}
+    CAT_LABEL = {"camisas": "Camisa", "brindes": "Brindes", "embalagens": "Embalagens"}
+    categoria = (data.get("categoria") or "").strip().lower() or None
+    produto   = (data.get("produto_nome") or "").strip() or CAT_LABEL.get(categoria, "Produto")
+    tamanhos  = [t for t in (data.get("tamanhos") or []) if int(t.get("quantidade") or 0) > 0]
     if not tamanhos:
-        return jsonify({"erro": "Informe ao menos um tamanho com quantidade > 0"}), 400
+        return jsonify({"erro": "Informe ao menos uma quantidade > 0"}), 400
 
     preco_unit  = float(data.get("preco_unit") or 0)
     fornecedor  = (data.get("fornecedor") or "").strip() or None
@@ -4857,9 +4864,9 @@ def api_compras_registros_update(cid):
 
         conn.execute(
             """UPDATE compras_registros
-               SET data=?, produto_nome=?, fornecedor=?, preco_unit=?, observacao=?
+               SET data=?, produto_nome=?, fornecedor=?, preco_unit=?, observacao=?, categoria=?
                WHERE id=?""",
-            (data_compra, produto, fornecedor, preco_unit, observacao, cid),
+            (data_compra, produto, fornecedor, preco_unit, observacao, categoria, cid),
         )
         conn.execute("DELETE FROM compras_tamanhos WHERE compra_id=?", (cid,))
         for t in tamanhos:

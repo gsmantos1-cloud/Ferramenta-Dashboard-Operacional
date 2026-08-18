@@ -96,19 +96,40 @@
       </div>
       <div class="modal-body">
 
+        <!-- Tipo de produto (categoria) -->
+        <div class="mb-3">
+          <label class="flabel d-block mb-1">TIPO *</label>
+          <div class="d-flex flex-wrap gap-2" id="catCompra">
+            <button type="button" class="btn btn-sm cat-btn active" data-cat="camisas"    onclick="setCategoria('camisas')"><i class="bi bi-person-badge me-1"></i>Camisas</button>
+            <button type="button" class="btn btn-sm cat-btn"        data-cat="brindes"    onclick="setCategoria('brindes')"><i class="bi bi-gift me-1"></i>Brindes</button>
+            <button type="button" class="btn btn-sm cat-btn"        data-cat="embalagens" onclick="setCategoria('embalagens')"><i class="bi bi-box-seam me-1"></i>Embalagens</button>
+          </div>
+        </div>
+        <style>
+          .cat-btn { background:transparent;border:1px solid var(--border);color:var(--muted);font-size:.82rem;padding:5px 14px;border-radius:20px; }
+          .cat-btn:hover { color:var(--text);border-color:var(--muted); }
+          .cat-btn.active { background:#f0883e;border-color:#f0883e;color:#fff; }
+        </style>
+
         <!-- Data + Produto + Fornecedor -->
         <div class="row g-2 mb-3">
           <div class="col-md-3">
             <label class="flabel">DATA DA COMPRA *</label>
             <input id="cData" type="date" class="form-control form-control-sm">
           </div>
-          <div class="col-md-6" style="position:relative">
-            <label class="flabel">PRODUTO *</label>
-            <input id="cProduto" type="text" class="form-control form-control-sm" placeholder="Buscar ou digitar produto..."
-                   autocomplete="off" oninput="buscarProduto(this)">
-            <div id="produtosDropdown" style="display:none;position:absolute;left:0;right:0;top:100%;margin-top:4px;
-                 z-index:9999;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;
-                 max-height:320px;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.5)"></div>
+          <div class="col-md-6">
+            <label class="flabel" id="labelProduto">PRODUTO (camisa) *</label>
+            <div class="d-flex align-items-center gap-2">
+              <img id="cProdImg" src="" alt="" onclick="ampliarImgCompra()" title="Clique para ampliar"
+                   style="display:none;width:36px;height:36px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:zoom-in;flex-shrink:0">
+              <div style="position:relative;flex:1">
+                <input id="cProduto" type="text" class="form-control form-control-sm" placeholder="Buscar a camisa..."
+                       autocomplete="off" oninput="buscarProduto(this)">
+                <div id="produtosDropdown" style="display:none;position:absolute;left:0;right:0;top:100%;margin-top:4px;
+                     z-index:9999;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;
+                     max-height:320px;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.5)"></div>
+              </div>
+            </div>
           </div>
           <div class="col-md-3">
             <label class="flabel">FORNECEDOR</label>
@@ -119,8 +140,8 @@
         <!-- Tamanhos -->
         <div class="mb-3">
           <div class="d-flex align-items-center justify-content-between mb-2">
-            <label class="flabel mb-0">QUANTIDADE POR TAMANHO *</label>
-            <button type="button" class="btn btn-sm py-0 px-2" onclick="adicionarTamanhoCustom()"
+            <label class="flabel mb-0" id="labelQtd">QUANTIDADE POR TAMANHO *</label>
+            <button type="button" class="btn btn-sm py-0 px-2" id="btnTamExtra" onclick="adicionarTamanhoCustom()"
                     style="font-size:.72rem;background:none;border:1px solid var(--border);color:var(--muted)">
               <i class="bi bi-plus me-1"></i>Tamanho extra
             </button>
@@ -215,6 +236,14 @@
   </div>
 </div>
 
+<!-- Lightbox: imagem da camisa ampliada -->
+<div id="compraLightbox" onclick="fecharImgCompra()"
+     style="display:none;position:fixed;inset:0;z-index:20000;background:rgba(0,0,0,.85);
+            align-items:center;justify-content:center;cursor:zoom-out;padding:20px">
+  <img id="compraLightboxImg" src="" alt=""
+       style="max-width:92vw;max-height:92vh;object-fit:contain;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.6)">
+</div>
+
 <!-- Toast -->
 <div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999">
   <div id="toast" class="toast align-items-center border-0" role="alert">
@@ -253,6 +282,8 @@ let produtoSelecionado = null; // { id, name, variants, sizeMap: { "P": {nv_vari
 let comprasCarregadas = [];    // compras do histórico atual (para editar)
 let editandoCompraId = null;   // id da compra em edição (null = nova)
 let produtosCompra = [];       // "carrinho": produtos já adicionados à compra atual
+let categoriaCompra = 'camisas';  // camisas | brindes | embalagens
+let produtoImgCompra = '';        // url da imagem da camisa selecionada
 
 const TAMANHOS_PADRAO = ['PP','P','M','G','GG','XGG'];
 
@@ -422,6 +453,13 @@ function renderCardCompra(c) {
   const tams = (c.tamanhos||[]).filter(t => t.quantidade>0)
     .map(t => `<span class="tam-chip">${t.tamanho}×${t.quantidade}</span>`).join(' ');
   const ignorado = !!c.ignorar_custo;
+  const CAT_TAG = {
+    camisas:    {t:'Camisa',    c:'#58a6ff', bg:'rgba(88,166,255,.12)', b:'rgba(88,166,255,.3)', i:'bi-person-badge'},
+    brindes:    {t:'Brinde',    c:'#f0883e', bg:'rgba(240,136,62,.12)', b:'rgba(240,136,62,.3)', i:'bi-gift'},
+    embalagens: {t:'Embalagem', c:'#3fb950', bg:'rgba(63,185,80,.12)',  b:'rgba(63,185,80,.3)',  i:'bi-box-seam'},
+  };
+  const ci = CAT_TAG[(c.categoria||'').toLowerCase()];
+  const catTag = ci ? `<span style="font-size:.68rem;color:${ci.c};background:${ci.bg};border:1px solid ${ci.b};border-radius:6px;padding:1px 7px"><i class="bi ${ci.i} me-1"></i>${ci.t}</span>` : '';
 
   return `<div class="compra-card" style="${ignorado ? 'opacity:.6' : ''}">
     <div class="d-flex align-items-start justify-content-between gap-3">
@@ -434,6 +472,7 @@ function renderCardCompra(c) {
       <div style="min-width:0;flex:1">
         <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
           <span class="fw-bold" style="font-size:.9rem">${escHtml(c.produto_nome)}</span>
+          ${catTag}
           ${c.fornecedor ? `<span style="font-size:.72rem;color:var(--muted);background:var(--border);border-radius:6px;padding:1px 7px">
             <i class="bi bi-truck me-1"></i>${escHtml(c.fornecedor)}</span>` : ''}
           ${ignorado ? `<span title="Não entra no cálculo de custo médio"
@@ -999,8 +1038,8 @@ function abrirModalCompra() {
   document.getElementById('btnAdicionarProduto').style.display = '';   // multi-produto só ao registrar
   onToggleEstoque();
 
-  renderGridTamanhos();
-  document.getElementById('tamanhosExtras').innerHTML = '';
+  categoriaCompra = 'camisas';
+  setCategoria('camisas');   // reseta tipo + grade + imagem + labels
 
   carregarCatalogo();
   bootstrap.Modal.getOrCreateInstance(document.getElementById('modalCompra')).show();
@@ -1025,6 +1064,12 @@ function abrirEditarCompra(id) {
   renderListaProdutos();
   document.getElementById('btnAdicionarProduto').style.display = 'none';
 
+  // Restaura a categoria antes de preencher (ajusta labels + a grade certa)
+  const catEdit = ['camisas','brindes','embalagens'].includes((c.categoria || '').toLowerCase())
+                  ? c.categoria.toLowerCase() : 'camisas';
+  categoriaCompra = catEdit;
+  setCategoria(catEdit);   // renderiza a grade correta e limpa produto/imagem
+
   document.getElementById('cData').value       = c.data || new Date().toISOString().slice(0,10);
   document.getElementById('cProduto').value    = c.produto_nome || '';
   document.getElementById('cFornecedor').value = c.fornecedor || '';
@@ -1032,46 +1077,96 @@ function abrirEditarCompra(id) {
   document.getElementById('cObs').value        = c.observacao || '';
   document.getElementById('erroCompra').textContent = '';
 
-  // Tamanhos: preenche a grade padrão e cria extras para os não-padrão
-  renderGridTamanhos();
+  // Quantidades: grade de tamanhos (camisas) ou campo único (brindes/embalagens)
   document.getElementById('tamanhosExtras').innerHTML = '';
-  (c.tamanhos || []).forEach(t => {
-    const tam = String(t.tamanho).toUpperCase();
-    const qty = t.quantidade || 0;
-    if (qty <= 0) return;
-    const padrao = document.getElementById(`tam-${tam}`);
-    if (padrao) {
-      padrao.value = qty;
-      padrao.classList.toggle('has-value', !!qty);
-    } else {
-      // tamanho não-padrão → cria uma caixa extra
-      const cid = 'tam-custom-' + tam + '-' + Math.floor(Math.random()*1e6);
-      const div = document.createElement('div');
-      div.className = 'tam-box'; div.id = cid + '-box';
-      div.innerHTML = `
-        <label class="tam-label">${tam}
-          <button onclick="document.getElementById('${cid}-box').remove();calcularTotal()"
-                  style="background:none;border:none;color:var(--red);cursor:pointer;font-size:.8rem;padding:0;margin-left:3px">×</button>
-        </label>
-        <input type="number" class="tam-input has-value" id="${cid}" min="0" value="${qty}" data-tamanho="${tam}"
-               oninput="calcularTotal();this.classList.toggle('has-value',!!(+this.value))">`;
-      document.getElementById('tamanhosExtras').appendChild(div);
-    }
-  });
+  if (catEdit === 'camisas') {
+    (c.tamanhos || []).forEach(t => {
+      const tam = String(t.tamanho).toUpperCase();
+      const qty = t.quantidade || 0;
+      if (qty <= 0) return;
+      const padrao = document.getElementById(`tam-${tam}`);
+      if (padrao) {
+        padrao.value = qty;
+        padrao.classList.toggle('has-value', !!qty);
+      } else {
+        const cid = 'tam-custom-' + tam + '-' + Math.floor(Math.random()*1e6);
+        const div = document.createElement('div');
+        div.className = 'tam-box'; div.id = cid + '-box';
+        div.innerHTML = `
+          <label class="tam-label">${tam}
+            <button onclick="document.getElementById('${cid}-box').remove();calcularTotal()"
+                    style="background:none;border:none;color:var(--red);cursor:pointer;font-size:.8rem;padding:0;margin-left:3px">×</button>
+          </label>
+          <input type="number" class="tam-input has-value" id="${cid}" min="0" value="${qty}" data-tamanho="${tam}"
+                 oninput="calcularTotal();this.classList.toggle('has-value',!!(+this.value))">`;
+        document.getElementById('tamanhosExtras').appendChild(div);
+      }
+    });
+  } else {
+    const total = (c.tamanhos || []).reduce((s, t) => s + (t.quantidade || 0), 0);
+    const box = document.querySelector('#gridTamanhos [data-tamanho="UN"]');
+    if (box && total > 0) { box.value = total; box.classList.add('has-value'); }
+  }
   calcularTotal();
 
   carregarCatalogo();
   bootstrap.Modal.getOrCreateInstance(document.getElementById('modalCompra')).show();
 }
 
+// Grade de quantidade: tamanhos (camisas) ou uma única "Quantidade" (brindes/embalagens)
 function renderGridTamanhos() {
-  document.getElementById('gridTamanhos').innerHTML = TAMANHOS_PADRAO.map(t => `
-    <div class="tam-box">
-      <label class="tam-label">${t}</label>
-      <input type="number" class="tam-input" id="tam-${t}" min="0" value=""
-             placeholder="0" oninput="calcularTotal();this.classList.toggle('has-value',!!(+this.value))">
-    </div>`).join('');
+  const grid = document.getElementById('gridTamanhos');
+  if (categoriaCompra === 'camisas') {
+    grid.innerHTML = TAMANHOS_PADRAO.map(t => `
+      <div class="tam-box">
+        <label class="tam-label">${t}</label>
+        <input type="number" class="tam-input" id="tam-${t}" min="0" value=""
+               placeholder="0" oninput="calcularTotal();this.classList.toggle('has-value',!!(+this.value))">
+      </div>`).join('');
+  } else {
+    grid.innerHTML = `
+      <div class="tam-box" style="align-items:flex-start">
+        <label class="tam-label">Quantidade</label>
+        <input type="number" class="tam-input" data-tamanho="UN" min="0" value="" placeholder="0"
+               style="width:130px;text-align:left"
+               oninput="calcularTotal();this.classList.toggle('has-value',!!(+this.value))">
+      </div>`;
+  }
 }
+
+// Alterna a categoria (Camisas / Brindes / Embalagens) e ajusta a tela
+function setCategoria(cat) {
+  categoriaCompra = cat;
+  document.querySelectorAll('#catCompra .cat-btn').forEach(b => b.classList.toggle('active', b.dataset.cat === cat));
+  const ehCamisa = (cat === 'camisas');
+  const inp = document.getElementById('cProduto');
+  document.getElementById('labelProduto').textContent = ehCamisa ? 'PRODUTO (camisa) *' : 'PRODUTO (opcional)';
+  document.getElementById('labelQtd').textContent     = ehCamisa ? 'QUANTIDADE POR TAMANHO *' : 'QUANTIDADE *';
+  inp.placeholder = ehCamisa ? 'Buscar a camisa...'
+                  : (cat === 'brindes' ? 'Ex: chaveiro, adesivo… (opcional)' : 'Ex: caixa, saco, plástico… (opcional)');
+  const btnExtra = document.getElementById('btnTamExtra');
+  const wrapEst  = document.getElementById('wrapAtualizarEstoque');
+  if (btnExtra) btnExtra.style.display = ehCamisa ? '' : 'none';
+  if (wrapEst)  wrapEst.style.display  = (ehCamisa && editandoCompraId == null) ? '' : 'none';
+  // Limpa o produto e a grade ao trocar de tipo
+  inp.value = ''; inp.dataset.prodId = '';
+  produtoSelecionado = null; produtoImgCompra = '';
+  document.getElementById('cProdImg').style.display = 'none';
+  document.getElementById('produtosDropdown').style.display = 'none';
+  document.getElementById('tamanhosExtras').innerHTML = '';
+  renderGridTamanhos();
+  calcularTotal();
+  onToggleEstoque();
+}
+
+// Lightbox (ampliar a imagem da camisa)
+function abrirImgCompra(url) {
+  if (!url) return;
+  document.getElementById('compraLightboxImg').src = url;
+  document.getElementById('compraLightbox').style.display = 'flex';
+}
+function ampliarImgCompra() { abrirImgCompra(produtoImgCompra); }
+function fecharImgCompra() { document.getElementById('compraLightbox').style.display = 'none'; }
 
 function adicionarTamanhoCustom() {
   const nome = prompt('Nome do tamanho (ex: 36, XGG, Único):');
@@ -1124,8 +1219,10 @@ async function carregarCatalogo() {
 }
 
 function buscarProduto(input) {
-  const q   = input.value.toLowerCase().trim();
   const dd  = document.getElementById('produtosDropdown');
+  // Só busca no catálogo para camisas; brindes/embalagens são texto livre.
+  if (categoriaCompra !== 'camisas') { dd.style.display = 'none'; return; }
+  const q   = input.value.toLowerCase().trim();
   if (q.length < 1) { dd.style.display='none'; return; }
 
   // Filtra todos que contêm a busca, ordena: começa com > contém no início do nome > contém em qualquer lugar
@@ -1170,7 +1267,9 @@ function selecionarProduto(nome, id) {
 
   // Monta sizeMap: tamanho → variante "Sem Personalização" (preferencial)
   produtoSelecionado = null;
+  produtoImgCompra = '';
   const prod = catalogoProdutos.find(p => p.id === id);
+  const imgEl = document.getElementById('cProdImg');
   if (prod) {
     const sizeMap = {};
     (prod.variants || []).forEach(v => {
@@ -1181,7 +1280,11 @@ function selecionarProduto(nome, id) {
       if (size) sizeMap[size] = { nv_variant_id: v.id, sku: v.sku || null, label };
     });
     produtoSelecionado = { id: prod.id, name: prod.name, sizeMap };
+    produtoImgCompra = prod.imageUrl || '';
   }
+  // Mostra a imagem da camisa ao lado do campo (clique amplia)
+  if (produtoImgCompra) { imgEl.src = produtoImgCompra; imgEl.style.display = ''; }
+  else imgEl.style.display = 'none';
   onToggleEstoque();
 }
 
@@ -1213,13 +1316,16 @@ document.addEventListener('click', e => {
 // Lê os campos do produto atual. Retorna {vazio:true} se nada preenchido,
 // {erro:'...'} se incompleto, ou o objeto do produto pronto para enviar.
 function coletarProdutoAtual() {
-  const produto = document.getElementById('cProduto').value.trim();
+  const cat     = categoriaCompra;
+  let   produto = document.getElementById('cProduto').value.trim();
   const preco   = parseFloat(document.getElementById('cPreco').value) || 0;
   const tams    = getTamanhos();
   if (!produto && !tams.length && preco <= 0) return { vazio: true };
-  if (!produto)     return { erro: 'Informe o nome do produto.' };
-  if (!tams.length) return { erro: 'Informe ao menos um tamanho com quantidade.' };
+  if (cat === 'camisas' && !produto) return { erro: 'Selecione ou digite a camisa.' };
+  if (!tams.length) return { erro: 'Informe a quantidade.' };
   if (preco <= 0)   return { erro: 'Informe o preço por unidade.' };
+  // Nome opcional em brindes/embalagens → usa o rótulo da categoria
+  if (!produto) produto = (cat === 'brindes' ? 'Brindes' : cat === 'embalagens' ? 'Embalagens' : 'Produto');
   const tamsComVariant = tams.map(t => {
     const v = produtoSelecionado?.sizeMap?.[t.tamanho.toUpperCase()] || null;
     return { tamanho: t.tamanho, quantidade: t.quantidade,
@@ -1228,6 +1334,7 @@ function coletarProdutoAtual() {
   });
   return {
     produto_nome:  produto,
+    categoria:     cat,
     nv_product_id: produtoSelecionado?.id || document.getElementById('cProduto').dataset.prodId || null,
     preco_unit:    preco,
     tamanhos:      tamsComVariant,
@@ -1235,12 +1342,13 @@ function coletarProdutoAtual() {
   };
 }
 
-// Limpa só os campos do produto (mantém data e fornecedor para o próximo)
+// Limpa só os campos do produto (mantém data, fornecedor e a categoria para o próximo)
 function limparCamposProduto() {
   const cp = document.getElementById('cProduto');
   cp.value = ''; cp.dataset.prodId = '';
   document.getElementById('cPreco').value = '';
-  produtoSelecionado = null;
+  produtoSelecionado = null; produtoImgCompra = '';
+  document.getElementById('cProdImg').style.display = 'none';
   renderGridTamanhos();
   document.getElementById('tamanhosExtras').innerHTML = '';
   calcularTotal();
@@ -1289,12 +1397,13 @@ async function salvarCompra() {
 
   // ── Edição: 1 produto só (PUT) ──
   if (editando) {
-    const produto = document.getElementById('cProduto').value.trim();
+    let   produto = document.getElementById('cProduto').value.trim();
     const preco   = parseFloat(document.getElementById('cPreco').value) || 0;
     const tams    = getTamanhos();
-    if (!produto)     { erroEl.textContent = 'Informe o nome do produto.'; return; }
-    if (!tams.length) { erroEl.textContent = 'Informe ao menos um tamanho com quantidade.'; return; }
+    if (categoriaCompra === 'camisas' && !produto) { erroEl.textContent = 'Selecione ou digite a camisa.'; return; }
+    if (!tams.length) { erroEl.textContent = 'Informe a quantidade.'; return; }
     if (preco <= 0)   { erroEl.textContent = 'Informe o preço por unidade.'; return; }
+    if (!produto) produto = (categoriaCompra === 'brindes' ? 'Brindes' : categoriaCompra === 'embalagens' ? 'Embalagens' : 'Produto');
     erroEl.textContent = '';
     btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Salvando...';
     const tamsComVariant = tams.map(t => {
@@ -1314,6 +1423,7 @@ async function salvarCompra() {
           preco_unit:    preco,
           observacao:    document.getElementById('cObs').value.trim() || null,
           tamanhos:      tamsComVariant,
+          categoria:     categoriaCompra,
         }),
       });
       const j = await r.json();
@@ -1351,6 +1461,7 @@ async function salvarCompra() {
           nv_product_id: p.nv_product_id,
           preco_unit:    p.preco_unit,
           tamanhos:      p.tamanhos,
+          categoria:     p.categoria,
         })),
       }),
     });
