@@ -404,6 +404,33 @@ def init_db():
             try: conn.execute(f"ALTER TABLE sku_stock ADD COLUMN {col}")
             except Exception: pass
 
+        # sku_stock — aba "SKUs" (produtos manuais, sem sincronização com a NuvemShop):
+        # tamanho/cor como campos próprios + link para o produto manual.
+        for col in ["tamanho TEXT", "cor TEXT", "manual_produto_id INTEGER"]:
+            try: conn.execute(f"ALTER TABLE sku_stock ADD COLUMN {col}")
+            except Exception: pass
+        # 'origem' + backfill num ÚNICO try: o ALTER só funciona na 1ª vez (cold
+        # start seguinte já dá "coluna duplicada" e pula o UPDATE) — evita varrer
+        # a tabela inteira em todo cold start. DEFAULT já marca tudo 'nuvemshop';
+        # o UPDATE corrige só as linhas antigas do "SKU Manual" avulso.
+        try:
+            conn.execute("ALTER TABLE sku_stock ADD COLUMN origem TEXT DEFAULT 'nuvemshop'")
+            conn.execute("""UPDATE sku_stock SET origem='sku_manual'
+                             WHERE nv_variant_id IS NULL AND manual_produto_id IS NULL""")
+        except Exception: pass
+
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS manual_produtos (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    nome        TEXT NOT NULL,
+                    imagem      TEXT,
+                    observacao  TEXT,
+                    criado_em   DATETIME DEFAULT (datetime('now','localtime'))
+                )
+            """)
+        except Exception: pass
+
         conn.commit()
 
         # sku_costs migrations (idempotent)
@@ -469,6 +496,7 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_costs_sku             ON sku_costs(sku)",
             "CREATE INDEX IF NOT EXISTS idx_movs_variant          ON sku_stock_movements(nv_variant_id)",
             "CREATE INDEX IF NOT EXISTS idx_movs_created          ON sku_stock_movements(created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_stock_manual_produto  ON sku_stock(manual_produto_id)",
             "CREATE INDEX IF NOT EXISTS idx_pedidos_romaneio      ON pedidos(romaneio_id)",
             "CREATE INDEX IF NOT EXISTS idx_pedidos_status        ON pedidos(status)",
             "CREATE INDEX IF NOT EXISTS idx_atacado_itens_pedido  ON atacado_itens(pedido_id)",
@@ -3740,7 +3768,10 @@ def api_estoque_movimentos_relatorio():
                    SUM(CASE WHEN {IN}  THEN m.quantidade ELSE 0 END) AS entrou,
                    SUM(CASE WHEN {OUT} THEN m.quantidade ELSE 0 END) AS saiu
             FROM sku_stock_movements m
-            LEFT JOIN sku_stock s ON s.nv_variant_id = m.nv_variant_id
+            LEFT JOIN sku_stock s
+                ON (m.nv_variant_id IS NOT NULL AND s.nv_variant_id = m.nv_variant_id)
+                OR (m.nv_variant_id IS NULL AND m.sku IS NOT NULL AND m.sku != ''
+                    AND s.sku = m.sku AND s.nv_variant_id IS NULL)
             WHERE m.created_at >= ? AND m.created_at <= ?{cond_prod}
             GROUP BY dia ORDER BY dia DESC
         """, params).fetchall()
@@ -3750,7 +3781,10 @@ def api_estoque_movimentos_relatorio():
                    SUM(CASE WHEN {IN}  THEN m.quantidade ELSE 0 END) AS entrou,
                    SUM(CASE WHEN {OUT} THEN m.quantidade ELSE 0 END) AS saiu
             FROM sku_stock_movements m
-            LEFT JOIN sku_stock s ON s.nv_variant_id = m.nv_variant_id
+            LEFT JOIN sku_stock s
+                ON (m.nv_variant_id IS NOT NULL AND s.nv_variant_id = m.nv_variant_id)
+                OR (m.nv_variant_id IS NULL AND m.sku IS NOT NULL AND m.sku != ''
+                    AND s.sku = m.sku AND s.nv_variant_id IS NULL)
             WHERE m.created_at >= ? AND m.created_at <= ?{cond_prod}
             GROUP BY produto ORDER BY (entrou + saiu) DESC
         """, params).fetchall()
@@ -3870,6 +3904,202 @@ def _extract_text(obj):
 @login_required
 def custos_sku_page():
     return render_template("custos_sku.html")
+
+
+# ── Aba "SKUs": produtos cadastrados manualmente (sem sincronização) ──────────
+# Reaproveita sku_stock/sku_stock_movements (mesma tabela dos produtos da
+# NuvemShop) — assim entradas/saídas, relatório diário (PDF) e alertas de
+# estoque baixo já funcionam sozinhos para esses produtos, sem código extra.
+
+@app.route("/api/manual-produtos", methods=["GET"])
+@login_required
+def api_manual_produtos_list():
+    """Lista os produtos manuais + suas variantes. 2 queries (produtos + todas
+    as variantes de uma vez) — nunca 1 SELECT por produto."""
+    with get_conn() as conn:
+        produtos = conn.execute(
+            "SELECT * FROM manual_produtos ORDER BY nome COLLATE NOCASE"
+        ).fetchall()
+        variantes = conn.execute("""
+            SELECT id, manual_produto_id, tamanho, cor, sku, quantity, min_quantity, updated_at
+            FROM sku_stock WHERE manual_produto_id IS NOT NULL
+            ORDER BY tamanho COLLATE NOCASE, cor COLLATE NOCASE
+        """).fetchall()
+
+    por_produto = {}
+    for v in variantes:
+        por_produto.setdefault(v["manual_produto_id"], []).append(dict(v))
+
+    saida = []
+    for p in produtos:
+        vs = por_produto.get(p["id"], [])
+        saida.append({
+            **dict(p),
+            "variantes": vs,
+            "total_pecas": sum(max(v["quantity"] or 0, 0) for v in vs),
+        })
+    return jsonify(saida)
+
+
+@app.route("/api/manual-produtos", methods=["POST"])
+@login_required
+def api_manual_produtos_criar():
+    """Cria um produto manual (nome + foto opcional, sem variantes ainda)."""
+    d    = request.get_json() or {}
+    nome = (d.get("nome") or "").strip()
+    if not nome:
+        return jsonify({"erro": "Nome do produto é obrigatório"}), 400
+    imagem = d.get("imagem") or None   # data URL base64 (já redimensionada no navegador)
+    obs    = (d.get("observacao") or "").strip() or None
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO manual_produtos (nome, imagem, observacao) VALUES (?,?,?)",
+            (nome, imagem, obs)
+        )
+        new_id = cur.lastrowid
+    return jsonify({"ok": True, "id": new_id}), 201
+
+
+@app.route("/api/manual-produtos/<int:pid>", methods=["PUT"])
+@login_required
+def api_manual_produtos_editar(pid):
+    """Edita nome/foto/observação do produto manual."""
+    d    = request.get_json() or {}
+    nome = (d.get("nome") or "").strip()
+    if not nome:
+        return jsonify({"erro": "Nome do produto é obrigatório"}), 400
+    with get_conn() as conn:
+        prod = conn.execute("SELECT id FROM manual_produtos WHERE id=?", (pid,)).fetchone()
+        if not prod:
+            return jsonify({"erro": "Produto não encontrado"}), 404
+        campos, params = ["nome=?"], [nome]
+        if "imagem" in d:
+            campos.append("imagem=?"); params.append(d.get("imagem") or None)
+        if "observacao" in d:
+            campos.append("observacao=?"); params.append((d.get("observacao") or "").strip() or None)
+        params.append(pid)
+        conn.execute(f"UPDATE manual_produtos SET {', '.join(campos)} WHERE id=?", params)
+        # Mantém o nome espelhado nas variantes (usado no relatório/PDF diário)
+        conn.execute("UPDATE sku_stock SET produto_nome=? WHERE manual_produto_id=?", (nome, pid))
+    return jsonify({"ok": True})
+
+
+@app.route("/api/manual-produtos/<int:pid>", methods=["DELETE"])
+@login_required
+def api_manual_produtos_deletar(pid):
+    """Apaga o produto manual e suas variantes de estoque (mantém o histórico
+    de movimentos já registrado, igual a outras exclusões no sistema)."""
+    with get_conn() as conn:
+        prod = conn.execute("SELECT id FROM manual_produtos WHERE id=?", (pid,)).fetchone()
+        if not prod:
+            return jsonify({"erro": "Produto não encontrado"}), 404
+        conn.execute("DELETE FROM sku_stock WHERE manual_produto_id=?", (pid,))
+        conn.execute("DELETE FROM manual_produtos WHERE id=?", (pid,))
+    return jsonify({"ok": True})
+
+
+@app.route("/api/manual-produtos/<int:pid>/variantes", methods=["POST"])
+@login_required
+def api_manual_produtos_add_variante(pid):
+    """Adiciona UMA variante (tamanho + cor + SKU + quantidade) a um produto manual."""
+    d        = request.get_json() or {}
+    tamanho  = (d.get("tamanho") or "").strip().upper()
+    cor      = (d.get("cor") or "").strip()
+    sku      = (d.get("sku") or "").strip()
+    try:
+        qty = max(int(d.get("quantidade") or 0), 0)
+    except (TypeError, ValueError):
+        return jsonify({"erro": "Quantidade inválida"}), 400
+    if not sku:
+        return jsonify({"erro": "Informe o código de SKU da variante"}), 400
+    if not tamanho and not cor:
+        return jsonify({"erro": "Informe ao menos o tamanho ou a cor"}), 400
+
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    label = ", ".join([p for p in (tamanho, cor) if p])   # "TAMANHO, Cor" — mesmo padrão da NuvemShop
+
+    with get_conn() as conn:
+        prod = conn.execute("SELECT nome FROM manual_produtos WHERE id=?", (pid,)).fetchone()
+        if not prod:
+            return jsonify({"erro": "Produto não encontrado"}), 404
+        cur = conn.execute(
+            """INSERT INTO sku_stock
+               (sku, quantity, produto_nome, variante_label, tamanho, cor,
+                manual_produto_id, origem, updated_at)
+               VALUES (?,?,?,?,?,?,?,'produto_manual',?)""",
+            (sku, qty, prod["nome"], label, tamanho or None, cor or None, pid, agora)
+        )
+        vid = cur.lastrowid
+        if qty > 0:
+            conn.execute(
+                """INSERT INTO sku_stock_movements (sku, tipo, quantidade, observacao, created_at)
+                   VALUES (?, 'entrada', ?, 'Cadastro de variante manual', ?)""",
+                (sku, qty, agora)
+            )
+    return jsonify({"ok": True, "id": vid}), 201
+
+
+@app.route("/api/manual-produtos/variantes/<int:vid>", methods=["PUT"])
+@login_required
+def api_manual_produtos_editar_variante(vid):
+    """Edita uma variante manual (tamanho/cor/sku/quantidade). Mudança de
+    quantidade vira ENTRADA/SAÍDA pela diferença, igual à edição direta da
+    aba de produtos da NuvemShop — entra certinho no relatório."""
+    d = request.get_json() or {}
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM sku_stock WHERE id=? AND manual_produto_id IS NOT NULL", (vid,)
+        ).fetchone()
+        if not row:
+            return jsonify({"erro": "Variante não encontrada"}), 404
+
+        tamanho = (d.get("tamanho") if "tamanho" in d else row["tamanho"]) or ""
+        cor     = (d.get("cor")     if "cor"     in d else row["cor"])     or ""
+        sku     = (d.get("sku")     if "sku"     in d else row["sku"])    or ""
+        tamanho, cor, sku = tamanho.strip().upper(), cor.strip(), sku.strip()
+        if not sku:
+            return jsonify({"erro": "Informe o código de SKU da variante"}), 400
+        if not tamanho and not cor:
+            return jsonify({"erro": "Informe ao menos o tamanho ou a cor"}), 400
+        label = ", ".join([p for p in (tamanho, cor) if p])
+
+        agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        anterior = row["quantity"] or 0
+        if "quantidade" in d:
+            try:
+                nova_qty = max(int(d.get("quantidade") or 0), 0)
+            except (TypeError, ValueError):
+                return jsonify({"erro": "Quantidade inválida"}), 400
+        else:
+            nova_qty = anterior
+
+        conn.execute(
+            """UPDATE sku_stock SET tamanho=?, cor=?, sku=?, variante_label=?,
+               quantity=?, updated_at=? WHERE id=?""",
+            (tamanho or None, cor or None, sku, label, nova_qty, agora, vid)
+        )
+        delta = nova_qty - anterior
+        if delta != 0:
+            tipo = "entrada" if delta > 0 else "saida_manual"
+            conn.execute(
+                """INSERT INTO sku_stock_movements (sku, tipo, quantidade, observacao, created_at)
+                   VALUES (?, ?, ?, 'Edição manual — produto SKU', ?)""",
+                (sku, tipo, abs(delta), agora)
+            )
+    return jsonify({"ok": True, "nova_quantidade": nova_qty})
+
+
+@app.route("/api/manual-produtos/variantes/<int:vid>", methods=["DELETE"])
+@login_required
+def api_manual_produtos_deletar_variante(vid):
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM sku_stock WHERE id=? AND manual_produto_id IS NOT NULL", (vid,)
+        ).fetchone()
+        if not row:
+            return jsonify({"erro": "Variante não encontrada"}), 404
+        conn.execute("DELETE FROM sku_stock WHERE id=?", (vid,))
+    return jsonify({"ok": True})
 
 
 @app.route("/api/sku-costs", methods=["GET"])

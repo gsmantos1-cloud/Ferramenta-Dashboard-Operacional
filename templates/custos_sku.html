@@ -152,6 +152,23 @@
        style="max-width:92vw;max-height:92vh;object-fit:contain;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.6)">
 </div>
 
+<!-- Abas: Produtos NuvemShop x SKUs (produtos manuais) -->
+<div class="d-flex flex-wrap gap-2 mb-3" id="skuTabs">
+  <button class="btn btn-sm sku-tab-btn active" data-tab="nuvem" onclick="mudarAbaSkuPage('nuvem')">
+    <i class="bi bi-cloud-fill me-1"></i>Produtos NuvemShop
+  </button>
+  <button class="btn btn-sm sku-tab-btn" data-tab="manual" onclick="mudarAbaSkuPage('manual')">
+    <i class="bi bi-box-seam me-1"></i>SKUs
+  </button>
+</div>
+<style>
+.sku-tab-btn { background:transparent;border:1px solid var(--border);color:var(--muted);font-size:.85rem;padding:6px 16px;border-radius:20px; }
+.sku-tab-btn:hover { color:var(--text);border-color:var(--muted); }
+.sku-tab-btn.active { background:var(--blue);border-color:var(--blue);color:#fff; }
+</style>
+
+<div id="tabPaneNuvem">
+
 <!-- Cards de resumo de estoque -->
 <div id="stockSummary" class="d-flex flex-wrap gap-3 mb-4"></div>
 
@@ -446,6 +463,63 @@
     </div>
 </div>
 
+</div> <!-- /tabPaneNuvem -->
+
+<!-- ═══ ABA "SKUs" — produtos cadastrados manualmente, sem sincronização ═══ -->
+<div id="tabPaneManual" style="display:none">
+  <div class="d-flex flex-wrap gap-3 mb-3" id="manualSummary"></div>
+
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div style="position:relative;flex:1;max-width:320px">
+      <input id="manualBusca" type="text" class="form-control form-control-sm"
+             placeholder="Buscar produto…" oninput="renderManualProdutos()">
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="abrirNovoProdutoManual()">
+      <i class="bi bi-plus-lg me-1"></i>Novo Produto
+    </button>
+  </div>
+
+  <div id="manualProdutosList"></div>
+  <div id="manualEmptyMsg" class="text-center py-5" style="display:none;color:var(--muted)">
+    <i class="bi bi-box-seam" style="font-size:2rem;opacity:.4;display:block;margin-bottom:8px"></i>
+    Nenhum produto cadastrado ainda. Clique em "Novo Produto" para começar.
+  </div>
+</div>
+
+<!-- Modal: Novo Produto Manual -->
+<div class="modal fade" id="modalNovoManual" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border)">
+      <div class="modal-header" style="border-bottom:1px solid var(--border)">
+        <h6 class="modal-title fw-bold" id="tituloModalNovoManual"><i class="bi bi-box-seam me-2" style="color:var(--blue)"></i>Novo Produto</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="d-flex gap-3 align-items-start mb-3">
+          <label id="nmImgBox" title="Clique para colocar uma foto (opcional)"
+                 style="width:72px;height:72px;flex-shrink:0;border-radius:8px;border:1px solid var(--border);
+                        display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;background:var(--input-bg)">
+            <img id="nmImg" alt="" style="width:100%;height:100%;object-fit:cover;display:none">
+            <i id="nmImgPh" class="bi bi-camera" style="color:var(--muted);font-size:1.3rem"></i>
+            <input type="file" accept="image/*" style="display:none" onchange="uploadImgManual(this)">
+          </label>
+          <div style="flex:1">
+            <label class="form-label mb-1" style="font-size:.78rem;color:var(--muted)">NOME DO PRODUTO *</label>
+            <input id="nmNome" type="text" class="form-control form-control-sm" placeholder="Ex: Camiseta Retrô Brasil">
+          </div>
+        </div>
+        <span id="nmErro" style="color:var(--red);font-size:.8rem"></span>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid var(--border)">
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btnSalvarNovoManual" onclick="salvarProdutoManual()">
+          <i class="bi bi-check2 me-1"></i>Salvar Produto
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ─── Modal: SKU Manual ─────────────────────────────────────────────────── -->
 <div class="modal fade" id="modalManual" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
@@ -701,6 +775,14 @@ let selectedProducts = new Set();
 let loading         = true;
 let search          = '';
 let statusFilter    = 'all';
+
+// ── Aba "SKUs" (produtos manuais) ──────────────────────────────────────────
+let abaSkuAtual        = 'nuvem';   // 'nuvem' | 'manual'
+let manualProdutos      = [];
+let manualCarregado     = false;
+let manualExpandidos    = new Set();
+let manualImgAtual      = '';       // foto (base64) sendo editada no modal Novo Produto
+let manualEditandoId    = null;     // null = criando; id = editando produto existente
 let sortBy          = 'newest';
 let categoryId      = '';
 let page            = 1;
@@ -2703,6 +2785,288 @@ async function salvarPersConfig() {
         showToast('Erro ao salvar configuração', 'error');
     }
     btn.disabled = false; btn.innerHTML = '<i class="bi bi-floppy-fill me-1"></i>Salvar configuração';
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ABA "SKUs" — produtos cadastrados manualmente (sem sincronização)
+// ══════════════════════════════════════════════════════════════════════════════
+function mudarAbaSkuPage(tab) {
+    abaSkuAtual = tab;
+    document.querySelectorAll('#skuTabs .sku-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    document.getElementById('tabPaneNuvem').style.display  = (tab === 'nuvem')  ? '' : 'none';
+    document.getElementById('tabPaneManual').style.display = (tab === 'manual') ? '' : 'none';
+    if (tab === 'manual' && !manualCarregado) carregarManualProdutos();
+}
+
+async function carregarManualProdutos() {
+    document.getElementById('manualProdutosList').innerHTML =
+        '<div class="text-center py-4" style="color:var(--muted)"><span class="spinner-border spinner-border-sm me-1"></span>Carregando…</div>';
+    try {
+        manualProdutos  = await fetch('/api/manual-produtos').then(r => r.json());
+        manualCarregado = true;
+        renderManualProdutos();
+    } catch {
+        document.getElementById('manualProdutosList').innerHTML =
+            '<div class="text-center py-4" style="color:var(--red)">Erro ao carregar.</div>';
+    }
+}
+
+function renderManualSummary() {
+    const totalProdutos  = manualProdutos.length;
+    const totalVariantes = manualProdutos.reduce((s, p) => s + (p.variantes || []).length, 0);
+    const totalPecas     = manualProdutos.reduce((s, p) => s + (p.total_pecas || 0), 0);
+    const zeradas        = manualProdutos.reduce((s, p) => s + (p.variantes || []).filter(v => (v.quantity||0) <= 0).length, 0);
+    document.getElementById('manualSummary').innerHTML = [
+        { label: 'Total em estoque', val: totalPecas,     color: '#58a6ff', bg: 'rgba(88,166,255,.1)',  icon: 'bi-layers-fill',       sub: 'peças' },
+        { label: 'Produtos',         val: totalProdutos,  color: '#3fb950', bg: 'rgba(63,185,80,.1)',   icon: 'bi-box-seam-fill',     sub: 'cadastrados' },
+        { label: 'Variantes',        val: totalVariantes, color: '#8b5cf6', bg: 'rgba(139,92,246,.1)',  icon: 'bi-columns-gap',       sub: 'tamanho/cor' },
+        { label: 'Zeradas',          val: zeradas,         color: '#f85149', bg: 'rgba(248,81,73,.1)',   icon: 'bi-x-circle-fill',     sub: 'variantes' },
+    ].map(c => `
+        <div style="background:${c.bg};border:1px solid ${c.color}33;border-radius:8px;padding:10px 18px;min-width:130px">
+            <div style="font-size:1.35rem;font-weight:700;color:${c.color}">${c.val}</div>
+            <div style="font-size:.76rem;color:var(--muted)"><i class="bi ${c.icon} me-1" style="color:${c.color}"></i>${c.label}</div>
+            <div style="font-size:.7rem;color:${c.color};opacity:.7">${c.sub}</div>
+        </div>`).join('');
+}
+
+function renderManualProdutos() {
+    renderManualSummary();
+    const q     = (document.getElementById('manualBusca')?.value || '').toLowerCase().trim();
+    const lista = document.getElementById('manualProdutosList');
+    const vazio = document.getElementById('manualEmptyMsg');
+    const filtrados = q ? manualProdutos.filter(p => (p.nome||'').toLowerCase().includes(q)) : manualProdutos;
+
+    if (!manualProdutos.length) { lista.innerHTML = ''; vazio.style.display = ''; return; }
+    vazio.style.display = 'none';
+    if (!filtrados.length) { lista.innerHTML = '<div class="text-center py-4" style="color:var(--muted)">Nenhum produto encontrado.</div>'; return; }
+
+    lista.innerHTML = filtrados.map(p => {
+        const aberto = manualExpandidos.has(p.id);
+        const img = p.imagem
+            ? `<img src="${escHtml(p.imagem)}" onclick="event.stopPropagation();abrirImgManualProduto(${p.id})" title="Clique para ampliar"
+                   style="width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:zoom-in;flex-shrink:0">`
+            : `<div style="width:44px;height:44px;border-radius:6px;background:var(--input-bg2);display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="bi bi-image" style="color:var(--muted)"></i></div>`;
+        const zeradasProd = (p.variantes||[]).filter(v => (v.quantity||0) <= 0).length;
+        return `<div class="card mb-2">
+            <div class="card-header d-flex align-items-center justify-content-between" style="cursor:pointer" onclick="toggleManualExpand(${p.id})">
+                <div class="d-flex align-items-center gap-2" style="min-width:0">
+                    ${img}
+                    <div style="min-width:0">
+                        <div class="fw-bold text-truncate" style="max-width:320px">${escHtml(p.nome)}</div>
+                        <div class="small text-muted">${p.total_pecas||0} peça(s) · ${(p.variantes||[]).length} variante(s)${zeradasProd?` · <span style="color:#f85149">${zeradasProd} zerada(s)</span>`:''}</div>
+                    </div>
+                </div>
+                <div class="d-flex align-items-center gap-1">
+                    <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="event.stopPropagation();editarProdutoManual(${p.id})" title="Editar nome/foto"><i class="bi bi-pencil"></i></button>
+                    <button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="event.stopPropagation();removerProdutoManual(${p.id})" title="Excluir produto"><i class="bi bi-trash"></i></button>
+                    <i class="bi ${aberto ? 'bi-chevron-up' : 'bi-chevron-down'} ms-1" style="color:var(--muted)"></i>
+                </div>
+            </div>
+            ${aberto ? `<div class="card-body">${renderVariantesManual(p)}</div>` : ''}
+        </div>`;
+    }).join('');
+}
+
+function abrirImgManualProduto(id) {
+    const p = manualProdutos.find(x => x.id === id);
+    if (p && p.imagem) abrirImgMov(p.imagem);
+}
+
+function toggleManualExpand(id) {
+    if (manualExpandidos.has(id)) manualExpandidos.delete(id); else manualExpandidos.add(id);
+    renderManualProdutos();
+}
+
+function renderVariantesManual(p) {
+    const linhas = (p.variantes || []).map(v => {
+        const cor = (v.quantity||0) <= 0 ? '#f85149' : (v.quantity <= (v.min_quantity||3) ? '#f0883e' : '#3fb950');
+        return `<tr>
+            <td><input type="text" class="form-control form-control-sm" value="${escHtml(v.tamanho||'')}" style="width:80px"
+                       onchange="salvarCampoVariante(${v.id},${p.id},'tamanho',this.value)"></td>
+            <td><input type="text" class="form-control form-control-sm" value="${escHtml(v.cor||'')}" style="width:100px"
+                       onchange="salvarCampoVariante(${v.id},${p.id},'cor',this.value)"></td>
+            <td><input type="text" class="form-control form-control-sm" value="${escHtml(v.sku||'')}" style="width:140px;font-family:monospace;font-size:.78rem"
+                       onchange="salvarCampoVariante(${v.id},${p.id},'sku',this.value)"></td>
+            <td><input type="number" min="0" class="form-control form-control-sm" value="${v.quantity||0}" style="width:80px;color:${cor};font-weight:700"
+                       onchange="salvarCampoVariante(${v.id},${p.id},'quantidade',this.value)"></td>
+            <td><button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="removerVarianteManual(${v.id},${p.id})" title="Remover variante"><i class="bi bi-trash"></i></button></td>
+        </tr>`;
+    }).join('');
+
+    return `
+    <div class="table-responsive mb-2">
+        <table class="table table-sm mb-0">
+            <thead><tr>
+                <th style="font-size:.7rem;color:var(--muted)">TAMANHO</th>
+                <th style="font-size:.7rem;color:var(--muted)">COR</th>
+                <th style="font-size:.7rem;color:var(--muted)">SKU</th>
+                <th style="font-size:.7rem;color:var(--muted)">QTD</th>
+                <th></th>
+            </tr></thead>
+            <tbody>${linhas || `<tr><td colspan="5" class="text-center text-muted py-2">Nenhuma variante ainda.</td></tr>`}</tbody>
+        </table>
+    </div>
+    <div class="d-flex flex-wrap gap-2 align-items-end" style="background:var(--input-bg2);border-radius:8px;padding:10px">
+        <div><label class="small text-muted d-block mb-1">Tamanho</label><input type="text" id="nvTam-${p.id}" class="form-control form-control-sm" style="width:80px" placeholder="Ex: M"></div>
+        <div><label class="small text-muted d-block mb-1">Cor</label><input type="text" id="nvCor-${p.id}" class="form-control form-control-sm" style="width:100px" placeholder="Ex: Azul"></div>
+        <div><label class="small text-muted d-block mb-1">SKU *</label><input type="text" id="nvSku-${p.id}" class="form-control form-control-sm" style="width:140px" placeholder="Código"></div>
+        <div><label class="small text-muted d-block mb-1">Quantidade</label><input type="number" min="0" id="nvQty-${p.id}" class="form-control form-control-sm" style="width:90px" placeholder="0"></div>
+        <button class="btn btn-primary btn-sm" onclick="adicionarVarianteManual(${p.id})"><i class="bi bi-plus-lg me-1"></i>Adicionar variante</button>
+        <span id="nvErro-${p.id}" style="color:var(--red);font-size:.78rem"></span>
+    </div>`;
+}
+
+async function adicionarVarianteManual(pid) {
+    const tamanho = document.getElementById(`nvTam-${pid}`).value.trim();
+    const cor     = document.getElementById(`nvCor-${pid}`).value.trim();
+    const sku     = document.getElementById(`nvSku-${pid}`).value.trim();
+    const qty     = parseInt(document.getElementById(`nvQty-${pid}`).value || '0', 10) || 0;
+    const erroEl  = document.getElementById(`nvErro-${pid}`);
+    if (!sku)               { erroEl.textContent = 'Informe o código de SKU.'; return; }
+    if (!tamanho && !cor)   { erroEl.textContent = 'Informe ao menos o tamanho ou a cor.'; return; }
+    erroEl.textContent = '';
+    try {
+        const r = await fetch(`/api/manual-produtos/${pid}/variantes`, {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ tamanho, cor, sku, quantidade: qty }),
+        });
+        const j = await r.json();
+        if (!r.ok) { erroEl.textContent = j.erro || 'Erro ao adicionar.'; return; }
+        toast('✓ Variante adicionada.', true);
+        await carregarManualProdutosSilencioso();
+        manualExpandidos.add(pid);
+        renderManualProdutos();
+    } catch { erroEl.textContent = 'Erro de conexão.'; }
+}
+
+async function salvarCampoVariante(vid, pid, campo, valor) {
+    const body = {};
+    if (campo === 'quantidade') {
+        const n = parseInt(valor, 10);
+        if (isNaN(n) || n < 0) { toast('Quantidade inválida.', false); renderManualProdutos(); return; }
+        body.quantidade = n;
+    } else {
+        body[campo] = (valor || '').trim();
+    }
+    try {
+        const r = await fetch(`/api/manual-produtos/variantes/${vid}`, {
+            method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
+        });
+        const j = await r.json();
+        if (!r.ok) { toast(j.erro || 'Erro ao salvar.', false); await carregarManualProdutosSilencioso(); renderManualProdutos(); return; }
+        await carregarManualProdutosSilencioso();
+        renderManualProdutos();
+        toast('✓ Salvo.', true);
+    } catch { toast('Erro de conexão.', false); }
+}
+
+async function removerVarianteManual(vid, pid) {
+    if (!confirm('Remover esta variante do estoque?')) return;
+    try {
+        const r = await fetch(`/api/manual-produtos/variantes/${vid}`, { method: 'DELETE' });
+        if (!r.ok) { toast('Erro ao remover.', false); return; }
+        manualExpandidos.add(pid);
+        await carregarManualProdutosSilencioso();
+        renderManualProdutos();
+        toast('✓ Variante removida.', true);
+    } catch { toast('Erro de conexão.', false); }
+}
+
+// Recarrega os dados sem mexer no spinner/tela (usado após uma ação pontual)
+async function carregarManualProdutosSilencioso() {
+    try { manualProdutos = await fetch('/api/manual-produtos').then(r => r.json()); } catch {}
+}
+
+// ── Modal: Novo Produto / Editar Produto manual ─────────────────────────────
+function abrirNovoProdutoManual() {
+    manualEditandoId = null;
+    manualImgAtual = '';
+    document.getElementById('tituloModalNovoManual').innerHTML = '<i class="bi bi-box-seam me-2" style="color:var(--blue)"></i>Novo Produto';
+    document.getElementById('btnSalvarNovoManual').innerHTML = '<i class="bi bi-check2 me-1"></i>Salvar Produto';
+    document.getElementById('nmNome').value = '';
+    document.getElementById('nmImg').style.display = 'none';
+    document.getElementById('nmImgPh').style.display = '';
+    document.getElementById('nmErro').textContent = '';
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalNovoManual')).show();
+}
+
+function editarProdutoManual(id) {
+    const p = manualProdutos.find(x => x.id === id);
+    if (!p) return;
+    manualEditandoId = id;
+    manualImgAtual = p.imagem || '';
+    document.getElementById('tituloModalNovoManual').innerHTML = '<i class="bi bi-pencil-square me-2" style="color:var(--blue)"></i>Editar Produto';
+    document.getElementById('btnSalvarNovoManual').innerHTML = '<i class="bi bi-check2 me-1"></i>Salvar Alterações';
+    document.getElementById('nmNome').value = p.nome || '';
+    const imgEl = document.getElementById('nmImg');
+    if (manualImgAtual) { imgEl.src = manualImgAtual; imgEl.style.display = ''; document.getElementById('nmImgPh').style.display = 'none'; }
+    else { imgEl.style.display = 'none'; document.getElementById('nmImgPh').style.display = ''; }
+    document.getElementById('nmErro').textContent = '';
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalNovoManual')).show();
+}
+
+function uploadImgManual(input) {
+    const f = input.files && input.files[0];
+    input.value = '';
+    if (!f) return;
+    const fr = new FileReader();
+    fr.onload = () => {
+        const im = new Image();
+        im.onload = () => {
+            const MAX = 360;
+            let w = im.width, h = im.height;
+            if (w >= h && w > MAX)      { h = Math.round(h * MAX / w); w = MAX; }
+            else if (h > w && h > MAX)  { w = Math.round(w * MAX / h); h = MAX; }
+            const cv = document.createElement('canvas');
+            cv.width = w; cv.height = h;
+            cv.getContext('2d').drawImage(im, 0, 0, w, h);
+            manualImgAtual = cv.toDataURL('image/jpeg', 0.72);
+            const imgEl = document.getElementById('nmImg');
+            imgEl.src = manualImgAtual; imgEl.style.display = '';
+            document.getElementById('nmImgPh').style.display = 'none';
+        };
+        im.onerror = () => toast('Não foi possível ler a imagem.', false);
+        im.src = fr.result;
+    };
+    fr.readAsDataURL(f);
+}
+
+async function salvarProdutoManual() {
+    const nome  = document.getElementById('nmNome').value.trim();
+    const erroEl = document.getElementById('nmErro');
+    if (!nome) { erroEl.textContent = 'Informe o nome do produto.'; return; }
+    erroEl.textContent = '';
+    const btn = document.getElementById('btnSalvarNovoManual');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Salvando...';
+    const editando = manualEditandoId != null;
+    try {
+        const url = editando ? `/api/manual-produtos/${manualEditandoId}` : '/api/manual-produtos';
+        const r = await fetch(url, {
+            method: editando ? 'PUT' : 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ nome, imagem: manualImgAtual || null }),
+        });
+        const j = await r.json();
+        if (!r.ok) { erroEl.textContent = j.erro || 'Erro ao salvar.'; return; }
+        bootstrap.Modal.getInstance(document.getElementById('modalNovoManual')).hide();
+        toast(editando ? '✓ Produto atualizado!' : '✓ Produto criado!', true);
+        if (!editando) manualExpandidos.add(j.id);
+        await carregarManualProdutosSilencioso();
+        renderManualProdutos();
+    } catch { erroEl.textContent = 'Erro de conexão.'; }
+    finally { btn.disabled = false; btn.innerHTML = editando ? '<i class="bi bi-check2 me-1"></i>Salvar Alterações' : '<i class="bi bi-check2 me-1"></i>Salvar Produto'; }
+}
+
+async function removerProdutoManual(id) {
+    const p = manualProdutos.find(x => x.id === id);
+    if (!confirm(`Excluir o produto "${p ? p.nome : ''}" e todas as suas variantes?`)) return;
+    try {
+        const r = await fetch(`/api/manual-produtos/${id}`, { method: 'DELETE' });
+        if (!r.ok) { toast('Erro ao excluir.', false); return; }
+        manualExpandidos.delete(id);
+        await carregarManualProdutosSilencioso();
+        renderManualProdutos();
+        toast('✓ Produto excluído.', true);
+    } catch { toast('Erro de conexão.', false); }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
