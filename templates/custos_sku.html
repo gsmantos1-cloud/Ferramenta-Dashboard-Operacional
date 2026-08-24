@@ -520,6 +520,50 @@
   </div>
 </div>
 
+<!-- Modal: Vincular variante da NuvemShop -->
+<div class="modal fade" id="modalVincular" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border)">
+      <div class="modal-header" style="border-bottom:1px solid var(--border)">
+        <h6 class="modal-title fw-bold"><i class="bi bi-link-45deg me-2" style="color:#58a6ff"></i>Vincular variante da NuvemShop</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div style="background:rgba(88,166,255,.08);border:1px solid #58a6ff33;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:.78rem;color:var(--muted)">
+          Depois de vincular, só existe <b>um número de estoque</b> pra essa variante — editável tanto aqui quanto na aba "Produtos NuvemShop".
+        </div>
+
+        <label class="flabel">BUSCAR PRODUTO</label>
+        <div style="position:relative">
+          <input id="vincBusca" type="text" class="form-control form-control-sm" placeholder="Digite o nome do produto…" autocomplete="off" oninput="vincBuscarProduto()">
+          <div id="vincDropdown" style="position:absolute;left:0;right:0;top:100%;margin-top:4px;z-index:9999;
+               background:var(--card-bg);border:1px solid var(--border);border-radius:8px;max-height:220px;overflow-y:auto;
+               box-shadow:0 8px 32px var(--shadow)"></div>
+        </div>
+
+        <div id="vincPasso2" style="display:none;margin-top:14px">
+          <label class="flabel">ESCOLHA A VARIANTE (TAMANHO/COR)</label>
+          <div id="vincVariantesList"></div>
+        </div>
+
+        <div id="vincPasso3" style="display:none;margin-top:14px">
+          <div class="small text-muted mb-1">Estoque atual dessa variante: <b id="vincEstoqueAtual">0</b></div>
+          <label class="flabel">QUANTIDADE (o que você definir aqui vira o estoque real)</label>
+          <input type="number" min="0" id="vincQty" class="form-control form-control-sm" style="width:120px">
+        </div>
+
+        <span id="vincErro" style="color:var(--red);font-size:.8rem;display:block;margin-top:10px"></span>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid var(--border)">
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btnConfirmarVincular" style="display:none" onclick="confirmarVincular()">
+          <i class="bi bi-check2 me-1"></i>Vincular
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ─── Modal: SKU Manual ─────────────────────────────────────────────────── -->
 <div class="modal fade" id="modalManual" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
@@ -2880,16 +2924,34 @@ function toggleManualExpand(id) {
 function renderVariantesManual(p) {
     const linhas = (p.variantes || []).map(v => {
         const cor = (v.quantity||0) <= 0 ? '#f85149' : (v.quantity <= (v.min_quantity||3) ? '#f0883e' : '#3fb950');
+        const vinculada = v.nv_variant_id != null;
+
+        const celTam = vinculada
+            ? `<span class="fw-bold">${escHtml(v.tamanho||'—')}</span>`
+            : `<input type="text" class="form-control form-control-sm" value="${escHtml(v.tamanho||'')}" style="width:80px" onchange="salvarCampoVariante(${v.id},${p.id},'tamanho',this.value)">`;
+        const celCor = vinculada
+            ? escHtml(v.cor||'—')
+            : `<input type="text" class="form-control form-control-sm" value="${escHtml(v.cor||'')}" style="width:100px" onchange="salvarCampoVariante(${v.id},${p.id},'cor',this.value)">`;
+        const celSku = vinculada
+            ? `<span style="font-family:monospace;font-size:.78rem">${escHtml(v.sku||'—')}</span>`
+            : `<input type="text" class="form-control form-control-sm" value="${escHtml(v.sku||'')}" style="width:140px;font-family:monospace;font-size:.78rem" onchange="salvarCampoVariante(${v.id},${p.id},'sku',this.value)">`;
+        const badgeVinc = vinculada
+            ? `<span title="Vinculada à NuvemShop — este é o estoque real do produto" style="font-size:.62rem;background:rgba(88,166,255,.15);color:#58a6ff;border-radius:4px;padding:1px 6px;margin-left:4px;white-space:nowrap"><i class="bi bi-link-45deg"></i> nuvem</span>`
+            : '';
+        const btnAcao = vinculada
+            ? `<button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="desvincularVariante(${v.id},${p.id})" title="Desvincular (o produto e o estoque da nuvem continuam existindo, só sai deste card)"><i class="bi bi-link-45deg"></i></button>`
+            : `<button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="removerVarianteManual(${v.id},${p.id})" title="Remover variante"><i class="bi bi-trash"></i></button>`;
+
         return `<tr>
-            <td><input type="text" class="form-control form-control-sm" value="${escHtml(v.tamanho||'')}" style="width:80px"
-                       onchange="salvarCampoVariante(${v.id},${p.id},'tamanho',this.value)"></td>
-            <td><input type="text" class="form-control form-control-sm" value="${escHtml(v.cor||'')}" style="width:100px"
-                       onchange="salvarCampoVariante(${v.id},${p.id},'cor',this.value)"></td>
-            <td><input type="text" class="form-control form-control-sm" value="${escHtml(v.sku||'')}" style="width:140px;font-family:monospace;font-size:.78rem"
-                       onchange="salvarCampoVariante(${v.id},${p.id},'sku',this.value)"></td>
+            <td>${celTam}</td>
+            <td>${celCor}${badgeVinc}</td>
+            <td>${celSku}</td>
             <td><input type="number" min="0" class="form-control form-control-sm" value="${v.quantity||0}" style="width:80px;color:${cor};font-weight:700"
                        onchange="salvarCampoVariante(${v.id},${p.id},'quantidade',this.value)"></td>
-            <td><button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="removerVarianteManual(${v.id},${p.id})" title="Remover variante"><i class="bi bi-trash"></i></button></td>
+            <td class="d-flex gap-1">
+                <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="duplicarVarianteManual(${v.id},${p.id})" title="Duplicar (copia os dados para o formulário abaixo)"><i class="bi bi-files"></i></button>
+                ${btnAcao}
+            </td>
         </tr>`;
     }).join('');
 
@@ -2906,14 +2968,33 @@ function renderVariantesManual(p) {
             <tbody>${linhas || `<tr><td colspan="5" class="text-center text-muted py-2">Nenhuma variante ainda.</td></tr>`}</tbody>
         </table>
     </div>
-    <div class="d-flex flex-wrap gap-2 align-items-end" style="background:var(--input-bg2);border-radius:8px;padding:10px">
+    <div class="d-flex flex-wrap gap-2 align-items-end mb-2" style="background:var(--input-bg2);border-radius:8px;padding:10px">
         <div><label class="small text-muted d-block mb-1">Tamanho</label><input type="text" id="nvTam-${p.id}" class="form-control form-control-sm" style="width:80px" placeholder="Ex: M"></div>
         <div><label class="small text-muted d-block mb-1">Cor</label><input type="text" id="nvCor-${p.id}" class="form-control form-control-sm" style="width:100px" placeholder="Ex: Azul"></div>
         <div><label class="small text-muted d-block mb-1">SKU *</label><input type="text" id="nvSku-${p.id}" class="form-control form-control-sm" style="width:140px" placeholder="Código"></div>
         <div><label class="small text-muted d-block mb-1">Quantidade</label><input type="number" min="0" id="nvQty-${p.id}" class="form-control form-control-sm" style="width:90px" placeholder="0"></div>
         <button class="btn btn-primary btn-sm" onclick="adicionarVarianteManual(${p.id})"><i class="bi bi-plus-lg me-1"></i>Adicionar variante</button>
         <span id="nvErro-${p.id}" style="color:var(--red);font-size:.78rem"></span>
-    </div>`;
+    </div>
+    <button class="btn btn-sm" onclick="abrirVincular(${p.id})"
+            style="background:rgba(88,166,255,.12);border:1px solid #58a6ff44;color:#58a6ff">
+        <i class="bi bi-link-45deg me-1"></i>Vincular variante da NuvemShop
+    </button>`;
+}
+
+// Copia os dados de uma variante existente para o formulário "Adicionar variante"
+// (cria uma variante NOVA, independente — não altera a original).
+function duplicarVarianteManual(vid, pid) {
+    const p = manualProdutos.find(x => x.id === pid);
+    const v = p && (p.variantes || []).find(x => x.id === vid);
+    if (!v) return;
+    document.getElementById(`nvTam-${pid}`).value = v.tamanho || '';
+    document.getElementById(`nvCor-${pid}`).value  = v.cor || '';
+    document.getElementById(`nvSku-${pid}`).value  = v.sku || '';
+    document.getElementById(`nvQty-${pid}`).value  = v.quantity || 0;
+    const tamEl = document.getElementById(`nvTam-${pid}`);
+    tamEl.focus(); tamEl.select();
+    toast('Dados copiados para o formulário — ajuste e clique em "Adicionar variante".', true);
 }
 
 async function adicionarVarianteManual(pid) {
@@ -2972,9 +3053,126 @@ async function removerVarianteManual(vid, pid) {
     } catch { toast('Erro de conexão.', false); }
 }
 
+async function desvincularVariante(vid, pid) {
+    if (!confirm('Desvincular esta variante? O produto e o estoque da NuvemShop continuam existindo normalmente — só sai deste card.')) return;
+    try {
+        const r = await fetch(`/api/manual-produtos/variantes/${vid}/desvincular`, { method: 'POST' });
+        if (!r.ok) { toast('Erro ao desvincular.', false); return; }
+        manualExpandidos.add(pid);
+        await carregarManualProdutosSilencioso();
+        renderManualProdutos();
+        toast('✓ Desvinculado.', true);
+    } catch { toast('Erro de conexão.', false); }
+}
+
 // Recarrega os dados sem mexer no spinner/tela (usado após uma ação pontual)
 async function carregarManualProdutosSilencioso() {
     try { manualProdutos = await fetch('/api/manual-produtos').then(r => r.json()); } catch {}
+}
+
+// ── Vincular variante da NuvemShop a um produto manual ──────────────────────
+let vincProdutoId = null;   // id do produto manual sendo vinculado
+let vincEscolhido = null;   // {nv_product_id, nv_variant_id, produto_nome, variante_label, tamanho, cor, sku, estoqueAtual}
+
+function abrirVincular(pid) {
+    vincProdutoId = pid;
+    vincEscolhido = null;
+    document.getElementById('vincBusca').value = '';
+    document.getElementById('vincDropdown').innerHTML = '';
+    document.getElementById('vincPasso2').style.display = 'none';
+    document.getElementById('vincPasso3').style.display = 'none';
+    document.getElementById('btnConfirmarVincular').style.display = 'none';
+    document.getElementById('vincErro').textContent = '';
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalVincular')).show();
+    setTimeout(() => document.getElementById('vincBusca').focus(), 300);
+}
+
+function vincBuscarProduto() {
+    const q  = document.getElementById('vincBusca').value.toLowerCase().trim();
+    const dd = document.getElementById('vincDropdown');
+    if (q.length < 1) { dd.innerHTML = ''; return; }
+    const matches = products.filter(p => p.name && p.name.toLowerCase().includes(q)).slice(0, 30);
+    if (!matches.length) { dd.innerHTML = '<div class="text-muted p-2" style="font-size:.82rem">Nenhum produto encontrado.</div>'; return; }
+    dd.innerHTML = matches.map(p => {
+        const img = p.imageUrl
+            ? `<img src="${escHtml(p.imageUrl)}" style="width:36px;height:36px;object-fit:cover;border-radius:6px;margin-right:8px;flex-shrink:0">`
+            : `<div style="width:36px;height:36px;background:var(--input-bg2);border-radius:6px;margin-right:8px;flex-shrink:0;display:flex;align-items:center;justify-content:center"><i class="bi bi-image text-muted"></i></div>`;
+        return `<div onclick="vincEscolherProduto(${p.id})" style="cursor:pointer;padding:8px;border-bottom:1px solid var(--border);display:flex;align-items:center"
+                     onmouseover="this.style.background='var(--hover-row)'" onmouseout="this.style.background=''">${img}<span style="font-size:.85rem">${escHtml(p.name)}</span></div>`;
+    }).join('');
+}
+
+function vincEscolherProduto(prodId) {
+    const p = products.find(x => x.id === prodId);
+    if (!p) return;
+    document.getElementById('vincDropdown').innerHTML = '';
+    document.getElementById('vincBusca').value = p.name;
+    document.getElementById('vincPasso3').style.display = 'none';
+    document.getElementById('btnConfirmarVincular').style.display = 'none';
+    vincEscolhido = null;
+    const pane = document.getElementById('vincPasso2');
+    pane.style.display = '';
+    const variantes = p.variants || [];
+    document.getElementById('vincVariantesList').innerHTML = variantes.map(v => {
+        const label = (v.values || []).join(', ') || 'Padrão';
+        const st = stockMap.get(v.id);
+        const jaVinculada = st && st.manual_produto_id;
+        const qtyTxt = st ? `${st.quantity||0} em estoque` : 'sem estoque cadastrado ainda';
+        return `<div onclick="${jaVinculada ? '' : `vincEscolherVariante(${p.id},${v.id})`}"
+                     style="cursor:${jaVinculada ? 'not-allowed' : 'pointer'};padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:5px;opacity:${jaVinculada ? 0.55 : 1}"
+                     ${jaVinculada ? '' : `onmouseover="this.style.borderColor='var(--blue)'" onmouseout="this.style.borderColor='var(--border)'"`}>
+            <b style="font-size:.85rem">${escHtml(label)}</b>
+            <span class="text-muted" style="font-size:.76rem"> — ${qtyTxt}${jaVinculada?' · já vinculada a outro produto SKU':''}</span>
+        </div>`;
+    }).join('') || '<div class="text-muted" style="font-size:.82rem">Este produto não tem variantes.</div>';
+}
+
+function vincEscolherVariante(prodId, varId) {
+    const p = products.find(x => x.id === prodId);
+    const v = p && (p.variants || []).find(x => x.id === varId);
+    if (!v) return;
+    const label   = (v.values || []).join(', ') || 'Padrão';
+    const partes  = label.split(',');
+    const tamanho = (partes[0] || '').trim();
+    const cor     = partes.slice(1).join(',').trim();
+    const st      = stockMap.get(varId);
+    vincEscolhido = {
+        nv_product_id: p.id, nv_variant_id: v.id, produto_nome: p.name,
+        variante_label: label, tamanho, cor, sku: v.sku || '',
+        estoqueAtual: st ? (st.quantity || 0) : 0,
+    };
+    // Destaca a variante escolhida
+    document.querySelectorAll('#vincVariantesList > div').forEach(el => el.style.background = '');
+    event.currentTarget.style.background = 'rgba(88,166,255,.12)';
+
+    document.getElementById('vincPasso3').style.display = '';
+    document.getElementById('vincEstoqueAtual').textContent = vincEscolhido.estoqueAtual;
+    document.getElementById('vincQty').value = vincEscolhido.estoqueAtual;
+    document.getElementById('btnConfirmarVincular').style.display = '';
+}
+
+async function confirmarVincular() {
+    if (!vincEscolhido) return;
+    const qty    = parseInt(document.getElementById('vincQty').value || '0', 10) || 0;
+    const erroEl = document.getElementById('vincErro');
+    erroEl.textContent = '';
+    const btn = document.getElementById('btnConfirmarVincular');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Vinculando...';
+    try {
+        const r = await fetch(`/api/manual-produtos/${vincProdutoId}/vincular`, {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ ...vincEscolhido, quantidade: qty }),
+        });
+        const j = await r.json();
+        if (!r.ok) { erroEl.textContent = j.erro || 'Erro ao vincular.'; return; }
+        bootstrap.Modal.getInstance(document.getElementById('modalVincular')).hide();
+        toast('✓ Variante vinculada!', true);
+        manualExpandidos.add(vincProdutoId);
+        await carregarManualProdutosSilencioso();
+        await loadStock();
+        renderManualProdutos();
+    } catch { erroEl.textContent = 'Erro de conexão.'; }
+    finally { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check2 me-1"></i>Vincular'; }
 }
 
 // ── Modal: Novo Produto / Editar Produto manual ─────────────────────────────

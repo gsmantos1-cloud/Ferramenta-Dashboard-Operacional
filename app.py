@@ -3921,7 +3921,8 @@ def api_manual_produtos_list():
             "SELECT * FROM manual_produtos ORDER BY nome COLLATE NOCASE"
         ).fetchall()
         variantes = conn.execute("""
-            SELECT id, manual_produto_id, tamanho, cor, sku, quantity, min_quantity, updated_at
+            SELECT id, manual_produto_id, tamanho, cor, sku, quantity, min_quantity,
+                   updated_at, nv_variant_id, produto_nome, variante_label
             FROM sku_stock WHERE manual_produto_id IS NOT NULL
             ORDER BY tamanho COLLATE NOCASE, cor COLLATE NOCASE
         """).fetchall()
@@ -4044,7 +4045,12 @@ def api_manual_produtos_add_variante(pid):
 def api_manual_produtos_editar_variante(vid):
     """Edita uma variante manual (tamanho/cor/sku/quantidade). Mudança de
     quantidade vira ENTRADA/SAÍDA pela diferença, igual à edição direta da
-    aba de produtos da NuvemShop — entra certinho no relatório."""
+    aba de produtos da NuvemShop — entra certinho no relatório.
+
+    Se a variante estiver VINCULADA a um produto real da NuvemShop
+    (nv_variant_id preenchido), tamanho/cor/sku pertencem ao produto real e
+    NÃO são editáveis por aqui — só a quantidade (que é o mesmo número usado
+    pela aba 'Produtos NuvemShop': não existe um "estoque da nuvem" à parte)."""
     d = request.get_json() or {}
     with get_conn() as conn:
         row = conn.execute(
@@ -4053,14 +4059,18 @@ def api_manual_produtos_editar_variante(vid):
         if not row:
             return jsonify({"erro": "Variante não encontrada"}), 404
 
-        tamanho = (d.get("tamanho") if "tamanho" in d else row["tamanho"]) or ""
-        cor     = (d.get("cor")     if "cor"     in d else row["cor"])     or ""
-        sku     = (d.get("sku")     if "sku"     in d else row["sku"])    or ""
-        tamanho, cor, sku = tamanho.strip().upper(), cor.strip(), sku.strip()
-        if not sku:
-            return jsonify({"erro": "Informe o código de SKU da variante"}), 400
-        if not tamanho and not cor:
-            return jsonify({"erro": "Informe ao menos o tamanho ou a cor"}), 400
+        vinculada = row["nv_variant_id"] is not None
+        if vinculada:
+            tamanho, cor, sku = (row["tamanho"] or ""), (row["cor"] or ""), (row["sku"] or "")
+        else:
+            tamanho = (d.get("tamanho") if "tamanho" in d else row["tamanho"]) or ""
+            cor     = (d.get("cor")     if "cor"     in d else row["cor"])     or ""
+            sku     = (d.get("sku")     if "sku"     in d else row["sku"])    or ""
+            tamanho, cor, sku = tamanho.strip().upper(), cor.strip(), sku.strip()
+            if not sku:
+                return jsonify({"erro": "Informe o código de SKU da variante"}), 400
+            if not tamanho and not cor:
+                return jsonify({"erro": "Informe ao menos o tamanho ou a cor"}), 400
         label = ", ".join([p for p in (tamanho, cor) if p])
 
         agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -4081,11 +4091,18 @@ def api_manual_produtos_editar_variante(vid):
         delta = nova_qty - anterior
         if delta != 0:
             tipo = "entrada" if delta > 0 else "saida_manual"
+            obs  = "Edição manual — produto SKU (vinculado à NuvemShop)" if vinculada else "Edição manual — produto SKU"
             conn.execute(
-                """INSERT INTO sku_stock_movements (sku, tipo, quantidade, observacao, created_at)
-                   VALUES (?, ?, ?, 'Edição manual — produto SKU', ?)""",
-                (sku, tipo, abs(delta), agora)
+                """INSERT INTO sku_stock_movements (nv_variant_id, sku, tipo, quantidade, observacao, created_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (row["nv_variant_id"], sku, tipo, abs(delta), obs, agora)
             )
+            if vinculada:
+                # Mesma propagação por SKU que a aba "Produtos NuvemShop" já faz
+                # em qualquer ajuste — mantém consistência entre as duas abas.
+                sku_real = _resolver_sku_variante(conn, row["nv_variant_id"], sku)
+                _sync_sku(conn, sku_real, nova_qty, agora,
+                          skip_vid=row["nv_variant_id"], motivo="Edição via aba SKUs (vinculado)")
     return jsonify({"ok": True, "nova_quantidade": nova_qty})
 
 
@@ -4094,11 +4111,108 @@ def api_manual_produtos_editar_variante(vid):
 def api_manual_produtos_deletar_variante(vid):
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT id FROM sku_stock WHERE id=? AND manual_produto_id IS NOT NULL", (vid,)
+            "SELECT id, nv_variant_id FROM sku_stock WHERE id=? AND manual_produto_id IS NOT NULL", (vid,)
         ).fetchone()
         if not row:
             return jsonify({"erro": "Variante não encontrada"}), 404
+        if row["nv_variant_id"] is not None:
+            return jsonify({"erro": "Esta variante é vinculada a um produto da NuvemShop — "
+                                     "use \"Desvincular\" em vez de excluir (excluir apagaria "
+                                     "o estoque real do produto)."}), 400
         conn.execute("DELETE FROM sku_stock WHERE id=?", (vid,))
+    return jsonify({"ok": True})
+
+
+@app.route("/api/manual-produtos/<int:pid>/vincular", methods=["POST"])
+@login_required
+def api_manual_produtos_vincular(pid):
+    """Vincula este produto manual a uma variante REAL da NuvemShop.
+
+    A partir daqui existe UM ÚNICO número de estoque para essa variante — a
+    mesma linha do banco é lida e editada tanto pela aba "Produtos NuvemShop"
+    quanto pela aba "SKUs". Não existe um "estoque da nuvem" escondido por trás:
+    o que for definido aqui (ou na outra aba) É o estoque real, sempre."""
+    d = request.get_json() or {}
+    try:
+        nv_variant_id = int(d.get("nv_variant_id"))
+    except (TypeError, ValueError):
+        return jsonify({"erro": "Variante da NuvemShop inválida"}), 400
+    nv_product_id  = d.get("nv_product_id") or None
+    produto_nome   = (d.get("produto_nome") or "").strip() or None
+    variante_label = (d.get("variante_label") or "").strip() or None
+    tamanho        = (d.get("tamanho") or "").strip().upper() or None
+    cor            = (d.get("cor") or "").strip() or None
+    sku            = (d.get("sku") or "").strip() or None
+    try:
+        quantidade = d.get("quantidade")
+        quantidade = max(int(quantidade), 0) if quantidade is not None else None
+    except (TypeError, ValueError):
+        return jsonify({"erro": "Quantidade inválida"}), 400
+
+    agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        prod = conn.execute("SELECT id FROM manual_produtos WHERE id=?", (pid,)).fetchone()
+        if not prod:
+            return jsonify({"erro": "Produto não encontrado"}), 404
+
+        row = conn.execute("SELECT * FROM sku_stock WHERE nv_variant_id=?", (nv_variant_id,)).fetchone()
+        if row and row["manual_produto_id"] and row["manual_produto_id"] != pid:
+            return jsonify({"erro": "Essa variante já está vinculada a outro produto na aba SKUs"}), 400
+
+        if row:
+            vid = row["id"]
+            anterior = row["quantity"] or 0
+            nova_qty = quantidade if quantidade is not None else anterior
+            conn.execute(
+                """UPDATE sku_stock SET manual_produto_id=?, origem='vinculado',
+                   quantity=?, updated_at=? WHERE id=?""",
+                (pid, nova_qty, agora, vid)
+            )
+            sku_row = row["sku"]
+        else:
+            anterior = 0
+            nova_qty = quantidade if quantidade is not None else 0
+            cur = conn.execute(
+                """INSERT INTO sku_stock
+                   (nv_variant_id, nv_product_id, sku, quantity, produto_nome, variante_label,
+                    tamanho, cor, manual_produto_id, origem, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,'vinculado',?)""",
+                (nv_variant_id, nv_product_id, sku, nova_qty, produto_nome,
+                 variante_label, tamanho, cor, pid, agora)
+            )
+            vid = cur.lastrowid
+            sku_row = sku
+
+        delta = nova_qty - anterior
+        if delta != 0:
+            tipo = "entrada" if delta > 0 else "saida_manual"
+            conn.execute(
+                """INSERT INTO sku_stock_movements (nv_variant_id, sku, tipo, quantidade, observacao, created_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (nv_variant_id, sku_row, tipo, abs(delta), "Vínculo manual — produto SKU", agora)
+            )
+            if sku_row:
+                sku_real = _resolver_sku_variante(conn, nv_variant_id, sku_row)
+                _sync_sku(conn, sku_real, nova_qty, agora,
+                          skip_vid=nv_variant_id, motivo="Vínculo via aba SKUs")
+    return jsonify({"ok": True, "id": vid, "nova_quantidade": nova_qty})
+
+
+@app.route("/api/manual-produtos/variantes/<int:vid>/desvincular", methods=["POST"])
+@login_required
+def api_manual_produtos_desvincular(vid):
+    """Remove o vínculo com a NuvemShop (o produto real e seu estoque
+    continuam existindo normalmente na aba "Produtos NuvemShop" — só some do
+    card do produto manual)."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, nv_variant_id FROM sku_stock WHERE id=? AND manual_produto_id IS NOT NULL", (vid,)
+        ).fetchone()
+        if not row:
+            return jsonify({"erro": "Variante não encontrada"}), 404
+        if row["nv_variant_id"] is None:
+            return jsonify({"erro": "Esta variante não é vinculada"}), 400
+        conn.execute("UPDATE sku_stock SET manual_produto_id=NULL WHERE id=?", (vid,))
     return jsonify({"ok": True})
 
 
