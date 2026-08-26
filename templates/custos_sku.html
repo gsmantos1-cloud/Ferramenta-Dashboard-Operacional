@@ -529,9 +529,10 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
-        <div style="background:rgba(88,166,255,.08);border:1px solid #58a6ff33;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:.78rem;color:var(--muted)">
+        <div style="background:rgba(88,166,255,.08);border:1px solid #58a6ff33;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:.78rem;color:var(--muted)">
           Depois de vincular, só existe <b>um número de estoque</b> pra essa variante — editável tanto aqui quanto na aba "Produtos NuvemShop".
         </div>
+        <div id="vincOrigemBanner" style="display:none;background:rgba(63,185,80,.08);border:1px solid #3fb95033;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:.78rem;color:var(--text)"></div>
 
         <label class="flabel">BUSCAR PRODUTO</label>
         <div style="position:relative">
@@ -548,7 +549,7 @@
 
         <div id="vincPasso3" style="display:none;margin-top:14px">
           <div class="small text-muted mb-1">Estoque atual dessa variante: <b id="vincEstoqueAtual">0</b></div>
-          <label class="flabel">QUANTIDADE (o que você definir aqui vira o estoque real)</label>
+          <label class="flabel" id="vincQtyLabel">QUANTIDADE (o que você definir aqui vira o estoque real)</label>
           <input type="number" min="0" id="vincQty" class="form-control form-control-sm" style="width:120px">
         </div>
 
@@ -2941,6 +2942,8 @@ function renderVariantesManual(p) {
         const btnAcao = vinculada
             ? `<button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="desvincularVariante(${v.id},${p.id})" title="Desvincular (o produto e o estoque da nuvem continuam existindo, só sai deste card)"><i class="bi bi-link-45deg"></i></button>`
             : `<button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="removerVarianteManual(${v.id},${p.id})" title="Remover variante"><i class="bi bi-trash"></i></button>`;
+        const btnVincLinha = vinculada ? '' :
+            `<button class="btn btn-sm btn-outline-primary py-0 px-2" onclick="abrirVincular(${p.id},${v.id})" title="Vincular esta variante a um produto real da NuvemShop"><i class="bi bi-link-45deg"></i></button>`;
 
         return `<tr>
             <td>${celTam}</td>
@@ -2950,6 +2953,7 @@ function renderVariantesManual(p) {
                        onchange="salvarCampoVariante(${v.id},${p.id},'quantidade',this.value)"></td>
             <td class="d-flex gap-1">
                 <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="duplicarVarianteManual(${v.id},${p.id})" title="Duplicar (copia os dados para o formulário abaixo)"><i class="bi bi-files"></i></button>
+                ${btnVincLinha}
                 ${btnAcao}
             </td>
         </tr>`;
@@ -3071,12 +3075,28 @@ async function carregarManualProdutosSilencioso() {
 }
 
 // ── Vincular variante da NuvemShop a um produto manual ──────────────────────
-let vincProdutoId = null;   // id do produto manual sendo vinculado
-let vincEscolhido = null;   // {nv_product_id, nv_variant_id, produto_nome, variante_label, tamanho, cor, sku, estoqueAtual}
+let vincProdutoId  = null;   // id do produto manual sendo vinculado
+let vincOrigemVar  = null;   // {id, tamanho, cor, sku, quantity} — variante JÁ criada sendo convertida (ou null)
+let vincEscolhido  = null;   // {nv_product_id, nv_variant_id, produto_nome, variante_label, tamanho, cor, sku, estoqueAtual}
 
-function abrirVincular(pid) {
+// pid = produto manual. vid (opcional) = id de uma variante já criada nesse
+// produto que está sendo CONVERTIDA (a quantidade/SKU dela continuam valendo).
+function abrirVincular(pid, vid) {
     vincProdutoId = pid;
     vincEscolhido = null;
+    vincOrigemVar = null;
+    if (vid != null) {
+        const p = manualProdutos.find(x => x.id === pid);
+        vincOrigemVar = p && (p.variantes || []).find(x => x.id === vid) || null;
+    }
+    const banner = document.getElementById('vincOrigemBanner');
+    if (vincOrigemVar) {
+        const desc = [vincOrigemVar.tamanho, vincOrigemVar.cor].filter(Boolean).join(' — ') || vincOrigemVar.sku;
+        banner.innerHTML = `Vinculando a variante <b>${escHtml(desc)}</b> (SKU ${escHtml(vincOrigemVar.sku||'—')} · ${vincOrigemVar.quantity||0} un). Sua quantidade e SKU continuam valendo — só a descrição do produto passa a vir da NuvemShop.`;
+        banner.style.display = '';
+    } else {
+        banner.style.display = 'none';
+    }
     document.getElementById('vincBusca').value = '';
     document.getElementById('vincDropdown').innerHTML = '';
     document.getElementById('vincPasso2').style.display = 'none';
@@ -3147,7 +3167,16 @@ function vincEscolherVariante(prodId, varId) {
 
     document.getElementById('vincPasso3').style.display = '';
     document.getElementById('vincEstoqueAtual').textContent = vincEscolhido.estoqueAtual;
-    document.getElementById('vincQty').value = vincEscolhido.estoqueAtual;
+    // Se está convertendo uma variante já criada, a quantidade DELA é quem manda
+    // (só mostra o estoque atual da nuvem como referência, não como padrão).
+    const qtdLabel = document.getElementById('vincQtyLabel');
+    if (vincOrigemVar) {
+        document.getElementById('vincQty').value = vincOrigemVar.quantity || 0;
+        qtdLabel.textContent = 'Quantidade (a sua, do SKU — o que estava na nuvem não é usado)';
+    } else {
+        document.getElementById('vincQty').value = vincEscolhido.estoqueAtual;
+        qtdLabel.textContent = 'Quantidade (o que você definir aqui vira o estoque real)';
+    }
     document.getElementById('btnConfirmarVincular').style.display = '';
 }
 
@@ -3161,7 +3190,8 @@ async function confirmarVincular() {
     try {
         const r = await fetch(`/api/manual-produtos/${vincProdutoId}/vincular`, {
             method: 'POST', headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ ...vincEscolhido, quantidade: qty }),
+            body: JSON.stringify({ ...vincEscolhido, quantidade: qty,
+                                    origem_variante_id: vincOrigemVar ? vincOrigemVar.id : null }),
         });
         const j = await r.json();
         if (!r.ok) { erroEl.textContent = j.erro || 'Erro ao vincular.'; return; }

@@ -4126,12 +4126,20 @@ def api_manual_produtos_deletar_variante(vid):
 @app.route("/api/manual-produtos/<int:pid>/vincular", methods=["POST"])
 @login_required
 def api_manual_produtos_vincular(pid):
-    """Vincula este produto manual a uma variante REAL da NuvemShop.
+    """Vincula uma variante REAL da NuvemShop a este produto manual.
 
-    A partir daqui existe UM ÚNICO número de estoque para essa variante — a
-    mesma linha do banco é lida e editada tanto pela aba "Produtos NuvemShop"
-    quanto pela aba "SKUs". Não existe um "estoque da nuvem" escondido por trás:
-    o que for definido aqui (ou na outra aba) É o estoque real, sempre."""
+    Duas formas de chamar:
+    1) origem_variante_id preenchido: CONVERTE uma variante já criada na mão
+       (ex.: você digitou P/M/G/GG com suas próprias quantidades e SKUs) — a
+       quantidade e o SKU que você já definiu CONTINUAM valendo; só a descrição
+       (produto/tamanho/cor) passa a refletir o produto real da NuvemShop.
+    2) sem origem_variante_id: vincula direto pelo produto real (buscar e
+       escolher), sem partir de uma variante já digitada.
+
+    De qualquer forma, a partir daqui existe UM ÚNICO número de estoque para
+    essa variante — a mesma linha é lida/editada pela aba "Produtos NuvemShop"
+    e pela aba "SKUs". Isso é o que permite o desconto automático em vendas
+    (quando ativo) já funcionar sozinho para essa variante, sem código extra."""
     d = request.get_json() or {}
     try:
         nv_variant_id = int(d.get("nv_variant_id"))
@@ -4142,7 +4150,11 @@ def api_manual_produtos_vincular(pid):
     variante_label = (d.get("variante_label") or "").strip() or None
     tamanho        = (d.get("tamanho") or "").strip().upper() or None
     cor            = (d.get("cor") or "").strip() or None
-    sku            = (d.get("sku") or "").strip() or None
+    sku_nuvem      = (d.get("sku") or "").strip() or None
+    try:
+        origem_variante_id = int(d.get("origem_variante_id")) if d.get("origem_variante_id") else None
+    except (TypeError, ValueError):
+        origem_variante_id = None
     try:
         quantidade = d.get("quantidade")
         quantidade = max(int(quantidade), 0) if quantidade is not None else None
@@ -4151,48 +4163,67 @@ def api_manual_produtos_vincular(pid):
 
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_conn() as conn:
-        prod = conn.execute("SELECT id FROM manual_produtos WHERE id=?", (pid,)).fetchone()
-        if not prod:
+        if not conn.execute("SELECT id FROM manual_produtos WHERE id=?", (pid,)).fetchone():
             return jsonify({"erro": "Produto não encontrado"}), 404
 
-        row = conn.execute("SELECT * FROM sku_stock WHERE nv_variant_id=?", (nv_variant_id,)).fetchone()
-        if row and row["manual_produto_id"] and row["manual_produto_id"] != pid:
+        origem_row = None
+        if origem_variante_id:
+            origem_row = conn.execute(
+                """SELECT * FROM sku_stock WHERE id=? AND manual_produto_id=?
+                   AND nv_variant_id IS NULL""",
+                (origem_variante_id, pid)
+            ).fetchone()
+            if not origem_row:
+                return jsonify({"erro": "Variante de origem não encontrada (ou já vinculada)"}), 404
+
+        existente = conn.execute("SELECT * FROM sku_stock WHERE nv_variant_id=?", (nv_variant_id,)).fetchone()
+        if existente and existente["manual_produto_id"] and existente["manual_produto_id"] != pid:
             return jsonify({"erro": "Essa variante já está vinculada a outro produto na aba SKUs"}), 400
 
-        if row:
-            vid = row["id"]
-            anterior = row["quantity"] or 0
-            nova_qty = quantidade if quantidade is not None else anterior
+        # Linha "base": dona da quantidade/SKU que devem prevalecer. Se vier de
+        # uma conversão (origem_row), ela manda; senão, uma linha já existente
+        # para essa variante real; senão, cria do zero. Se as duas (origem_row
+        # e existente) existirem ao mesmo tempo, viram uma linha só.
+        base      = origem_row or existente
+        descartar = existente["id"] if (origem_row and existente and existente["id"] != origem_row["id"]) else None
+
+        anterior_qty = (base["quantity"] or 0) if base else 0
+        nova_qty     = quantidade if quantidade is not None else anterior_qty
+        sku_final    = (base["sku"] if base and base["sku"] else None) or sku_nuvem
+
+        if descartar:
+            conn.execute("DELETE FROM sku_stock WHERE id=?", (descartar,))
+
+        if base:
             conn.execute(
-                """UPDATE sku_stock SET manual_produto_id=?, origem='vinculado',
-                   quantity=?, updated_at=? WHERE id=?""",
-                (pid, nova_qty, agora, vid)
+                """UPDATE sku_stock SET nv_variant_id=?, nv_product_id=?, produto_nome=?,
+                   variante_label=?, tamanho=?, cor=?, sku=?, quantity=?, manual_produto_id=?,
+                   origem='vinculado', updated_at=? WHERE id=?""",
+                (nv_variant_id, nv_product_id, produto_nome, variante_label, tamanho, cor,
+                 sku_final, nova_qty, pid, agora, base["id"])
             )
-            sku_row = row["sku"]
+            vid = base["id"]
         else:
-            anterior = 0
-            nova_qty = quantidade if quantidade is not None else 0
             cur = conn.execute(
                 """INSERT INTO sku_stock
                    (nv_variant_id, nv_product_id, sku, quantity, produto_nome, variante_label,
                     tamanho, cor, manual_produto_id, origem, updated_at)
                    VALUES (?,?,?,?,?,?,?,?,?,'vinculado',?)""",
-                (nv_variant_id, nv_product_id, sku, nova_qty, produto_nome,
+                (nv_variant_id, nv_product_id, sku_final, nova_qty, produto_nome,
                  variante_label, tamanho, cor, pid, agora)
             )
             vid = cur.lastrowid
-            sku_row = sku
 
-        delta = nova_qty - anterior
+        delta = nova_qty - anterior_qty
         if delta != 0:
             tipo = "entrada" if delta > 0 else "saida_manual"
             conn.execute(
                 """INSERT INTO sku_stock_movements (nv_variant_id, sku, tipo, quantidade, observacao, created_at)
                    VALUES (?,?,?,?,?,?)""",
-                (nv_variant_id, sku_row, tipo, abs(delta), "Vínculo manual — produto SKU", agora)
+                (nv_variant_id, sku_final, tipo, abs(delta), "Vínculo manual — produto SKU", agora)
             )
-            if sku_row:
-                sku_real = _resolver_sku_variante(conn, nv_variant_id, sku_row)
+            if sku_final:
+                sku_real = _resolver_sku_variante(conn, nv_variant_id, sku_final)
                 _sync_sku(conn, sku_real, nova_qty, agora,
                           skip_vid=nv_variant_id, motivo="Vínculo via aba SKUs")
     return jsonify({"ok": True, "id": vid, "nova_quantidade": nova_qty})
