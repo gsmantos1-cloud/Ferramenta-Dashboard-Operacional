@@ -2927,17 +2927,14 @@ function renderVariantesManual(p) {
         const cor = (v.quantity||0) <= 0 ? '#f85149' : (v.quantity <= (v.min_quantity||3) ? '#f0883e' : '#3fb950');
         const vinculada = v.nv_variant_id != null;
 
-        const celTam = vinculada
-            ? `<span class="fw-bold">${escHtml(v.tamanho||'—')}</span>`
-            : `<input type="text" class="form-control form-control-sm" value="${escHtml(v.tamanho||'')}" style="width:80px" onchange="salvarCampoVariante(${v.id},${p.id},'tamanho',this.value)">`;
-        const celCor = vinculada
-            ? escHtml(v.cor||'—')
-            : `<input type="text" class="form-control form-control-sm" value="${escHtml(v.cor||'')}" style="width:100px" onchange="salvarCampoVariante(${v.id},${p.id},'cor',this.value)">`;
-        const celSku = vinculada
-            ? `<span style="font-family:monospace;font-size:.78rem">${escHtml(v.sku||'—')}</span>`
-            : `<input type="text" class="form-control form-control-sm" value="${escHtml(v.sku||'')}" style="width:140px;font-family:monospace;font-size:.78rem" onchange="salvarCampoVariante(${v.id},${p.id},'sku',this.value)">`;
+        // Tudo editável por aqui — inclusive nas vinculadas (a aba SKUs é o
+        // centro de controle). O vínculo é pelo ID da variante, não pelo texto,
+        // então editar tamanho/cor/sku não quebra a ligação com o produto real.
+        const celTam = `<input type="text" class="form-control form-control-sm" value="${escHtml(v.tamanho||'')}" style="width:80px" onchange="salvarCampoVariante(${v.id},${p.id},'tamanho',this.value)">`;
+        const celCor = `<input type="text" class="form-control form-control-sm" value="${escHtml(v.cor||'')}" style="width:100px" onchange="salvarCampoVariante(${v.id},${p.id},'cor',this.value)">`;
+        const celSku = `<input type="text" class="form-control form-control-sm" value="${escHtml(v.sku||'')}" style="width:140px;font-family:monospace;font-size:.78rem" onchange="salvarCampoVariante(${v.id},${p.id},'sku',this.value)">`;
         const badgeVinc = vinculada
-            ? `<span title="Vinculada à NuvemShop — este é o estoque real do produto" style="font-size:.62rem;background:rgba(88,166,255,.15);color:#58a6ff;border-radius:4px;padding:1px 6px;margin-left:4px;white-space:nowrap"><i class="bi bi-link-45deg"></i> nuvem</span>`
+            ? `<span title="Vinculada à NuvemShop — o estoque é o mesmo real do produto (o texto de tamanho/cor na aba 'Produtos NuvemShop' vem do catálogo da loja e não muda por aqui)" style="font-size:.62rem;background:rgba(88,166,255,.15);color:#58a6ff;border-radius:4px;padding:1px 6px;margin-left:4px;white-space:nowrap"><i class="bi bi-link-45deg"></i> nuvem</span>`
             : '';
         const btnAcao = vinculada
             ? `<button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="desvincularVariante(${v.id},${p.id})" title="Desvincular (o produto e o estoque da nuvem continuam existindo, só sai deste card)"><i class="bi bi-link-45deg"></i></button>`

@@ -4043,14 +4043,16 @@ def api_manual_produtos_add_variante(pid):
 @app.route("/api/manual-produtos/variantes/<int:vid>", methods=["PUT"])
 @login_required
 def api_manual_produtos_editar_variante(vid):
-    """Edita uma variante manual (tamanho/cor/sku/quantidade). Mudança de
-    quantidade vira ENTRADA/SAÍDA pela diferença, igual à edição direta da
-    aba de produtos da NuvemShop — entra certinho no relatório.
+    """Edita uma variante manual (tamanho/cor/sku/quantidade) — SEMPRE editável
+    por aqui, mesmo quando VINCULADA a um produto real da NuvemShop: a aba SKUs
+    é o centro de controle. Mudança de quantidade vira ENTRADA/SAÍDA pela
+    diferença, igual à edição direta da aba de produtos da NuvemShop.
 
-    Se a variante estiver VINCULADA a um produto real da NuvemShop
-    (nv_variant_id preenchido), tamanho/cor/sku pertencem ao produto real e
-    NÃO são editáveis por aqui — só a quantidade (que é o mesmo número usado
-    pela aba 'Produtos NuvemShop': não existe um "estoque da nuvem" à parte)."""
+    Importante: o texto de tamanho/cor mostrado na aba "Produtos NuvemShop"
+    para essa mesma variante vem do catálogo real da loja — não há como
+    reescrevê-lo por aqui (o sistema só LÊ produtos da NuvemShop, não edita).
+    O vínculo em si não depende desse texto: é feito pelo ID da variante, então
+    editar tamanho/cor/sku aqui não quebra a ligação nem o desconto por venda."""
     d = request.get_json() or {}
     with get_conn() as conn:
         row = conn.execute(
@@ -4060,17 +4062,14 @@ def api_manual_produtos_editar_variante(vid):
             return jsonify({"erro": "Variante não encontrada"}), 404
 
         vinculada = row["nv_variant_id"] is not None
-        if vinculada:
-            tamanho, cor, sku = (row["tamanho"] or ""), (row["cor"] or ""), (row["sku"] or "")
-        else:
-            tamanho = (d.get("tamanho") if "tamanho" in d else row["tamanho"]) or ""
-            cor     = (d.get("cor")     if "cor"     in d else row["cor"])     or ""
-            sku     = (d.get("sku")     if "sku"     in d else row["sku"])    or ""
-            tamanho, cor, sku = tamanho.strip().upper(), cor.strip(), sku.strip()
-            if not sku:
-                return jsonify({"erro": "Informe o código de SKU da variante"}), 400
-            if not tamanho and not cor:
-                return jsonify({"erro": "Informe ao menos o tamanho ou a cor"}), 400
+        tamanho = (d.get("tamanho") if "tamanho" in d else row["tamanho"]) or ""
+        cor     = (d.get("cor")     if "cor"     in d else row["cor"])     or ""
+        sku     = (d.get("sku")     if "sku"     in d else row["sku"])    or ""
+        tamanho, cor, sku = tamanho.strip().upper(), cor.strip(), sku.strip()
+        if not sku:
+            return jsonify({"erro": "Informe o código de SKU da variante"}), 400
+        if not tamanho and not cor:
+            return jsonify({"erro": "Informe ao menos o tamanho ou a cor"}), 400
         label = ", ".join([p for p in (tamanho, cor) if p])
 
         agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
