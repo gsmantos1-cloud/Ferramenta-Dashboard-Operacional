@@ -3283,6 +3283,20 @@ def _resolver_sku_variante(conn, nv_variant_id, sku=None):
     return None
 
 
+def _atualizar_sku_costs_texto(conn, nv_variant_id, sku):
+    """Mantém o SKU exibido na aba 'Produtos NuvemShop' (que vem da tabela
+    sku_costs, não de sku_stock) igual ao que foi definido na aba SKUs para a
+    mesma variante vinculada. Só ATUALIZA um custo vigente já existente — nunca
+    cria um novo do zero, para não fazer aparecer 'R$ 0,00' onde antes não
+    havia custo nenhum cadastrado."""
+    if not nv_variant_id or not sku:
+        return
+    conn.execute(
+        "UPDATE sku_costs SET sku=? WHERE nv_variant_id=? AND effective_to IS NULL",
+        (sku, nv_variant_id)
+    )
+
+
 def _sync_sku(conn, sku, nova_qty, agora, skip_vid=None,
               motivo="Unificação por SKU", pedido_nr=None):
     """UNIFICA o estoque por SKU (a pedido do usuário: trabalhar por SKU).
@@ -4087,6 +4101,10 @@ def api_manual_produtos_editar_variante(vid):
                quantity=?, updated_at=? WHERE id=?""",
             (tamanho or None, cor or None, sku, label, nova_qty, agora, vid)
         )
+        if vinculada:
+            # Mantém o SKU igual na aba "Produtos NuvemShop" (que lê de sku_costs,
+            # tabela diferente de sku_stock) — só atualiza custo já existente.
+            _atualizar_sku_costs_texto(conn, row["nv_variant_id"], sku)
         delta = nova_qty - anterior
         if delta != 0:
             tipo = "entrada" if delta > 0 else "saida_manual"
@@ -4213,6 +4231,11 @@ def api_manual_produtos_vincular(pid):
             )
             vid = cur.lastrowid
 
+        if sku_final:
+            # Mantém o SKU igual na aba "Produtos NuvemShop" (que lê de sku_costs,
+            # tabela diferente de sku_stock) — só atualiza custo já existente.
+            _atualizar_sku_costs_texto(conn, nv_variant_id, sku_final)
+
         delta = nova_qty - anterior_qty
         if delta != 0:
             tipo = "entrada" if delta > 0 else "saida_manual"
@@ -4221,10 +4244,9 @@ def api_manual_produtos_vincular(pid):
                    VALUES (?,?,?,?,?,?)""",
                 (nv_variant_id, sku_final, tipo, abs(delta), "Vínculo manual — produto SKU", agora)
             )
-            if sku_final:
-                sku_real = _resolver_sku_variante(conn, nv_variant_id, sku_final)
-                _sync_sku(conn, sku_real, nova_qty, agora,
-                          skip_vid=nv_variant_id, motivo="Vínculo via aba SKUs")
+            sku_real = _resolver_sku_variante(conn, nv_variant_id, sku_final)
+            _sync_sku(conn, sku_real, nova_qty, agora,
+                      skip_vid=nv_variant_id, motivo="Vínculo via aba SKUs")
     return jsonify({"ok": True, "id": vid, "nova_quantidade": nova_qty})
 
 
