@@ -3813,6 +3813,23 @@ def api_estoque_movimentos_relatorio():
             GROUP BY produto ORDER BY (entrou + saiu) DESC
         """, params).fetchall()
 
+        # Detalhe de cada SAÍDA individual (data/hora, produto, variante,
+        # quantidade e qual pedido) — pra saber exatamente de onde saiu cada
+        # peça, não só o total do dia. Máx. 300 linhas (mesma janela de datas).
+        detalhe_saidas = conn.execute(f"""
+            SELECT m.created_at, m.quantidade, m.tipo, m.pedido_numero, m.observacao,
+                   COALESCE(s.produto_nome, m.sku, 'Sem nome') AS produto,
+                   s.variante_label
+            FROM sku_stock_movements m
+            LEFT JOIN sku_stock s
+                ON (m.nv_variant_id IS NOT NULL AND s.nv_variant_id = m.nv_variant_id)
+                OR (m.nv_variant_id IS NULL AND m.sku IS NOT NULL AND m.sku != ''
+                    AND s.sku = m.sku AND s.nv_variant_id IS NULL)
+            WHERE m.created_at >= ? AND m.created_at <= ? AND {OUT}{cond_prod}
+            ORDER BY m.created_at DESC
+            LIMIT 300
+        """, params).fetchall()
+
     dias  = [dict(r) for r in por_dia]
     prods = [dict(r) for r in por_produto if (r["entrou"] or 0) or (r["saiu"] or 0)]
     return jsonify({
@@ -3821,6 +3838,7 @@ def api_estoque_movimentos_relatorio():
         "total_saiu":   sum(d["saiu"]   or 0 for d in dias),
         "por_dia": dias,
         "por_produto": prods,
+        "detalhe_saidas": [dict(r) for r in detalhe_saidas],
     })
 
 
