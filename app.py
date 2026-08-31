@@ -3283,18 +3283,28 @@ def _resolver_sku_variante(conn, nv_variant_id, sku=None):
     return None
 
 
-def _atualizar_sku_costs_texto(conn, nv_variant_id, sku):
+def _atualizar_sku_costs_texto(conn, nv_variant_id, sku, nome=None):
     """Mantém o SKU exibido na aba 'Produtos NuvemShop' (que vem da tabela
     sku_costs, não de sku_stock) igual ao que foi definido na aba SKUs para a
-    mesma variante vinculada. Só ATUALIZA um custo vigente já existente — nunca
-    cria um novo do zero, para não fazer aparecer 'R$ 0,00' onde antes não
-    havia custo nenhum cadastrado."""
+    mesma variante vinculada. Se já existir um custo vigente, só atualiza o
+    texto do SKU (não mexe no valor do custo). Se NÃO existir nenhum custo
+    cadastrado ainda, cria um registro com custo R$ 0,00 — só para o SKU
+    aparecer; o usuário preenche o custo real depois se quiser, na aba
+    'Produtos NuvemShop'."""
     if not nv_variant_id or not sku:
         return
-    conn.execute(
-        "UPDATE sku_costs SET sku=? WHERE nv_variant_id=? AND effective_to IS NULL",
-        (sku, nv_variant_id)
-    )
+    existe = conn.execute(
+        "SELECT id FROM sku_costs WHERE nv_variant_id=? AND effective_to IS NULL",
+        (nv_variant_id,)
+    ).fetchone()
+    if existe:
+        conn.execute("UPDATE sku_costs SET sku=? WHERE id=?", (sku, existe["id"]))
+    else:
+        conn.execute(
+            """INSERT INTO sku_costs (sku, name, type, cost, effective_from, nv_variant_id)
+               VALUES (?, ?, 'product', 0, date('now','localtime'), ?)""",
+            (sku, nome, nv_variant_id)
+        )
 
 
 def _sync_sku(conn, sku, nova_qty, agora, skip_vid=None,
@@ -4103,8 +4113,8 @@ def api_manual_produtos_editar_variante(vid):
         )
         if vinculada:
             # Mantém o SKU igual na aba "Produtos NuvemShop" (que lê de sku_costs,
-            # tabela diferente de sku_stock) — só atualiza custo já existente.
-            _atualizar_sku_costs_texto(conn, row["nv_variant_id"], sku)
+            # tabela diferente de sku_stock) — cria/atualiza o registro de custo.
+            _atualizar_sku_costs_texto(conn, row["nv_variant_id"], sku, nome=row["produto_nome"])
         delta = nova_qty - anterior
         if delta != 0:
             tipo = "entrada" if delta > 0 else "saida_manual"
@@ -4233,8 +4243,8 @@ def api_manual_produtos_vincular(pid):
 
         if sku_final:
             # Mantém o SKU igual na aba "Produtos NuvemShop" (que lê de sku_costs,
-            # tabela diferente de sku_stock) — só atualiza custo já existente.
-            _atualizar_sku_costs_texto(conn, nv_variant_id, sku_final)
+            # tabela diferente de sku_stock) — cria/atualiza o registro de custo.
+            _atualizar_sku_costs_texto(conn, nv_variant_id, sku_final, nome=produto_nome)
 
         delta = nova_qty - anterior_qty
         if delta != 0:
