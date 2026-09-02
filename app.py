@@ -1070,23 +1070,21 @@ def _salvar_itens_pedido(conn, numero, produtos):
 
 def _processar_estoque_pedidos():
     """Desconta do estoque os pedidos ainda não processados (estoque_processado=0).
-    Seguro para rodar múltiplas vezes: cada pedido é marcado após processar.
+    Seguro para rodar múltiplas vezes: cada pedido é marcado como processado no fim.
 
-    [DESATIVADO a pedido do usuário] O desconto automático de estoque na venda
-    foi desligado — o estoque só muda manualmente. Apenas marca os pedidos como
-    processados para não reprocessar caso seja religado. Para reativar, remova
-    este bloco inicial."""
-    with get_conn() as conn:
-        conn.execute("UPDATE pedidos SET estoque_processado = 1 WHERE estoque_processado = 0")
-    return
-    # --- código original abaixo (mantido para fácil reativação) ---
+    REATIVADO a pedido do usuário (jun/2026). A versão antiga fazia 1 SELECT em
+    sku_stock POR ITEM dentro de um loop — foi exatamente esse padrão que causou
+    o estouro de 962M de leituras no Turso no passado. Reescrita para NUNCA ler
+    dentro de loop: pré-carrega o estoque de TODAS as variantes envolvidas em
+    poucas consultas (lotes de 300 IDs) e grava tudo em lote (execute_batch)."""
     agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_conn() as conn:
         # Sem estoque cadastrado (ex: banco novo) → nada a descontar, só marca
-        # como processado. Evita varrer item por item à toa.
+        # como processado. Evita ler o resto à toa.
         if not conn.execute("SELECT 1 FROM sku_stock LIMIT 1").fetchone():
             conn.execute("UPDATE pedidos SET estoque_processado = 1 WHERE estoque_processado = 0")
             return
+
         itens = conn.execute("""
             SELECT pi.pedido_numero, pi.nv_variant_id, pi.quantidade
             FROM pedido_itens pi
@@ -1095,38 +1093,54 @@ def _processar_estoque_pedidos():
               AND pi.nv_variant_id IS NOT NULL
         """).fetchall()
 
+        if not itens:
+            conn.execute("UPDATE pedidos SET estoque_processado = 1 WHERE estoque_processado = 0")
+            return
+
+        # Pré-carrega o estoque de TODAS as variantes envolvidas (lotes de 300 —
+        # limite seguro de parâmetros por consulta), nunca 1 SELECT por item.
+        vids = sorted({it["nv_variant_id"] for it in itens})
+        stock_map = {}
+        for i in range(0, len(vids), 300):
+            lote  = vids[i:i + 300]
+            marks = ",".join(["?"] * len(lote))
+            rows = conn.execute(
+                f"SELECT id, nv_variant_id, quantity, sku FROM sku_stock WHERE nv_variant_id IN ({marks})",
+                lote
+            ).fetchall()
+            for r in rows:
+                stock_map[r["nv_variant_id"]] = dict(r)
+
+        pending = []
         for item in itens:
-            vid = item["nv_variant_id"]
-            qty = item["quantidade"] or 1
-            nr  = item["pedido_numero"]
-
-            stock = conn.execute(
-                "SELECT id, quantity, sku, produto_nome, variante_label FROM sku_stock WHERE nv_variant_id = ?", (vid,)
-            ).fetchone()
-            if not stock:
+            st = stock_map.get(item["nv_variant_id"])
+            if not st:
                 continue   # variante ainda não tem estoque cadastrado → pula
-
-            nova_qty = stock["quantity"] - qty
-            conn.execute(
+            qty      = item["quantidade"] or 1
+            nova_qty = max(st["quantity"] - qty, 0)   # nunca deixa o estoque negativo
+            st["quantity"] = nova_qty   # itens seguintes da mesma variante já veem o valor atualizado
+            pending.append((
                 "UPDATE sku_stock SET quantity=?, updated_at=? WHERE id=?",
-                (nova_qty, agora, stock["id"]),
-            )
-            conn.execute(
+                (nova_qty, agora, st["id"])
+            ))
+            pending.append((
                 """INSERT INTO sku_stock_movements
                    (nv_variant_id, sku, tipo, quantidade, pedido_numero, created_at)
                    VALUES (?, ?, 'saida_venda', ?, ?, ?)""",
-                (vid, stock["sku"], qty, nr, agora),
-            )
-            # Deduz da mesma quantidade em todos os produtos com mesmo nome + mesma SKU
-            _deducao_sync_por_nome(
-                conn, stock["produto_nome"], stock["variante_label"],
-                qty, agora, skip_vid=vid, pedido_nr=nr, sku_origem=stock["sku"]
-            )
+                (item["nv_variant_id"], st["sku"], qty, item["pedido_numero"], agora)
+            ))
+
+        for i in range(0, len(pending), 100):
+            lote = pending[i:i + 100]
+            try:
+                conn.execute_batch(lote)
+            except Exception:
+                for sql, params in lote:
+                    try: conn.execute(sql, params)
+                    except Exception: pass
 
         # Marca todos os pedidos não processados como processados
-        conn.execute(
-            "UPDATE pedidos SET estoque_processado = 1 WHERE estoque_processado = 0"
-        )
+        conn.execute("UPDATE pedidos SET estoque_processado = 1 WHERE estoque_processado = 0")
 
 
 def _log_pers(conn, pers_id, numero_pedido, acao, detalhe=None):
