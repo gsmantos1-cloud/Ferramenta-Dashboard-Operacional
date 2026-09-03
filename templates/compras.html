@@ -46,6 +46,11 @@
     <button class="btn btn-sm btn-outline-secondary" onclick="setPeriodo('semana')">Esta semana</button>
     <button class="btn btn-sm btn-outline-secondary" onclick="setPeriodo('mes')">Este mês</button>
     <button class="btn btn-sm btn-outline-secondary" onclick="setPeriodo('tudo')">Tudo</button>
+    <button class="btn btn-sm" id="btnPdfCompras" onclick="gerarRelatorioComprasPdf()"
+            title="PDF com: cada mês do período selecionado acima + últimos 15 dias + últimos 7 dias, com foto, nome, SKU e tamanhos"
+            style="background:rgba(63,185,80,.12);border:1px solid #3fb95044;color:#3fb950;margin-left:auto">
+      <i class="bi bi-file-earmark-pdf me-1"></i>Relatório PDF completo
+    </button>
   </div>
 
   <!-- Lista de compras -->
@@ -236,6 +241,44 @@
   </div>
 </div>
 
+<!-- Área de impressão do relatório PDF de compras (some da tela, só aparece na impressão) -->
+<div id="pdfAreaCompras"></div>
+<style>
+#pdfAreaCompras { display:none; }
+@media print {
+  body * { visibility:hidden !important; }
+  #pdfAreaCompras, #pdfAreaCompras * { visibility:visible !important; }
+  #pdfAreaCompras { display:block !important; position:absolute; left:0; top:0; width:100%;
+    background:#fff; color:#000; font-family:Arial,Helvetica,sans-serif; }
+  @page { size:A4 portrait; margin:10mm; }
+}
+.pc-header { display:flex; justify-content:space-between; align-items:flex-start;
+  border-bottom:2px solid #1a3a5c; padding-bottom:8px; margin-bottom:14px; }
+.pc-marca { font-size:20px; font-weight:800; color:#1a3a5c; }
+.pc-sub { font-size:12px; color:#555; }
+.pc-total { font-size:16px; font-weight:800; color:#1a3a5c; text-align:right; }
+.pc-secao { page-break-before:always; break-before:page; }
+.pc-header + .pc-secao { page-break-before:auto; break-before:auto; }
+.pc-secao-titulo { font-size:15px; font-weight:800; color:#fff; background:#1a3a5c;
+  padding:8px 12px; border-radius:6px; margin:0 0 4px; }
+.pc-secao-resumo { font-size:12px; color:#444; margin-bottom:10px; padding:0 2px; }
+.pc-card { display:flex; gap:12px; align-items:flex-start; border:1px solid #e2e2e2;
+  border-radius:8px; padding:10px; margin-bottom:8px; page-break-inside:avoid; }
+.pc-img { width:64px; height:64px; object-fit:cover; border-radius:6px; border:1px solid #ccc; flex-shrink:0; }
+.pc-noimg { width:64px; height:64px; border:1px dashed #ccc; border-radius:6px; display:flex;
+  align-items:center; justify-content:center; color:#bbb; font-size:22px; flex-shrink:0; }
+.pc-nome { font-size:13px; font-weight:800; color:#1a3a5c; }
+.pc-meta { font-size:10.5px; color:#666; margin-top:1px; }
+.pc-tbl { border-collapse:collapse; margin-top:5px; width:100%; max-width:320px; }
+.pc-tbl th { background:#eef1f4; font-size:9.5px; text-transform:uppercase; letter-spacing:.03em;
+  padding:3px 7px; text-align:left; color:#444; }
+.pc-tbl td { border-bottom:1px solid #eee; padding:3px 7px; font-size:11px; color:#000; }
+.pc-tbl tr:last-child td { border-bottom:none; }
+.pc-vazio { color:#888; font-size:12px; text-align:center; padding:14px; border:1px dashed #ddd;
+  border-radius:6px; margin-bottom:10px; }
+.pc-rodape { margin-top:16px; font-size:9.5px; color:#999; text-align:center; }
+</style>
+
 <!-- Lightbox: imagem da camisa ampliada -->
 <div id="compraLightbox" onclick="fecharImgCompra()"
      style="display:none;position:fixed;inset:0;z-index:20000;background:rgba(0,0,0,.85);
@@ -308,6 +351,175 @@ function fmtMes(s) {
   const [y,m] = s.split('-');
   const nomes = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
   return `${nomes[parseInt(m)-1]}/${y}`;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  RELATÓRIO PDF COMPLETO — cada mês do período selecionado + últimos 15/7 dias
+// ══════════════════════════════════════════════════════════════════════════════
+function _ymdLocalCompras(dt) { const z = new Date(dt.getTime() - dt.getTimezoneOffset()*60000); return z.toISOString().slice(0,10); }
+
+// Acha a imagem e o SKU (por tamanho) de uma compra, cruzando com o catálogo
+// já carregado (mesma logica de preencherImagensProdutos/selecionarProduto).
+function _catalogoDaCompra(c) {
+  if (!catalogoProdutos || !catalogoProdutos.length) return null;
+  if (c.nv_product_id != null) {
+    const p = catalogoProdutos.find(p => String(p.id) === String(c.nv_product_id));
+    if (p) return p;
+  }
+  return catalogoProdutos.find(p => normNomeProd(p.name) === normNomeProd(c.produto_nome)) || null;
+}
+function _skuDoTamanho(prod, tamanho) {
+  if (!prod) return '';
+  const tam = String(tamanho || '').trim().toUpperCase();
+  const v = (prod.variants || []).find(v => {
+    const label = (v.values || []).join(', ');
+    if (label.toLowerCase().includes('com personaliz')) return false;
+    return ((v.values || [])[0] || '').trim().toUpperCase() === tam;
+  });
+  return (v && v.sku) || '';
+}
+
+async function gerarRelatorioComprasPdf() {
+  const btn = document.getElementById('btnPdfCompras');
+  const txtOrig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Gerando...';
+  try {
+    await carregarCatalogo();   // garante fotos/SKUs do catálogo
+
+    const hoje = new Date();
+    const de15 = new Date(hoje); de15.setDate(hoje.getDate() - 14);
+    const de7  = new Date(hoje); de7.setDate(hoje.getDate() - 6);
+
+    // Segue as datas colocadas no filtro de período da tela; se estiver vazio,
+    // usa o mês atual como padrão.
+    let inicioSel = document.getElementById('filtroInicio').value;
+    let fimSel    = document.getElementById('filtroFim').value;
+    if (!inicioSel || !fimSel) {
+      const hj = _ymdLocalCompras(hoje);
+      inicioSel = inicioSel || hj.slice(0,8) + '01';
+      fimSel    = fimSel    || hj;
+    }
+
+    // Busca tudo numa janela só (evita 3 chamadas separadas ao servidor):
+    // do mais cedo entre [início selecionado, últimos 15 dias] até hoje.
+    const janelaInicio = [inicioSel, _ymdLocalCompras(de15)].sort()[0];
+    const janelaFim     = [fimSel, _ymdLocalCompras(hoje)].sort().slice(-1)[0];
+    const compras = await fetch(`/api/compras/registros?inicio=${janelaInicio}&fim=${janelaFim}`).then(r => r.json());
+    if (!Array.isArray(compras) || !compras.length) {
+      toast('Nenhuma compra encontrada no período.', false);
+      return;
+    }
+
+    // Meses cobertos pelo período SELECIONADO na tela (não a janela ampliada de busca)
+    const meses = [];
+    { let cursor = new Date(inicioSel + 'T12:00:00');
+      const fimD = new Date(fimSel + 'T12:00:00');
+      while (cursor <= fimD) {
+        const chave = _ymdLocalCompras(cursor).slice(0,7);
+        if (!meses.includes(chave)) meses.push(chave);
+        // dia=1 ANTES de avançar o mês — evita overflow (ex: dia 31 + 1 mês
+        // pularia fevereiro inteiro se o mês seguinte tiver menos dias)
+        cursor.setDate(1);
+        cursor.setMonth(cursor.getMonth() + 1);
+      }
+    }
+
+    const secoes = [];
+    meses.forEach(m => secoes.push({
+      titulo: fmtMes(m).toUpperCase(),
+      itens: compras.filter(c => (c.data || '').slice(0,7) === m),
+    }));
+    secoes.push({
+      titulo: 'ÚLTIMOS 15 DIAS',
+      itens: compras.filter(c => c.data >= _ymdLocalCompras(de15) && c.data <= _ymdLocalCompras(hoje)),
+    });
+    secoes.push({
+      titulo: 'ÚLTIMOS 7 DIAS',
+      itens: compras.filter(c => c.data >= _ymdLocalCompras(de7) && c.data <= _ymdLocalCompras(hoje)),
+    });
+
+    const area = document.getElementById('pdfAreaCompras');
+    area.innerHTML = buildRelatorioComprasHtml(secoes, inicioSel, fimSel);
+
+    const imgs = Array.from(area.querySelectorAll('img'));
+    await Promise.all(imgs.map(img => (img.complete && img.naturalWidth)
+        ? Promise.resolve()
+        : new Promise(res => { img.onload = img.onerror = res; setTimeout(res, 4000); })));
+
+    const tituloOrig = document.title;
+    document.title = `GS Mantos - Relatorio de Compras ${fmtData(inicioSel)} a ${fmtData(fimSel)}`;
+    window.print();
+    document.title = tituloOrig;
+    area.innerHTML = '';
+  } catch (e) {
+    toast('Erro ao gerar o PDF.', false);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = txtOrig;
+  }
+}
+
+function buildRelatorioComprasHtml(secoes, inicioSel, fimSel) {
+  const CAT_LABEL = { camisas: 'Camisa', brindes: 'Brindes', embalagens: 'Embalagens' };
+  const blocoSecao = (sec) => {
+    const totalPecas = sec.itens.reduce((s,c) => s + (c.total_qty||0), 0);
+    const totalValor = sec.itens.reduce((s,c) => s + (c.total_valor||0), 0);
+    const resumo = `<div class="pc-secao-resumo">${sec.itens.length} compra(s) · ${totalPecas} peça(s) · <b>${fmtBRL(totalValor)}</b></div>`;
+    if (!sec.itens.length) {
+      return `<div class="pc-secao"><div class="pc-secao-titulo">${escHtml(sec.titulo)}</div>${resumo}<div class="pc-vazio">Nenhuma compra neste período.</div></div>`;
+    }
+    const cards = sec.itens
+      .slice().sort((a,b) => (b.data||'').localeCompare(a.data||''))
+      .map(c => {
+        const prod = _catalogoDaCompra(c);
+        const imgUrl = prod && prod.imageUrl;
+        const imgCell = imgUrl
+          ? `<img class="pc-img" src="${escHtml(imgUrl)}">`
+          : `<div class="pc-noimg">&#128247;</div>`;
+        const catPill = c.categoria
+          ? `<span style="font-size:9.5px;background:#eef1f4;color:#444;border-radius:3px;padding:1px 6px;margin-left:5px">${escHtml(CAT_LABEL[c.categoria]||c.categoria)}</span>` : '';
+        const linhasTam = (c.tamanhos||[]).map(t => {
+          const sku = _skuDoTamanho(prod, t.tamanho);
+          const sub = (t.quantidade||0) * (c.preco_unit||0);
+          return `<tr>
+            <td style="font-weight:700">${escHtml(t.tamanho)}</td>
+            <td>${sku ? escHtml(sku) : '—'}</td>
+            <td style="text-align:center">${t.quantidade||0}</td>
+            <td style="text-align:right">${fmtBRL(sub)}</td>
+          </tr>`;
+        }).join('');
+        return `<div class="pc-card">
+          ${imgCell}
+          <div style="flex:1;min-width:0">
+            <div class="pc-nome">${escHtml(c.produto_nome)}${catPill}</div>
+            <div class="pc-meta">${fmtData(c.data)}${c.fornecedor ? ' · Fornecedor: '+escHtml(c.fornecedor) : ''} · Unit.: ${fmtBRL(c.preco_unit)}</div>
+            <table class="pc-tbl">
+              <thead><tr><th>Tam.</th><th>SKU</th><th style="text-align:center">Qtd</th><th style="text-align:right">Subtotal</th></tr></thead>
+              <tbody>${linhasTam || '<tr><td colspan="4" style="color:#999">Sem tamanhos registrados</td></tr>'}</tbody>
+            </table>
+          </div>
+          <div style="text-align:right;flex-shrink:0;min-width:70px">
+            <div style="font-size:9.5px;color:#888">TOTAL</div>
+            <div style="font-weight:800;color:#1a3a5c">${fmtBRL(c.total_valor)}</div>
+          </div>
+        </div>`;
+      }).join('');
+    return `<div class="pc-secao"><div class="pc-secao-titulo">${escHtml(sec.titulo)}</div>${resumo}${cards}</div>`;
+  };
+
+  const geralPecas = secoes.slice(0, secoes.length-2).reduce((s,sec)=>s+sec.itens.reduce((x,c)=>x+(c.total_qty||0),0),0);
+  const geralValor = secoes.slice(0, secoes.length-2).reduce((s,sec)=>s+sec.itens.reduce((x,c)=>x+(c.total_valor||0),0),0);
+
+  return `
+    <div class="pc-header">
+      <div><div class="pc-marca">GS Mantos — Compras</div><div class="pc-sub">Relatório de compras por período</div></div>
+      <div><div class="pc-total">${fmtData(inicioSel)} a ${fmtData(fimSel)}</div>
+           <div class="pc-sub" style="text-align:right">${geralPecas} peça(s) · ${fmtBRL(geralValor)} no período selecionado</div></div>
+    </div>
+    ${secoes.map(blocoSecao).join('')}
+    <div class="pc-rodape">Gerado pelo sistema GS Mantos em ${new Date().toLocaleString('pt-BR')}</div>
+  `;
 }
 
 // ── Abas ──────────────────────────────────────────────────────────────────────
