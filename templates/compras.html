@@ -47,7 +47,7 @@
     <button class="btn btn-sm btn-outline-secondary" onclick="setPeriodo('mes')">Este mês</button>
     <button class="btn btn-sm btn-outline-secondary" onclick="setPeriodo('tudo')">Tudo</button>
     <button class="btn btn-sm" id="btnPdfCompras" onclick="gerarRelatorioComprasPdf()"
-            title="PDF com: cada mês do período selecionado acima + últimos 15 dias + últimos 7 dias, com foto, nome, SKU e tamanhos"
+            title="PDF com uma seção por mês do período selecionado acima (De/Até), com foto, nome, SKU e tamanhos"
             style="background:rgba(63,185,80,.12);border:1px solid #3fb95044;color:#3fb950;margin-left:auto">
       <i class="bi bi-file-earmark-pdf me-1"></i>Relatório PDF completo
     </button>
@@ -354,7 +354,7 @@ function fmtMes(s) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  RELATÓRIO PDF COMPLETO — cada mês do período selecionado + últimos 15/7 dias
+//  RELATÓRIO PDF COMPLETO — uma seção por mês, dentro do período selecionado
 // ══════════════════════════════════════════════════════════════════════════════
 function _ymdLocalCompras(dt) { const z = new Date(dt.getTime() - dt.getTimezoneOffset()*60000); return z.toISOString().slice(0,10); }
 
@@ -387,31 +387,23 @@ async function gerarRelatorioComprasPdf() {
   try {
     await carregarCatalogo();   // garante fotos/SKUs do catálogo
 
-    const hoje = new Date();
-    const de15 = new Date(hoje); de15.setDate(hoje.getDate() - 14);
-    const de7  = new Date(hoje); de7.setDate(hoje.getDate() - 6);
-
-    // Segue as datas colocadas no filtro de período da tela; se estiver vazio,
-    // usa o mês atual como padrão.
+    // Segue exatamente as datas colocadas no filtro de período da tela; se
+    // estiver vazio, usa o mês atual como padrão.
     let inicioSel = document.getElementById('filtroInicio').value;
     let fimSel    = document.getElementById('filtroFim').value;
     if (!inicioSel || !fimSel) {
-      const hj = _ymdLocalCompras(hoje);
+      const hj = _ymdLocalCompras(new Date());
       inicioSel = inicioSel || hj.slice(0,8) + '01';
       fimSel    = fimSel    || hj;
     }
 
-    // Busca tudo numa janela só (evita 3 chamadas separadas ao servidor):
-    // do mais cedo entre [início selecionado, últimos 15 dias] até hoje.
-    const janelaInicio = [inicioSel, _ymdLocalCompras(de15)].sort()[0];
-    const janelaFim     = [fimSel, _ymdLocalCompras(hoje)].sort().slice(-1)[0];
-    const compras = await fetch(`/api/compras/registros?inicio=${janelaInicio}&fim=${janelaFim}`).then(r => r.json());
+    const compras = await fetch(`/api/compras/registros?inicio=${inicioSel}&fim=${fimSel}`).then(r => r.json());
     if (!Array.isArray(compras) || !compras.length) {
       toast('Nenhuma compra encontrada no período.', false);
       return;
     }
 
-    // Meses cobertos pelo período SELECIONADO na tela (não a janela ampliada de busca)
+    // Meses cobertos pelo período selecionado — 1 seção por mês
     const meses = [];
     { let cursor = new Date(inicioSel + 'T12:00:00');
       const fimD = new Date(fimSel + 'T12:00:00');
@@ -425,19 +417,10 @@ async function gerarRelatorioComprasPdf() {
       }
     }
 
-    const secoes = [];
-    meses.forEach(m => secoes.push({
+    const secoes = meses.map(m => ({
       titulo: fmtMes(m).toUpperCase(),
       itens: compras.filter(c => (c.data || '').slice(0,7) === m),
     }));
-    secoes.push({
-      titulo: 'ÚLTIMOS 15 DIAS',
-      itens: compras.filter(c => c.data >= _ymdLocalCompras(de15) && c.data <= _ymdLocalCompras(hoje)),
-    });
-    secoes.push({
-      titulo: 'ÚLTIMOS 7 DIAS',
-      itens: compras.filter(c => c.data >= _ymdLocalCompras(de7) && c.data <= _ymdLocalCompras(hoje)),
-    });
 
     const area = document.getElementById('pdfAreaCompras');
     area.innerHTML = buildRelatorioComprasHtml(secoes, inicioSel, fimSel);
@@ -508,8 +491,8 @@ function buildRelatorioComprasHtml(secoes, inicioSel, fimSel) {
     return `<div class="pc-secao"><div class="pc-secao-titulo">${escHtml(sec.titulo)}</div>${resumo}${cards}</div>`;
   };
 
-  const geralPecas = secoes.slice(0, secoes.length-2).reduce((s,sec)=>s+sec.itens.reduce((x,c)=>x+(c.total_qty||0),0),0);
-  const geralValor = secoes.slice(0, secoes.length-2).reduce((s,sec)=>s+sec.itens.reduce((x,c)=>x+(c.total_valor||0),0),0);
+  const geralPecas = secoes.reduce((s,sec)=>s+sec.itens.reduce((x,c)=>x+(c.total_qty||0),0),0);
+  const geralValor = secoes.reduce((s,sec)=>s+sec.itens.reduce((x,c)=>x+(c.total_valor||0),0),0);
 
   return `
     <div class="pc-header">
