@@ -4315,6 +4315,47 @@ def api_manual_produtos_vincular(pid):
     return jsonify({"ok": True, "id": vid, "nova_quantidade": nova_qty})
 
 
+@app.route("/api/admin/seed-relogios", methods=["GET", "POST"])
+@login_required
+def api_admin_seed_relogios():
+    """TEMPORÁRIO — cadastra os 2 relógios na aba SKUs (nome, valor unitário e
+    foto, lida de seed/*.jpg). Idempotente: se já existir um produto com o mesmo
+    nome, só completa valor/foto que estiverem faltando. Pode ser removido
+    depois de usado."""
+    import base64
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seed")
+    itens = [
+        ("Relógio de prata",         61.0,  "relogio_prata.jpg"),
+        ("Relógio preto e dourado", 146.0,  "relogio_preto_dourado.jpg"),
+    ]
+    feito = []
+    with get_conn() as conn:
+        for nome, valor, arq in itens:
+            try:
+                with open(os.path.join(base, arq), "rb") as f:
+                    img = "data:image/jpeg;base64," + base64.b64encode(f.read()).decode()
+            except OSError:
+                img = None
+            row = conn.execute(
+                "SELECT id, valor_unit, imagem FROM manual_produtos WHERE lower(nome)=lower(?)", (nome,)
+            ).fetchone()
+            if row:
+                if row["valor_unit"] is None or (not row["imagem"] and img):
+                    conn.execute(
+                        "UPDATE manual_produtos SET valor_unit=COALESCE(valor_unit, ?), imagem=COALESCE(imagem, ?) WHERE id=?",
+                        (valor, img, row["id"]))
+                    feito.append({"nome": nome, "acao": "completado", "id": row["id"]})
+                else:
+                    feito.append({"nome": nome, "acao": "ja_existia", "id": row["id"]})
+            else:
+                cur = conn.execute(
+                    "INSERT INTO manual_produtos (nome, imagem, valor_unit) VALUES (?,?,?)",
+                    (nome, img, valor))
+                feito.append({"nome": nome, "acao": "criado", "id": cur.lastrowid,
+                              "com_foto": bool(img)})
+    return jsonify({"ok": True, "produtos": feito})
+
+
 @app.route("/api/manual-produtos/variantes/<int:vid>/desvincular", methods=["POST"])
 @login_required
 def api_manual_produtos_desvincular(vid):
@@ -5247,7 +5288,7 @@ def api_compras_registros_add():
     data_compra       = data.get("data") or hoje
 
     # Valida e normaliza TODOS os itens antes de gravar (tudo ou nada)
-    CAT_LABEL = {"camisas": "Camisa", "brindes": "Brindes", "embalagens": "Embalagens"}
+    CAT_LABEL = {"camisas": "Camisa", "brindes": "Brindes", "embalagens": "Embalagens", "outros": "Outros"}
     itens = []
     for it in itens_in:
         produto   = (it.get("produto_nome") or "").strip()
@@ -5287,7 +5328,7 @@ def api_compras_registros_add():
 def api_compras_registros_update(cid):
     """Edita uma compra (corrige o registro; NÃO re-aplica estoque). Registra o histórico."""
     data      = request.get_json() or {}
-    CAT_LABEL = {"camisas": "Camisa", "brindes": "Brindes", "embalagens": "Embalagens"}
+    CAT_LABEL = {"camisas": "Camisa", "brindes": "Brindes", "embalagens": "Embalagens", "outros": "Outros"}
     categoria = (data.get("categoria") or "").strip().lower() or None
     produto   = (data.get("produto_nome") or "").strip() or CAT_LABEL.get(categoria, "Produto")
     tamanhos  = [t for t in (data.get("tamanhos") or []) if int(t.get("quantidade") or 0) > 0]

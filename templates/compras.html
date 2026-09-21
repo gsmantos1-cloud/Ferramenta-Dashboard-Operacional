@@ -108,6 +108,7 @@
             <button type="button" class="btn btn-sm cat-btn active" data-cat="camisas"    onclick="setCategoria('camisas')"><i class="bi bi-person-badge me-1"></i>Camisas</button>
             <button type="button" class="btn btn-sm cat-btn"        data-cat="brindes"    onclick="setCategoria('brindes')"><i class="bi bi-gift me-1"></i>Brindes</button>
             <button type="button" class="btn btn-sm cat-btn"        data-cat="embalagens" onclick="setCategoria('embalagens')"><i class="bi bi-box-seam me-1"></i>Embalagens</button>
+            <button type="button" class="btn btn-sm cat-btn"        data-cat="outros"     onclick="setCategoria('outros')"><i class="bi bi-watch me-1"></i>Outros</button>
           </div>
         </div>
         <style>
@@ -320,6 +321,8 @@
 <script>
 // ── Estado ────────────────────────────────────────────────────────────────────
 let catalogoProdutos = [];
+let manuaisCompra = [];            // produtos cadastrados na aba SKUs (Custos SKU)
+let manuaisCompraCarregado = false;
 let abaAtiva = 'historico';
 let produtoSelecionado = null; // { id, name, variants, sizeMap: { "P": {nv_variant_id, sku, label} } }
 let comprasCarregadas = [];    // compras do histórico atual (para editar)
@@ -386,6 +389,7 @@ async function gerarRelatorioComprasPdf() {
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Gerando...';
   try {
     await carregarCatalogo();   // garante fotos/SKUs do catálogo
+    await carregarManuaisCompra();   // fotos dos produtos cadastrados em SKUs
 
     // Segue exatamente as datas colocadas no filtro de período da tela; se
     // estiver vazio, usa o mês atual como padrão.
@@ -444,7 +448,7 @@ async function gerarRelatorioComprasPdf() {
 }
 
 function buildRelatorioComprasHtml(secoes, inicioSel, fimSel) {
-  const CAT_LABEL = { camisas: 'Camisa', brindes: 'Brindes', embalagens: 'Embalagens' };
+  const CAT_LABEL = { camisas: 'Camisa', brindes: 'Brindes', embalagens: 'Embalagens', outros: 'Outros' };
   const blocoSecao = (sec) => {
     const totalPecas = sec.itens.reduce((s,c) => s + (c.total_qty||0), 0);
     const totalValor = sec.itens.reduce((s,c) => s + (c.total_valor||0), 0);
@@ -456,7 +460,8 @@ function buildRelatorioComprasHtml(secoes, inicioSel, fimSel) {
       .slice().sort((a,b) => (b.data||'').localeCompare(a.data||''))
       .map(c => {
         const prod = _catalogoDaCompra(c);
-        const imgUrl = prod && prod.imageUrl;
+        const manual = prod ? null : (manuaisCompra || []).find(p => normNomeProd(p.nome) === normNomeProd(c.produto_nome));
+        const imgUrl = (prod && prod.imageUrl) || (manual && manual.imagem);
         const imgCell = imgUrl
           ? `<img class="pc-img" src="${escHtml(imgUrl)}">`
           : `<div class="pc-noimg">&#128247;</div>`;
@@ -623,13 +628,29 @@ function normNomeProd(s) {
 // Busca o catálogo (cacheado) e injeta a miniatura de cada produto nos cards
 async function preencherImagensProdutos() {
   try { await carregarCatalogo(); } catch(e) { return; }
-  if (!catalogoProdutos || !catalogoProdutos.length) return;
 
   const byId = new Map(), byNome = new Map();
-  catalogoProdutos.forEach(p => {
+  (catalogoProdutos || []).forEach(p => {
     if (p.id != null && p.imageUrl) byId.set(String(p.id), p.imageUrl);
     if (p.name && p.imageUrl) byNome.set(normNomeProd(p.name), p.imageUrl);
   });
+
+  // Compras de produtos cadastrados em SKUs (ex: relógios) não estão no catálogo
+  // da NuvemShop → completa com as fotos da aba SKUs, mas só busca isso se houver
+  // alguma compra sem foto que possa ser um deles (evita leitura à toa).
+  const semFoto = (comprasCarregadas || []).some(c => {
+    const cat = (c.categoria || '').toLowerCase();
+    if (cat === 'brindes' || cat === 'embalagens') return false;
+    return !(c.nv_product_id != null && byId.has(String(c.nv_product_id))) && !byNome.has(normNomeProd(c.produto_nome));
+  });
+  if (semFoto) {
+    await carregarManuaisCompra();
+    manuaisCompra.forEach(p => {
+      const k = normNomeProd(p.nome);
+      if (p.nome && p.imagem && !byNome.has(k)) byNome.set(k, p.imagem);
+    });
+  }
+  if (!byId.size && !byNome.size) return;
 
   (comprasCarregadas || []).forEach(c => {
     const slot = document.getElementById(`prodimg-${c.id}`);
@@ -652,6 +673,7 @@ function renderCardCompra(c) {
     camisas:    {t:'Camisa',    c:'#58a6ff', bg:'rgba(88,166,255,.12)', b:'rgba(88,166,255,.3)', i:'bi-person-badge'},
     brindes:    {t:'Brinde',    c:'#f0883e', bg:'rgba(240,136,62,.12)', b:'rgba(240,136,62,.3)', i:'bi-gift'},
     embalagens: {t:'Embalagem', c:'#3fb950', bg:'rgba(63,185,80,.12)',  b:'rgba(63,185,80,.3)',  i:'bi-box-seam'},
+    outros:     {t:'Outros',    c:'#a78bfa', bg:'rgba(139,92,246,.12)', b:'rgba(139,92,246,.3)', i:'bi-watch'},
   };
   const ci = CAT_TAG[(c.categoria||'').toLowerCase()];
   const catTag = ci ? `<span style="font-size:.68rem;color:${ci.c};background:${ci.bg};border:1px solid ${ci.b};border-radius:6px;padding:1px 7px"><i class="bi ${ci.i} me-1"></i>${ci.t}</span>` : '';
@@ -1237,6 +1259,7 @@ function abrirModalCompra() {
   setCategoria('camisas');   // reseta tipo + grade + imagem + labels
 
   carregarCatalogo();
+  carregarManuaisCompra();   // produtos da aba SKUs (ex: relógios) na busca
   bootstrap.Modal.getOrCreateInstance(document.getElementById('modalCompra')).show();
   setTimeout(() => document.getElementById('cProduto').focus(), 300);
 }
@@ -1260,7 +1283,7 @@ function abrirEditarCompra(id) {
   document.getElementById('btnAdicionarProduto').style.display = 'none';
 
   // Restaura a categoria antes de preencher (ajusta labels + a grade certa)
-  const catEdit = ['camisas','brindes','embalagens'].includes((c.categoria || '').toLowerCase())
+  const catEdit = ['camisas','brindes','embalagens','outros'].includes((c.categoria || '').toLowerCase())
                   ? c.categoria.toLowerCase() : 'camisas';
   categoriaCompra = catEdit;
   setCategoria(catEdit);   // renderiza a grade correta e limpa produto/imagem
@@ -1305,6 +1328,7 @@ function abrirEditarCompra(id) {
   calcularTotal();
 
   carregarCatalogo();
+  carregarManuaisCompra();
   bootstrap.Modal.getOrCreateInstance(document.getElementById('modalCompra')).show();
 }
 
@@ -1338,7 +1362,9 @@ function setCategoria(cat) {
   document.getElementById('labelProduto').textContent = ehCamisa ? 'PRODUTO (camisa) *' : 'PRODUTO (opcional)';
   document.getElementById('labelQtd').textContent     = ehCamisa ? 'QUANTIDADE POR TAMANHO *' : 'QUANTIDADE *';
   inp.placeholder = ehCamisa ? 'Buscar a camisa...'
-                  : (cat === 'brindes' ? 'Ex: chaveiro, adesivo… (opcional)' : 'Ex: caixa, saco, plástico… (opcional)');
+                  : (cat === 'brindes' ? 'Ex: chaveiro, adesivo… (opcional)'
+                  : cat === 'embalagens' ? 'Ex: caixa, saco, plástico… (opcional)'
+                  : 'Buscar produto cadastrado em SKUs (ex: relógio) ou digitar…');
   const btnExtra = document.getElementById('btnTamExtra');
   const wrapEst  = document.getElementById('wrapAtualizarEstoque');
   if (btnExtra) btnExtra.style.display = ehCamisa ? '' : 'none';
@@ -1413,15 +1439,43 @@ async function carregarCatalogo() {
   } catch(e) {}
 }
 
+// Produtos cadastrados na aba SKUs (Custos SKU) — carregados 1x por página
+async function carregarManuaisCompra() {
+  if (manuaisCompraCarregado) return;
+  try {
+    const lista = await fetch('/api/manual-produtos').then(r => r.json());
+    if (Array.isArray(lista)) { manuaisCompra = lista; manuaisCompraCarregado = true; }
+  } catch(e) {}
+}
+
+// Escolheu um produto cadastrado em SKUs: preenche nome, foto e (se ainda
+// estiver vazio) o preço por unidade com o valor unitário do produto.
+function selecionarProdutoManual(id) {
+  const p = (manuaisCompra || []).find(x => x.id === id);
+  if (!p) return;
+  const inp = document.getElementById('cProduto');
+  inp.value = p.nome; inp.dataset.prodId = '';
+  document.getElementById('produtosDropdown').style.display = 'none';
+  produtoSelecionado = null;                 // sem vínculo de estoque da NuvemShop
+  produtoImgCompra = p.imagem || '';
+  const imgEl = document.getElementById('cProdImg');
+  if (produtoImgCompra) { imgEl.src = produtoImgCompra; imgEl.style.display = ''; }
+  else imgEl.style.display = 'none';
+  const preco = document.getElementById('cPreco');
+  if (p.valor_unit != null && !preco.value) { preco.value = p.valor_unit; calcularTotal(); }
+  onToggleEstoque();
+}
+
 function buscarProduto(input) {
   const dd  = document.getElementById('produtosDropdown');
-  // Só busca no catálogo para camisas; brindes/embalagens são texto livre.
-  if (categoriaCompra !== 'camisas') { dd.style.display = 'none'; return; }
   const q   = input.value.toLowerCase().trim();
   if (q.length < 1) { dd.style.display='none'; return; }
+  // Produtos cadastrados na aba SKUs (manuais) aparecem em QUALQUER categoria;
+  // o catálogo da NuvemShop só entra na categoria Camisas.
+  const manuais = (manuaisCompra || []).filter(p => p.nome && p.nome.toLowerCase().includes(q));
 
   // Filtra todos que contêm a busca, ordena: começa com > contém no início do nome > contém em qualquer lugar
-  const matches = catalogoProdutos
+  const matches = (categoriaCompra === 'camisas' ? catalogoProdutos : [])
     .filter(p => p.name && p.name.toLowerCase().includes(q))
     .sort((a, b) => {
       const an = a.name.toLowerCase(), bn = b.name.toLowerCase();
@@ -1431,16 +1485,35 @@ function buscarProduto(input) {
       return an.localeCompare(bn);
     });
 
-  if (!matches.length) { dd.style.display = 'none'; return; }
+  const total = matches.length + manuais.length;
+  if (!total) { dd.style.display = 'none'; return; }
   dd.style.display = 'block';
 
-  const header = matches.length > 1
+  const header = total > 1
     ? `<div style="padding:6px 14px;font-size:.68rem;color:var(--muted);border-bottom:1px solid var(--border);
                    background:#0d1117;border-radius:10px 10px 0 0;letter-spacing:.04em">
-         ${matches.length} produto${matches.length!==1?'s':''} encontrado${matches.length!==1?'s':''}
+         ${total} produto${total!==1?'s':''} encontrado${total!==1?'s':''}
        </div>` : '';
 
-  dd.innerHTML = header + matches.map(p => {
+  const manuaisHtml = manuais.map(p => {
+    const imgHtml = p.imagem
+      ? `<img src="${escHtml(p.imagem)}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid var(--border);flex-shrink:0">`
+      : `<div style="width:56px;height:56px;background:#21262d;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+           <i class="bi bi-image" style="font-size:1.2rem;color:var(--muted)"></i></div>`;
+    const preco = (p.valor_unit != null) ? `<span style="font-size:.78rem;color:#3fb950;font-weight:700;white-space:nowrap">${fmtBRL(p.valor_unit)}</span>` : '';
+    return `<div onclick="selecionarProdutoManual(${p.id})"
+         style="padding:10px 14px;cursor:pointer;border-bottom:1px solid #21262d;display:flex;align-items:center;gap:12px"
+         onmouseover="this.style.background='rgba(88,166,255,.08)'" onmouseout="this.style.background=''">
+      ${imgHtml}
+      <div style="flex:1;min-width:0">
+        <div style="font-size:.88rem;font-weight:600;line-height:1.3">${escHtml(p.nome)}</div>
+        <span style="font-size:.62rem;background:rgba(139,92,246,.18);color:#a78bfa;border-radius:4px;padding:1px 6px">cadastrado em SKUs</span>
+      </div>
+      ${preco}
+    </div>`;
+  }).join('');
+
+  dd.innerHTML = header + manuaisHtml + matches.map(p => {
     const img = p.imageUrl || '';
     const imgHtml = img
       ? `<img src="${escHtml(img)}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid var(--border);flex-shrink:0">`
@@ -1520,7 +1593,7 @@ function coletarProdutoAtual() {
   if (!tams.length) return { erro: 'Informe a quantidade.' };
   if (preco <= 0)   return { erro: 'Informe o preço por unidade.' };
   // Nome opcional em brindes/embalagens → usa o rótulo da categoria
-  if (!produto) produto = (cat === 'brindes' ? 'Brindes' : cat === 'embalagens' ? 'Embalagens' : 'Produto');
+  if (!produto) produto = (cat === 'brindes' ? 'Brindes' : cat === 'embalagens' ? 'Embalagens' : cat === 'outros' ? 'Outros' : 'Produto');
   const tamsComVariant = tams.map(t => {
     const v = produtoSelecionado?.sizeMap?.[t.tamanho.toUpperCase()] || null;
     return { tamanho: t.tamanho, quantidade: t.quantidade,
@@ -1598,7 +1671,7 @@ async function salvarCompra() {
     if (categoriaCompra === 'camisas' && !produto) { erroEl.textContent = 'Selecione ou digite a camisa.'; return; }
     if (!tams.length) { erroEl.textContent = 'Informe a quantidade.'; return; }
     if (preco <= 0)   { erroEl.textContent = 'Informe o preço por unidade.'; return; }
-    if (!produto) produto = (categoriaCompra === 'brindes' ? 'Brindes' : categoriaCompra === 'embalagens' ? 'Embalagens' : 'Produto');
+    if (!produto) produto = (categoriaCompra === 'brindes' ? 'Brindes' : categoriaCompra === 'embalagens' ? 'Embalagens' : categoriaCompra === 'outros' ? 'Outros' : 'Produto');
     erroEl.textContent = '';
     btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Salvando...';
     const tamsComVariant = tams.map(t => {
