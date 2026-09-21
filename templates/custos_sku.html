@@ -506,6 +506,8 @@
           <div style="flex:1">
             <label class="form-label mb-1" style="font-size:.78rem;color:var(--muted)">NOME DO PRODUTO *</label>
             <input id="nmNome" type="text" class="form-control form-control-sm" placeholder="Ex: Camiseta Retrô Brasil">
+            <label class="form-label mb-1 mt-2" style="font-size:.78rem;color:var(--muted)">VALOR UNITÁRIO (R$) — opcional</label>
+            <input id="nmValor" type="number" min="0" step="0.01" class="form-control form-control-sm" style="max-width:160px" placeholder="0,00">
           </div>
         </div>
         <span id="nmErro" style="color:var(--red);font-size:.8rem"></span>
@@ -2924,8 +2926,9 @@ function renderManualProdutos() {
                         <div class="small text-muted">${p.total_pecas||0} peça(s) · ${(p.variantes||[]).length} variante(s)${zeradasProd?` · <span style="color:#f85149">${zeradasProd} zerada(s)</span>`:''}</div>
                     </div>
                 </div>
-                <div class="d-flex align-items-center gap-1">
-                    <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="event.stopPropagation();editarProdutoManual(${p.id})" title="Editar nome/foto"><i class="bi bi-pencil"></i></button>
+                <div class="d-flex align-items-center gap-2">
+                    ${p.valor_unit != null ? `<span title="Valor unitário" style="font-size:1rem;font-weight:700;color:#3fb950;white-space:nowrap">R$ ${Number(p.valor_unit).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>` : ''}
+                    <button class="btn btn-sm btn-outline-secondary py-0 px-2" onclick="event.stopPropagation();editarProdutoManual(${p.id})" title="Editar nome/foto/valor"><i class="bi bi-pencil"></i></button>
                     <button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="event.stopPropagation();removerProdutoManual(${p.id})" title="Excluir produto"><i class="bi bi-trash"></i></button>
                     <i class="bi ${aberto ? 'bi-chevron-up' : 'bi-chevron-down'} ms-1" style="color:var(--muted)"></i>
                 </div>
@@ -3232,6 +3235,7 @@ function abrirNovoProdutoManual() {
     document.getElementById('tituloModalNovoManual').innerHTML = '<i class="bi bi-box-seam me-2" style="color:var(--blue)"></i>Novo Produto';
     document.getElementById('btnSalvarNovoManual').innerHTML = '<i class="bi bi-check2 me-1"></i>Salvar Produto';
     document.getElementById('nmNome').value = '';
+    document.getElementById('nmValor').value = '';
     document.getElementById('nmImg').style.display = 'none';
     document.getElementById('nmImgPh').style.display = '';
     document.getElementById('nmErro').textContent = '';
@@ -3246,6 +3250,7 @@ function editarProdutoManual(id) {
     document.getElementById('tituloModalNovoManual').innerHTML = '<i class="bi bi-pencil-square me-2" style="color:var(--blue)"></i>Editar Produto';
     document.getElementById('btnSalvarNovoManual').innerHTML = '<i class="bi bi-check2 me-1"></i>Salvar Alterações';
     document.getElementById('nmNome').value = p.nome || '';
+    document.getElementById('nmValor').value = (p.valor_unit != null) ? p.valor_unit : '';
     const imgEl = document.getElementById('nmImg');
     if (manualImgAtual) { imgEl.src = manualImgAtual; imgEl.style.display = ''; document.getElementById('nmImgPh').style.display = 'none'; }
     else { imgEl.style.display = 'none'; document.getElementById('nmImgPh').style.display = ''; }
@@ -3291,7 +3296,8 @@ async function salvarProdutoManual() {
         const url = editando ? `/api/manual-produtos/${manualEditandoId}` : '/api/manual-produtos';
         const r = await fetch(url, {
             method: editando ? 'PUT' : 'POST', headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ nome, imagem: manualImgAtual || null }),
+            body: JSON.stringify({ nome, imagem: manualImgAtual || null,
+                                   valor_unit: document.getElementById('nmValor').value }),
         });
         const j = await r.json();
         if (!r.ok) { erroEl.textContent = j.erro || 'Erro ao salvar.'; return; }

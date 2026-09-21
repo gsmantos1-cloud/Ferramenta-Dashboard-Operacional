@@ -430,6 +430,9 @@ def init_db():
                 )
             """)
         except Exception: pass
+        # valor unitário (R$) do produto manual — coluna nova, idempotente
+        try: conn.execute("ALTER TABLE manual_produtos ADD COLUMN valor_unit REAL")
+        except Exception: pass
 
         conn.commit()
 
@@ -3967,6 +3970,18 @@ def custos_sku_page():
 # NuvemShop) — assim entradas/saídas, relatório diário (PDF) e alertas de
 # estoque baixo já funcionam sozinhos para esses produtos, sem código extra.
 
+def _parse_valor_unit(v):
+    """Valor unitário opcional: vazio → None; número ≥ 0 (aceita vírgula) →
+    float; qualquer outra coisa → False (inválido)."""
+    if v is None or (isinstance(v, str) and not v.strip()):
+        return None
+    try:
+        n = float(str(v).replace(",", ".").strip())
+    except (TypeError, ValueError):
+        return False
+    return n if n >= 0 else False
+
+
 @app.route("/api/manual-produtos", methods=["GET"])
 @login_required
 def api_manual_produtos_list():
@@ -4008,10 +4023,13 @@ def api_manual_produtos_criar():
         return jsonify({"erro": "Nome do produto é obrigatório"}), 400
     imagem = d.get("imagem") or None   # data URL base64 (já redimensionada no navegador)
     obs    = (d.get("observacao") or "").strip() or None
+    valor  = _parse_valor_unit(d.get("valor_unit"))
+    if valor is False:
+        return jsonify({"erro": "Valor unitário inválido"}), 400
     with get_conn() as conn:
         cur = conn.execute(
-            "INSERT INTO manual_produtos (nome, imagem, observacao) VALUES (?,?,?)",
-            (nome, imagem, obs)
+            "INSERT INTO manual_produtos (nome, imagem, observacao, valor_unit) VALUES (?,?,?,?)",
+            (nome, imagem, obs, valor)
         )
         new_id = cur.lastrowid
     return jsonify({"ok": True, "id": new_id}), 201
@@ -4034,6 +4052,11 @@ def api_manual_produtos_editar(pid):
             campos.append("imagem=?"); params.append(d.get("imagem") or None)
         if "observacao" in d:
             campos.append("observacao=?"); params.append((d.get("observacao") or "").strip() or None)
+        if "valor_unit" in d:
+            valor = _parse_valor_unit(d.get("valor_unit"))
+            if valor is False:
+                return jsonify({"erro": "Valor unitário inválido"}), 400
+            campos.append("valor_unit=?"); params.append(valor)
         params.append(pid)
         conn.execute(f"UPDATE manual_produtos SET {', '.join(campos)} WHERE id=?", params)
         # Mantém o nome espelhado nas variantes (usado no relatório/PDF diário)
