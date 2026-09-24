@@ -268,6 +268,35 @@
   </div>
 </div>
 
+<!-- Modal: escolher quais produtos entram no Relatório PDF -->
+<div class="modal fade" id="modalFiltroRelatorio" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content" style="background:var(--card-bg);border:1px solid var(--border)">
+      <div class="modal-header" style="border-bottom:1px solid var(--border)">
+        <h6 class="modal-title fw-bold"><i class="bi bi-filter-circle me-2" style="color:#3fb950"></i>Produtos no relatório</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="small text-muted mb-2" id="frPeriodoTxt"></div>
+        <input id="frBusca" type="text" class="form-control form-control-sm mb-2" placeholder="Buscar produto..." oninput="renderListaFiltroRelatorio()">
+        <div class="d-flex gap-2 mb-2">
+          <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:.75rem" onclick="marcarTodosFiltroRelatorio(true)">Selecionar todos</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:.75rem" onclick="marcarTodosFiltroRelatorio(false)">Limpar seleção</button>
+          <span class="ms-auto small text-muted" id="frContagem"></span>
+        </div>
+        <div id="frLista" style="max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
+      </div>
+      <div class="modal-footer" style="border-top:1px solid var(--border)">
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancelar</button>
+        <button type="button" class="btn btn-sm" id="btnGerarRelatorioFiltrado" onclick="confirmarRelatorioPdf()"
+                style="background:rgba(63,185,80,.15);border:1px solid #3fb95055;color:#3fb950">
+          <i class="bi bi-file-earmark-pdf me-1"></i>Gerar PDF
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Área de impressão do relatório PDF de compras (some da tela, só aparece na impressão) -->
 <div id="pdfAreaCompras"></div>
 <style>
@@ -411,15 +440,18 @@ function _skuDoTamanho(prod, tamanho) {
   return (v && v.sku) || '';
 }
 
+// Estado do filtro de produtos do relatório PDF
+let relatorioComprasCache = [];          // compras já buscadas do período (evita buscar de novo ao confirmar)
+let relatorioPeriodo = { inicio: '', fim: '' };
+let relatorioProdutosSelecionados = new Set();   // nomes de produto marcados
+
+// Passo 1: busca as compras do período e abre a lista de produtos pra marcar
 async function gerarRelatorioComprasPdf() {
   const btn = document.getElementById('btnPdfCompras');
   const txtOrig = btn.innerHTML;
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Gerando...';
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Carregando...';
   try {
-    await carregarCatalogo();   // garante fotos/SKUs do catálogo
-    await carregarManuaisCompra();   // fotos dos produtos cadastrados em SKUs
-
     // Segue exatamente as datas colocadas no filtro de período da tela; se
     // estiver vazio, usa o mês atual como padrão.
     let inicioSel = document.getElementById('filtroInicio').value;
@@ -435,6 +467,81 @@ async function gerarRelatorioComprasPdf() {
       toast('Nenhuma compra encontrada no período.', false);
       return;
     }
+
+    relatorioComprasCache = compras;
+    relatorioPeriodo = { inicio: inicioSel, fim: fimSel };
+    relatorioProdutosSelecionados = new Set(compras.map(c => c.produto_nome));   // começa com todos marcados
+
+    document.getElementById('frPeriodoTxt').textContent =
+      `Compras de ${fmtData(inicioSel)} a ${fmtData(fimSel)} — marque os produtos que devem entrar no PDF.`;
+    document.getElementById('frBusca').value = '';
+    renderListaFiltroRelatorio();
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalFiltroRelatorio')).show();
+  } catch (e) {
+    toast('Erro ao carregar as compras do período.', false);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = txtOrig;
+  }
+}
+
+// Lista de produtos distintos do período, com quantas compras cada um tem
+function renderListaFiltroRelatorio() {
+  const busca = document.getElementById('frBusca').value.trim().toLowerCase();
+  const porProduto = new Map();
+  relatorioComprasCache.forEach(c => {
+    const n = c.produto_nome || 'Sem nome';
+    porProduto.set(n, (porProduto.get(n) || 0) + 1);
+  });
+  const nomes = Array.from(porProduto.keys())
+    .filter(n => !busca || n.toLowerCase().includes(busca))
+    .sort((a,b) => a.localeCompare(b));
+
+  const lista = document.getElementById('frLista');
+  lista.innerHTML = nomes.length ? nomes.map(n => {
+    const marcado = relatorioProdutosSelecionados.has(n);
+    return `<label style="display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;
+                          border-bottom:1px solid var(--border)">
+      <input type="checkbox" ${marcado ? 'checked' : ''} onchange="toggleProdutoFiltroRelatorio('${escHtml(n).replace(/'/g,"\\'")}', this.checked)">
+      <span style="flex:1;font-size:.85rem">${escHtml(n)}</span>
+      <span class="text-muted" style="font-size:.72rem">${porProduto.get(n)} compra${porProduto.get(n)!==1?'s':''}</span>
+    </label>`;
+  }).join('') : '<div class="text-center text-muted py-4" style="font-size:.85rem">Nenhum produto encontrado.</div>';
+
+  atualizarContagemFiltroRelatorio();
+}
+
+function toggleProdutoFiltroRelatorio(nome, marcado) {
+  if (marcado) relatorioProdutosSelecionados.add(nome);
+  else relatorioProdutosSelecionados.delete(nome);
+  atualizarContagemFiltroRelatorio();
+}
+
+function marcarTodosFiltroRelatorio(marcar) {
+  const todos = new Set(relatorioComprasCache.map(c => c.produto_nome));
+  relatorioProdutosSelecionados = marcar ? todos : new Set();
+  renderListaFiltroRelatorio();
+}
+
+function atualizarContagemFiltroRelatorio() {
+  const total = new Set(relatorioComprasCache.map(c => c.produto_nome)).size;
+  document.getElementById('frContagem').textContent =
+    `${relatorioProdutosSelecionados.size} de ${total} selecionado${total!==1?'s':''}`;
+}
+
+// Passo 2: gera o PDF só com os produtos marcados
+async function confirmarRelatorioPdf() {
+  if (!relatorioProdutosSelecionados.size) { toast('Selecione ao menos um produto.', false); return; }
+  const btn = document.getElementById('btnGerarRelatorioFiltrado');
+  const txtOrig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Gerando...';
+  try {
+    await carregarCatalogo();
+    await carregarManuaisCompra();
+
+    const { inicio: inicioSel, fim: fimSel } = relatorioPeriodo;
+    const compras = relatorioComprasCache.filter(c => relatorioProdutosSelecionados.has(c.produto_nome));
 
     // Meses cobertos pelo período selecionado — 1 seção por mês
     const meses = [];
@@ -463,6 +570,7 @@ async function gerarRelatorioComprasPdf() {
         ? Promise.resolve()
         : new Promise(res => { img.onload = img.onerror = res; setTimeout(res, 4000); })));
 
+    bootstrap.Modal.getInstance(document.getElementById('modalFiltroRelatorio'))?.hide();
     const tituloOrig = document.title;
     document.title = `GS Mantos - Relatorio de Compras ${fmtData(inicioSel)} a ${fmtData(fimSel)}`;
     window.print();
