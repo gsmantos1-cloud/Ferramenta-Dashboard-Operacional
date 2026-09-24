@@ -183,6 +183,32 @@
           </div>
         </div>
 
+        <!-- Comprovante de pagamento -->
+        <div class="mb-3">
+          <label class="flabel d-block mb-1">COMPROVANTE DE PAGAMENTO (opcional)</label>
+          <div id="cCompVazio">
+            <label style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-size:.8rem;color:var(--blue);
+                          border:1px dashed var(--border);border-radius:8px;padding:8px 12px">
+              <i class="bi bi-paperclip"></i>Anexar foto ou PDF
+              <input type="file" accept="image/*,application/pdf" style="display:none" onchange="uploadComprovante(this)">
+            </label>
+          </div>
+          <div id="cCompCheio" style="display:none;align-items:center;gap:10px">
+            <div onclick="verComprovanteModal()" title="Ver comprovante"
+                 style="cursor:pointer;display:flex;align-items:center;gap:6px;font-size:.82rem;color:var(--text);
+                        background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:7px 12px">
+              <img id="cCompThumb" style="display:none;width:32px;height:32px;object-fit:cover;border-radius:5px">
+              <i id="cCompPdfIcon" class="bi bi-file-earmark-pdf" style="display:none;color:#f85149;font-size:1.2rem"></i>
+              <span id="cCompLabel">Comprovante anexado</span>
+              <i class="bi bi-eye ms-1" style="color:var(--muted)"></i>
+            </div>
+            <button type="button" class="btn btn-sm btn-outline-danger py-1 px-2" onclick="removerComprovante()" title="Remover comprovante">
+              <i class="bi bi-trash"></i>
+            </button>
+          </div>
+          <span id="cCompErro" style="color:var(--red);font-size:.75rem;display:block;margin-top:4px"></span>
+        </div>
+
         <!-- Toggle: Adicionar ao estoque -->
         <div id="wrapAtualizarEstoque"
              style="background:rgba(63,185,80,.07);border:1px solid #3fb95033;border-radius:8px;padding:12px 14px">
@@ -330,6 +356,9 @@ let editandoCompraId = null;   // id da compra em edição (null = nova)
 let produtosCompra = [];       // "carrinho": produtos já adicionados à compra atual
 let categoriaCompra = 'camisas';  // camisas | brindes | embalagens
 let produtoImgCompra = '';        // url da imagem da camisa selecionada
+let comprovanteNovo = null;       // data URL do comprovante recém-anexado nesta sessão do modal
+let comprovanteRemover = false;   // usuário pediu pra remover o comprovante já existente
+let comprovanteJaTinha = false;   // a compra em edição já tinha comprovante antes de abrir o modal
 
 const TAMANHOS_PADRAO = ['PP','P','M','G','GG','XGG'];
 
@@ -710,6 +739,10 @@ function renderCardCompra(c) {
                   style="background:none;border:1px solid ${ignorado ? 'rgba(240,196,62,.5)' : 'var(--border)'};color:${ignorado ? '#f0c43e' : 'var(--muted)'};border-radius:4px;padding:1px 7px;font-size:.68rem;cursor:pointer">
             <i class="bi ${ignorado ? 'bi-eye' : 'bi-eye-slash'}"></i>
           </button>
+          ${c.tem_comprovante ? `<button onclick="abrirComprovante(${c.id})" title="Ver comprovante de pagamento"
+                  style="background:none;border:1px solid rgba(63,185,80,.4);color:#3fb950;border-radius:4px;padding:1px 7px;font-size:.68rem;cursor:pointer">
+            <i class="bi bi-paperclip"></i>
+          </button>` : ''}
           <button onclick="abrirEditarCompra(${c.id})" title="Editar"
                   style="background:none;border:1px solid var(--border);color:var(--muted);border-radius:4px;padding:1px 7px;font-size:.68rem;cursor:pointer">
             <i class="bi bi-pencil"></i>
@@ -1231,6 +1264,98 @@ function fmtDiaCurto(iso) {
 }
 
 // ── Modal Registrar Compra ─────────────────────────────────────────────────────
+// ── Comprovante de pagamento ─────────────────────────────────────────────────
+function uploadComprovante(input) {
+  const f = input.files && input.files[0];
+  input.value = '';
+  if (!f) return;
+  const erroEl = document.getElementById('cCompErro');
+  erroEl.textContent = '';
+
+  if (f.type === 'application/pdf') {
+    if (f.size > 5 * 1024 * 1024) { erroEl.textContent = 'PDF muito grande (máx. 5 MB).'; return; }
+    const fr = new FileReader();
+    fr.onload = () => { comprovanteNovo = fr.result; comprovanteRemover = false; renderComprovanteUI(); };
+    fr.onerror = () => { erroEl.textContent = 'Não foi possível ler o arquivo.'; };
+    fr.readAsDataURL(f);
+    return;
+  }
+  if (!f.type.startsWith('image/')) { erroEl.textContent = 'Envie uma foto ou um PDF.'; return; }
+  const fr = new FileReader();
+  fr.onload = () => {
+    const im = new Image();
+    im.onload = () => {
+      const MAX = 1000;   // maior que miniatura de produto — precisa ficar legível
+      let w = im.width, h = im.height;
+      if (w >= h && w > MAX)      { h = Math.round(h * MAX / w); w = MAX; }
+      else if (h > w && h > MAX)  { w = Math.round(w * MAX / h); h = MAX; }
+      const cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      cv.getContext('2d').drawImage(im, 0, 0, w, h);
+      comprovanteNovo = cv.toDataURL('image/jpeg', 0.82);
+      comprovanteRemover = false;
+      renderComprovanteUI();
+    };
+    im.onerror = () => { erroEl.textContent = 'Não foi possível ler a imagem.'; };
+    im.src = fr.result;
+  };
+  fr.readAsDataURL(f);
+}
+
+function removerComprovante() {
+  comprovanteNovo = null;
+  comprovanteRemover = true;
+  renderComprovanteUI();
+}
+
+// Reflete o estado atual (novo anexo / já existia / removido / nenhum) no modal
+function renderComprovanteUI() {
+  const temAlgo = !comprovanteRemover && (comprovanteNovo || comprovanteJaTinha);
+  document.getElementById('cCompVazio').style.display = temAlgo ? 'none' : '';
+  document.getElementById('cCompCheio').style.display = temAlgo ? 'flex' : 'none';
+  if (!temAlgo) return;
+  const thumb = document.getElementById('cCompThumb');
+  const pdfIcon = document.getElementById('cCompPdfIcon');
+  const label = document.getElementById('cCompLabel');
+  const ehPdf = comprovanteNovo ? comprovanteNovo.startsWith('data:application/pdf') : false;
+  if (comprovanteNovo && !ehPdf) {
+    thumb.src = comprovanteNovo; thumb.style.display = ''; pdfIcon.style.display = 'none';
+    label.textContent = 'Novo comprovante (foto)';
+  } else if (comprovanteNovo && ehPdf) {
+    thumb.style.display = 'none'; pdfIcon.style.display = '';
+    label.textContent = 'Novo comprovante (PDF)';
+  } else {
+    thumb.style.display = 'none'; pdfIcon.style.display = 'none';
+    label.textContent = 'Comprovante anexado';
+  }
+}
+
+// "Ver" dentro do modal: se acabou de anexar agora, já tem os dados — abre direto.
+// Se é o comprovante que já existia na compra, busca no servidor sob demanda.
+function verComprovanteModal() {
+  if (comprovanteNovo) { abrirDataUrlEmAba(comprovanteNovo); return; }
+  if (editandoCompraId != null) abrirComprovante(editandoCompraId);
+}
+
+function abrirDataUrlEmAba(dataUrl) {
+  const win = window.open('', '_blank');
+  if (win) win.location.href = dataUrl; else location.href = dataUrl;
+}
+
+// Busca o comprovante de uma compra já salva e abre numa aba nova
+async function abrirComprovante(cid) {
+  const win = window.open('', '_blank');
+  try {
+    const r = await fetch(`/api/compras/registros/${cid}/comprovante`);
+    const j = await r.json();
+    if (!j.comprovante) { if (win) win.close(); toast('Sem comprovante anexado.', false); return; }
+    if (win) win.location.href = j.comprovante; else location.href = j.comprovante;
+  } catch(e) {
+    if (win) win.close();
+    toast('Erro ao carregar o comprovante.', false);
+  }
+}
+
 function abrirModalCompra() {
   editandoCompraId = null;
   document.getElementById('tituloModalCompra').innerHTML =
@@ -1254,6 +1379,10 @@ function abrirModalCompra() {
   renderListaProdutos();
   document.getElementById('btnAdicionarProduto').style.display = '';   // multi-produto só ao registrar
   onToggleEstoque();
+
+  comprovanteNovo = null; comprovanteRemover = false; comprovanteJaTinha = false;
+  document.getElementById('cCompErro').textContent = '';
+  renderComprovanteUI();
 
   categoriaCompra = 'camisas';
   setCategoria('camisas');   // reseta tipo + grade + imagem + labels
@@ -1326,6 +1455,10 @@ function abrirEditarCompra(id) {
     if (box && total > 0) { box.value = total; box.classList.add('has-value'); }
   }
   calcularTotal();
+
+  comprovanteNovo = null; comprovanteRemover = false; comprovanteJaTinha = !!c.tem_comprovante;
+  document.getElementById('cCompErro').textContent = '';
+  renderComprovanteUI();
 
   carregarCatalogo();
   carregarManuaisCompra();
@@ -1680,19 +1813,24 @@ async function salvarCompra() {
                nv_variant_id: v?.nv_variant_id || null, sku: v?.sku || null,
                variante_label: v?.label || t.tamanho };
     });
+    // Só manda a chave 'comprovante' se o usuário mexeu nele (anexou ou removeu) —
+    // ausente = mantém o que já estava salvo, sem precisar re-enviar o arquivo.
+    const bodyPut = {
+      data:          document.getElementById('cData').value,
+      produto_nome:  produto,
+      nv_product_id: produtoSelecionado?.id || document.getElementById('cProduto').dataset.prodId || null,
+      fornecedor:    document.getElementById('cFornecedor').value.trim() || null,
+      preco_unit:    preco,
+      observacao:    document.getElementById('cObs').value.trim() || null,
+      tamanhos:      tamsComVariant,
+      categoria:     categoriaCompra,
+    };
+    if (comprovanteNovo) bodyPut.comprovante = comprovanteNovo;
+    else if (comprovanteRemover) bodyPut.comprovante = null;
     try {
       const r = await fetch(`/api/compras/registros/${editandoCompraId}`, {
         method: 'PUT', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({
-          data:          document.getElementById('cData').value,
-          produto_nome:  produto,
-          nv_product_id: produtoSelecionado?.id || document.getElementById('cProduto').dataset.prodId || null,
-          fornecedor:    document.getElementById('cFornecedor').value.trim() || null,
-          preco_unit:    preco,
-          observacao:    document.getElementById('cObs').value.trim() || null,
-          tamanhos:      tamsComVariant,
-          categoria:     categoriaCompra,
-        }),
+        body: JSON.stringify(bodyPut),
       });
       const j = await r.json();
       if (r.ok) {
@@ -1724,6 +1862,7 @@ async function salvarCompra() {
         fornecedor:        document.getElementById('cFornecedor').value.trim() || null,
         observacao:        document.getElementById('cObs').value.trim() || null,
         atualizar_estoque: atualizarEst,
+        comprovante:       comprovanteNovo || null,
         itens: itens.map(p => ({
           produto_nome:  p.produto_nome,
           nv_product_id: p.nv_product_id,

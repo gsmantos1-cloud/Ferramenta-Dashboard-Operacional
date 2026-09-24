@@ -433,6 +433,9 @@ def init_db():
         # valor unitário (R$) do produto manual — coluna nova, idempotente
         try: conn.execute("ALTER TABLE manual_produtos ADD COLUMN valor_unit REAL")
         except Exception: pass
+        # comprovante de pagamento da compra (foto/PDF em base64) — coluna nova, idempotente
+        try: conn.execute("ALTER TABLE compras_registros ADD COLUMN comprovante TEXT")
+        except Exception: pass
 
         conn.commit()
 
@@ -5116,8 +5119,13 @@ def api_compras_registros_list():
     inicio = request.args.get("inicio") or ""
     fim    = request.args.get("fim")    or ""
     with get_conn() as conn:
+        # Não traz r.comprovante aqui (pode ser um PDF/foto grande) — só um flag
+        # tem_comprovante; o conteúdo é buscado sob demanda (ver rota /comprovante).
         q = """
-            SELECT r.*,
+            SELECT r.id, r.data, r.produto_nome, r.nv_product_id, r.fornecedor,
+                   r.preco_unit, r.observacao, r.criado_por, r.created_at,
+                   r.ignorar_custo, r.categoria,
+                   (r.comprovante IS NOT NULL AND r.comprovante <> '') AS tem_comprovante,
                    COALESCE(SUM(t.quantidade), 0) AS total_qty,
                    COALESCE(SUM(t.quantidade), 0) * r.preco_unit AS total_valor
             FROM compras_registros r
@@ -5149,15 +5157,20 @@ def api_compras_registros_list():
 
 def _inserir_compra_produto(conn, produto, nv_product_id, preco_unit, tamanhos,
                             data_compra, fornecedor, observacao, atualizar_estoque,
-                            agora, hoje, categoria=None):
+                            agora, hoje, categoria=None, comprovante=None):
     """Insere UMA compra (1 produto) + seus tamanhos + log e, se pedido, atualiza
-    estoque/CMP. Retorna (compra_id, qtd_variantes_atualizadas no estoque)."""
+    estoque/CMP. Retorna (compra_id, qtd_variantes_atualizadas no estoque).
+
+    `comprovante` (opcional) é o comprovante de pagamento (foto ou PDF, como data
+    URL base64) — quando a compra tem vários produtos numa mesma leva, o mesmo
+    comprovante é salvo em CADA registro (é 1 pagamento só, mas cada produto tem
+    sua própria linha)."""
     cur = conn.execute(
         """INSERT INTO compras_registros
-           (data, produto_nome, nv_product_id, fornecedor, preco_unit, observacao, criado_por, categoria)
-           VALUES (?,?,?,?,?,?,?,?)""",
+           (data, produto_nome, nv_product_id, fornecedor, preco_unit, observacao, criado_por, categoria, comprovante)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
         (data_compra, produto, nv_product_id or None, fornecedor, preco_unit, observacao,
-         session.get("usuario", ""), categoria)
+         session.get("usuario", ""), categoria, comprovante)
     )
     cid = cur.lastrowid
     for t in tamanhos:
@@ -5283,6 +5296,7 @@ def api_compras_registros_add():
     fornecedor        = (data.get("fornecedor") or "").strip() or None
     observacao        = (data.get("observacao") or "").strip() or None
     atualizar_estoque = bool(data.get("atualizar_estoque"))
+    comprovante       = data.get("comprovante") or None   # foto/PDF em base64 (data URL)
     agora             = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     hoje              = date.today().isoformat()
     data_compra       = data.get("data") or hoje
@@ -5313,7 +5327,7 @@ def api_compras_registros_add():
             cid, n_est = _inserir_compra_produto(
                 conn, it["produto"], it["nv_product_id"], it["preco_unit"], it["tamanhos"],
                 data_compra, fornecedor, observacao, atualizar_estoque, agora, hoje,
-                categoria=it["categoria"]
+                categoria=it["categoria"], comprovante=comprovante
             )
             ids.append(cid)
             estoque_atualizados += n_est
@@ -5364,11 +5378,20 @@ def api_compras_registros_update(cid):
         if ant_resumo != novo_resumo:
             mud.append(f'tamanhos: {ant_resumo or "—"} → {novo_resumo or "—"}')
 
+        # comprovante: só mexe se a chave veio no payload (edição de outros campos
+        # não deve apagar o comprovante à toa); "" ou null apaga de propósito.
+        if "comprovante" in data:
+            comprovante = data.get("comprovante") or None
+            if (ant["comprovante"] or None) != comprovante:
+                mud.append("comprovante anexado" if comprovante else "comprovante removido")
+        else:
+            comprovante = ant["comprovante"]
+
         conn.execute(
             """UPDATE compras_registros
-               SET data=?, produto_nome=?, fornecedor=?, preco_unit=?, observacao=?, categoria=?
+               SET data=?, produto_nome=?, fornecedor=?, preco_unit=?, observacao=?, categoria=?, comprovante=?
                WHERE id=?""",
-            (data_compra, produto, fornecedor, preco_unit, observacao, categoria, cid),
+            (data_compra, produto, fornecedor, preco_unit, observacao, categoria, comprovante, cid),
         )
         conn.execute("DELETE FROM compras_tamanhos WHERE compra_id=?", (cid,))
         for t in tamanhos:
@@ -5380,6 +5403,18 @@ def api_compras_registros_update(cid):
             _log_compra(conn, cid, "editada", "; ".join(mud))
         conn.commit()
     return jsonify({"ok": True})
+
+
+@app.route("/api/compras/registros/<int:cid>/comprovante", methods=["GET"])
+@login_required
+def api_compras_comprovante(cid):
+    """Devolve o comprovante de pagamento (data URL) de uma compra, sob demanda —
+    não vem na listagem para não pesar toda vez que a tela carrega."""
+    with get_conn() as conn:
+        row = conn.execute("SELECT comprovante FROM compras_registros WHERE id=?", (cid,)).fetchone()
+    if not row:
+        return jsonify({"erro": "Compra não encontrada"}), 404
+    return jsonify({"comprovante": row["comprovante"] or None})
 
 
 @app.route("/api/compras/registros/<int:cid>/historico", methods=["GET"])
