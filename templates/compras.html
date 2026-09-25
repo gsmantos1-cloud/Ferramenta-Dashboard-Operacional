@@ -278,10 +278,15 @@
       </div>
       <div class="modal-body">
         <div class="small text-muted mb-2" id="frPeriodoTxt"></div>
-        <input id="frBusca" type="text" class="form-control form-control-sm mb-2" placeholder="Buscar produto..." oninput="renderListaFiltroRelatorio()">
         <div class="d-flex gap-2 mb-2">
-          <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:.75rem" onclick="marcarTodosFiltroRelatorio(true)">Selecionar todos</button>
-          <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:.75rem" onclick="marcarTodosFiltroRelatorio(false)">Limpar seleção</button>
+          <input id="frBusca" type="text" class="form-control form-control-sm" placeholder="Buscar produto..." oninput="renderListaFiltroRelatorio()" style="flex:1">
+          <select id="frFornecedor" class="form-select form-select-sm" style="max-width:200px" onchange="renderListaFiltroRelatorio()">
+            <option value="">Todos os fornecedores</option>
+          </select>
+        </div>
+        <div class="d-flex gap-2 mb-2 align-items-center">
+          <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:.75rem" onclick="marcarTodosFiltroRelatorio(true)">Selecionar visíveis</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:.75rem" onclick="marcarTodosFiltroRelatorio(false)">Limpar visíveis</button>
           <span class="ms-auto small text-muted" id="frContagem"></span>
         </div>
         <div id="frLista" style="max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
@@ -444,6 +449,7 @@ function _skuDoTamanho(prod, tamanho) {
 let relatorioComprasCache = [];          // compras já buscadas do período (evita buscar de novo ao confirmar)
 let relatorioPeriodo = { inicio: '', fim: '' };
 let relatorioProdutosSelecionados = new Set();   // nomes de produto marcados
+let relatorioImagensPorProduto = new Map();      // nome do produto → url da foto
 
 // Passo 1: busca as compras do período e abre a lista de produtos pra marcar
 async function gerarRelatorioComprasPdf() {
@@ -472,9 +478,14 @@ async function gerarRelatorioComprasPdf() {
     relatorioPeriodo = { inicio: inicioSel, fim: fimSel };
     relatorioProdutosSelecionados = new Set(compras.map(c => c.produto_nome));   // começa com todos marcados
 
+    // Carrega catálogo + produtos de SKUs pra já mostrar as fotos na lista
+    await Promise.all([carregarCatalogo(), carregarManuaisCompra()]);
+    construirMapaImagensRelatorio();
+
     document.getElementById('frPeriodoTxt').textContent =
       `Compras de ${fmtData(inicioSel)} a ${fmtData(fimSel)} — marque os produtos que devem entrar no PDF.`;
     document.getElementById('frBusca').value = '';
+    renderFornecedoresFiltroRelatorio();
     renderListaFiltroRelatorio();
     bootstrap.Modal.getOrCreateInstance(document.getElementById('modalFiltroRelatorio')).show();
   } catch (e) {
@@ -485,24 +496,76 @@ async function gerarRelatorioComprasPdf() {
   }
 }
 
-// Lista de produtos distintos do período, com quantas compras cada um tem
-function renderListaFiltroRelatorio() {
+// Foto de cada produto: cruza com o catálogo da NuvemShop e, se não achar, com
+// os produtos cadastrados na aba SKUs (mesma lógica de preencherImagensProdutos).
+function construirMapaImagensRelatorio() {
+  const byId = new Map(), byNome = new Map();
+  (catalogoProdutos || []).forEach(p => {
+    if (p.id != null && p.imageUrl) byId.set(String(p.id), p.imageUrl);
+    if (p.name && p.imageUrl) byNome.set(normNomeProd(p.name), p.imageUrl);
+  });
+  (manuaisCompra || []).forEach(p => {
+    const k = normNomeProd(p.nome);
+    if (p.nome && p.imagem && !byNome.has(k)) byNome.set(k, p.imagem);
+  });
+  relatorioImagensPorProduto = new Map();
+  relatorioComprasCache.forEach(c => {
+    const nome = c.produto_nome || 'Sem nome';
+    if (relatorioImagensPorProduto.has(nome)) return;
+    let url = null;
+    if (c.nv_product_id != null && byId.has(String(c.nv_product_id))) url = byId.get(String(c.nv_product_id));
+    if (!url) url = byNome.get(normNomeProd(nome)) || null;
+    if (url) relatorioImagensPorProduto.set(nome, url);
+  });
+}
+
+// Popula o select de fornecedores com os que aparecem no período buscado
+function renderFornecedoresFiltroRelatorio() {
+  const sel = document.getElementById('frFornecedor');
+  const fornecedores = Array.from(new Set(relatorioComprasCache.map(c => c.fornecedor).filter(Boolean)))
+    .sort((a,b) => a.localeCompare(b));
+  sel.innerHTML = '<option value="">Todos os fornecedores</option>' +
+    fornecedores.map(f => `<option value="${escHtml(f)}">${escHtml(f)}</option>`).join('');
+  sel.value = '';
+}
+
+// Nomes de produto que batem com a busca de texto + o fornecedor escolhido
+function _nomesFiltradosRelatorio() {
   const busca = document.getElementById('frBusca').value.trim().toLowerCase();
-  const porProduto = new Map();
+  const fornecedor = document.getElementById('frFornecedor').value;
+  const porProduto = new Map();       // nome → qtd de compras (total, todos os fornecedores)
+  const fornecedoresPorNome = new Map();  // nome → Set de fornecedores
   relatorioComprasCache.forEach(c => {
     const n = c.produto_nome || 'Sem nome';
     porProduto.set(n, (porProduto.get(n) || 0) + 1);
+    if (c.fornecedor) {
+      if (!fornecedoresPorNome.has(n)) fornecedoresPorNome.set(n, new Set());
+      fornecedoresPorNome.get(n).add(c.fornecedor);
+    }
   });
   const nomes = Array.from(porProduto.keys())
     .filter(n => !busca || n.toLowerCase().includes(busca))
+    .filter(n => !fornecedor || (fornecedoresPorNome.get(n) && fornecedoresPorNome.get(n).has(fornecedor)))
     .sort((a,b) => a.localeCompare(b));
+  return { nomes, porProduto };
+}
+
+// Lista de produtos que batem com os filtros, com foto e quantas compras cada um tem
+function renderListaFiltroRelatorio() {
+  const { nomes, porProduto } = _nomesFiltradosRelatorio();
 
   const lista = document.getElementById('frLista');
   lista.innerHTML = nomes.length ? nomes.map(n => {
     const marcado = relatorioProdutosSelecionados.has(n);
+    const img = relatorioImagensPorProduto.get(n);
+    const imgHtml = img
+      ? `<img src="${escHtml(img)}" style="width:38px;height:38px;object-fit:cover;border-radius:6px;border:1px solid var(--border);flex-shrink:0">`
+      : `<div style="width:38px;height:38px;background:#21262d;border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+           <i class="bi bi-image" style="color:var(--muted);font-size:1rem"></i></div>`;
     return `<label style="display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;
                           border-bottom:1px solid var(--border)">
       <input type="checkbox" ${marcado ? 'checked' : ''} onchange="toggleProdutoFiltroRelatorio('${escHtml(n).replace(/'/g,"\\'")}', this.checked)">
+      ${imgHtml}
       <span style="flex:1;font-size:.85rem">${escHtml(n)}</span>
       <span class="text-muted" style="font-size:.72rem">${porProduto.get(n)} compra${porProduto.get(n)!==1?'s':''}</span>
     </label>`;
@@ -517,9 +580,11 @@ function toggleProdutoFiltroRelatorio(nome, marcado) {
   atualizarContagemFiltroRelatorio();
 }
 
+// "Selecionar/Limpar visíveis" — só mexe nos produtos que batem com os filtros
+// atuais (busca + fornecedor), não na lista inteira.
 function marcarTodosFiltroRelatorio(marcar) {
-  const todos = new Set(relatorioComprasCache.map(c => c.produto_nome));
-  relatorioProdutosSelecionados = marcar ? todos : new Set();
+  const { nomes } = _nomesFiltradosRelatorio();
+  nomes.forEach(n => marcar ? relatorioProdutosSelecionados.add(n) : relatorioProdutosSelecionados.delete(n));
   renderListaFiltroRelatorio();
 }
 
