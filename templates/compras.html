@@ -277,6 +277,12 @@
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <label class="small text-muted mb-0">Período:</label>
+          <input id="frDataInicio" type="date" class="form-control form-control-sm" style="width:150px" onchange="frMudarPeriodo()">
+          <span class="text-muted">→</span>
+          <input id="frDataFim" type="date" class="form-control form-control-sm" style="width:150px" onchange="frMudarPeriodo()">
+        </div>
         <div class="small text-muted mb-2" id="frPeriodoTxt"></div>
         <div class="d-flex gap-2 mb-2">
           <input id="frBusca" type="text" class="form-control form-control-sm" placeholder="Buscar produto..." oninput="renderListaFiltroRelatorio()" style="flex:1">
@@ -458,8 +464,8 @@ async function gerarRelatorioComprasPdf() {
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Carregando...';
   try {
-    // Segue exatamente as datas colocadas no filtro de período da tela; se
-    // estiver vazio, usa o mês atual como padrão.
+    // Começa com exatamente as datas do filtro de período da tela; se estiver
+    // vazio, usa o mês atual como padrão. Dá pra trocar depois, dentro do modal.
     let inicioSel = document.getElementById('filtroInicio').value;
     let fimSel    = document.getElementById('filtroFim').value;
     if (!inicioSel || !fimSel) {
@@ -467,32 +473,55 @@ async function gerarRelatorioComprasPdf() {
       inicioSel = inicioSel || hj.slice(0,8) + '01';
       fimSel    = fimSel    || hj;
     }
+    document.getElementById('frDataInicio').value = inicioSel;
+    document.getElementById('frDataFim').value    = fimSel;
+    document.getElementById('frBusca').value = '';
 
-    const compras = await fetch(`/api/compras/registros?inicio=${inicioSel}&fim=${fimSel}`).then(r => r.json());
-    if (!Array.isArray(compras) || !compras.length) {
+    await carregarProdutosRelatorio(inicioSel, fimSel);
+    if (!relatorioComprasCache.length) {
       toast('Nenhuma compra encontrada no período.', false);
       return;
     }
-
-    relatorioComprasCache = compras;
-    relatorioPeriodo = { inicio: inicioSel, fim: fimSel };
-    relatorioProdutosSelecionados = new Set(compras.map(c => c.produto_nome));   // começa com todos marcados
-
-    // Carrega catálogo + produtos de SKUs pra já mostrar as fotos na lista
-    await Promise.all([carregarCatalogo(), carregarManuaisCompra()]);
-    construirMapaImagensRelatorio();
-
-    document.getElementById('frPeriodoTxt').textContent =
-      `Compras de ${fmtData(inicioSel)} a ${fmtData(fimSel)} — marque os produtos que devem entrar no PDF.`;
-    document.getElementById('frBusca').value = '';
-    renderFornecedoresFiltroRelatorio();
-    renderListaFiltroRelatorio();
     bootstrap.Modal.getOrCreateInstance(document.getElementById('modalFiltroRelatorio')).show();
   } catch (e) {
     toast('Erro ao carregar as compras do período.', false);
   } finally {
     btn.disabled = false;
     btn.innerHTML = txtOrig;
+  }
+}
+
+// Busca as compras de um período e atualiza toda a lista do modal (fotos,
+// fornecedores, seleção). Usado tanto ao abrir o modal quanto ao trocar a data.
+async function carregarProdutosRelatorio(inicioSel, fimSel) {
+  const compras = await fetch(`/api/compras/registros?inicio=${inicioSel}&fim=${fimSel}`).then(r => r.json());
+  relatorioComprasCache = Array.isArray(compras) ? compras : [];
+  relatorioPeriodo = { inicio: inicioSel, fim: fimSel };
+  relatorioProdutosSelecionados = new Set(relatorioComprasCache.map(c => c.produto_nome));   // começa com todos marcados
+
+  document.getElementById('frPeriodoTxt').textContent = relatorioComprasCache.length
+    ? `Compras de ${fmtData(inicioSel)} a ${fmtData(fimSel)} — marque os produtos que devem entrar no PDF.`
+    : `Nenhuma compra de ${fmtData(inicioSel)} a ${fmtData(fimSel)}.`;
+
+  // Carrega catálogo + produtos de SKUs pra já mostrar as fotos na lista
+  await Promise.all([carregarCatalogo(), carregarManuaisCompra()]);
+  construirMapaImagensRelatorio();
+  renderFornecedoresFiltroRelatorio();
+  renderListaFiltroRelatorio();
+}
+
+// Troca de data DENTRO do modal (sem precisar fechar e mudar na tela de trás)
+async function frMudarPeriodo() {
+  const ini = document.getElementById('frDataInicio').value;
+  const fim = document.getElementById('frDataFim').value;
+  if (!ini || !fim) return;
+  if (ini > fim) { toast('A data inicial não pode ser depois da final.', false); return; }
+  document.getElementById('frLista').innerHTML =
+    '<div class="text-center text-muted py-4" style="font-size:.85rem"><span class="spinner-border spinner-border-sm me-2"></span>Carregando...</div>';
+  try {
+    await carregarProdutosRelatorio(ini, fim);
+  } catch (e) {
+    toast('Erro ao carregar as compras do período.', false);
   }
 }
 
@@ -596,6 +625,7 @@ function atualizarContagemFiltroRelatorio() {
 
 // Passo 2: gera o PDF só com os produtos marcados
 async function confirmarRelatorioPdf() {
+  if (!relatorioComprasCache.length) { toast('Não há compras no período escolhido.', false); return; }
   if (!relatorioProdutosSelecionados.size) { toast('Selecione ao menos um produto.', false); return; }
   const btn = document.getElementById('btnGerarRelatorioFiltrado');
   const txtOrig = btn.innerHTML;
